@@ -67,3 +67,42 @@ After setting the env vars and running the migration:
    file; confirm a row in `public.downloads`.
 4. Sign in from a different browser; your listings, library, and downloads
    should load from the cloud.
+
+## Payments (Stripe)
+
+Card payments are handled by two serverless functions in [`/api`](../api),
+deployed automatically by Vercel. With no Stripe keys set, the Library checkout
+falls back to **instant licensing** (the verified demo path).
+
+### Setup
+
+1. Create a [Stripe](https://stripe.com) account and grab your **test** keys
+   (Developers → API keys).
+2. Set environment variables (locally in `.env.local` and in Vercel):
+
+   ```
+   VITE_STRIPE_PUBLISHABLE_KEY=pk_test_...
+   STRIPE_SECRET_KEY=sk_test_...
+   SUPABASE_SERVICE_ROLE_KEY=...        # so the webhook can grant licenses
+   ```
+
+3. Add a webhook endpoint in Stripe (Developers → Webhooks) pointing at
+   `https://YOUR-DOMAIN/api/stripe-webhook`, subscribe to
+   `checkout.session.completed`, and copy its signing secret into
+   `STRIPE_WEBHOOK_SECRET`.
+
+### Flow
+
+- The Library "Pay with card" button POSTs the cart to `/api/checkout`, which
+  prices each item from a **server-trusted** source (`api/_prices.ts` for the
+  seed catalog, Supabase for listings — client amounts are never trusted) and
+  returns a Stripe Checkout URL.
+- On `checkout.session.completed`, `/api/stripe-webhook` writes a `licenses`
+  row per purchased dataset (idempotent). The client also grants optimistically
+  on return so it works even before the webhook lands.
+
+> This is wired end-to-end but must be exercised with Stripe **test** keys
+> before going live. Local `vite` does not run the `/api` functions — use
+> `vercel dev` or a preview deployment to test the full payment flow. Use
+> Stripe's [test cards](https://stripe.com/docs/testing) (e.g. `4242 4242 4242
+> 4242`).

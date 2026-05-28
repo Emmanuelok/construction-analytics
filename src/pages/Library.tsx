@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   Library as LibraryIcon,
   ShoppingCart,
@@ -12,9 +12,12 @@ import {
   Sparkles,
   Package,
   Wallet,
+  Loader2,
 } from 'lucide-react'
 import { Card, CardHeader, PageHeader, StatTile, Badge, Tabs } from '@/components/ui'
 import { useStudio } from '@/store/studio'
+import { useAuth } from '@/store/auth'
+import { isStripeEnabled, startCheckout } from '@/lib/payments'
 import { ACCENT } from '@/lib/nav'
 import { cn } from '@/lib/cn'
 import { formatCurrency, formatNumber } from '@/lib/format'
@@ -27,12 +30,50 @@ function priceLabel(price: number | null) {
 
 export default function Library() {
   const { cart, library, downloads, cartTotal, getAny, removeFromCart, checkout } = useStudio()
+  const { user } = useAuth()
+  const [params, setParams] = useSearchParams()
   const [tab, setTab] = useState('cart')
   const [done, setDone] = useState(false)
+  const [paying, setPaying] = useState(false)
+  const [payError, setPayError] = useState<string | null>(null)
 
   const totalSpend = useMemo(() => library.reduce((s, l) => s + (l.price ?? 0), 0), [library])
 
-  function handleCheckout() {
+  // Handle the return from Stripe Checkout (?checkout=success|cancelled).
+  useEffect(() => {
+    const status = params.get('checkout')
+    if (!status) return
+    if (status === 'success') {
+      checkout() // idempotent local/cloud grant; the webhook also grants server-side
+      setDone(true)
+      setTab('licensed')
+    } else if (status === 'cancelled') {
+      setPayError('Checkout was cancelled — your card was not charged.')
+    }
+    params.delete('checkout')
+    params.delete('session_id')
+    setParams(params, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function handleCheckout() {
+    setPayError(null)
+    if (isStripeEnabled && cartTotal > 0) {
+      if (!user) {
+        setPayError('Please sign in to purchase.')
+        return
+      }
+      setPaying(true)
+      const { url, error } = await startCheckout(cart.map((id) => ({ id })), { userId: user.id, email: user.email })
+      if (url) {
+        window.location.href = url
+        return
+      }
+      setPayError(error ?? 'Unable to start checkout.')
+      setPaying(false)
+      return
+    }
+    // Free items, demo mode, or no payment backend → instant licensing.
     checkout()
     setDone(true)
     setTab('licensed')
@@ -110,10 +151,16 @@ export default function Library() {
                 <span>Total</span><span>{formatCurrency(cartTotal, { compact: false })}</span>
               </div>
             </div>
-            <button onClick={handleCheckout} disabled={cart.length === 0} className="btn-primary mt-4 w-full">
-              <CreditCard className="h-4 w-4" /> Complete licensing
+            {payError && <p className="mt-3 rounded-lg bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{payError}</p>}
+            <button onClick={handleCheckout} disabled={cart.length === 0 || paying} className="btn-primary mt-4 w-full">
+              {paying ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
+              {isStripeEnabled && cartTotal > 0 ? ' Pay with card' : ' Complete licensing'}
             </button>
-            <p className="mt-3 text-center text-xs text-slate-500">Instant access · revocable license · full audit trail</p>
+            <p className="mt-3 text-center text-xs text-slate-500">
+              {isStripeEnabled && cartTotal > 0
+                ? 'Secure payment via Stripe · revocable license'
+                : 'Instant access · revocable license · full audit trail'}
+            </p>
           </Card>
         </div>
       )}
