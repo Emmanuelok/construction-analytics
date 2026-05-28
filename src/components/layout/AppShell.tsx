@@ -1,7 +1,19 @@
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { Outlet, ScrollRestoration, useLocation } from 'react-router-dom'
+import { Loader2 } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
+
+function PageFallback() {
+  return (
+    <div className="grid min-h-[60vh] place-items-center">
+      <div className="flex items-center gap-3 text-sm text-slate-500">
+        <Loader2 className="h-5 w-5 animate-spin text-brand-400" />
+        Loading module…
+      </div>
+    </div>
+  )
+}
 
 export function AppShell() {
   const [open, setOpen] = useState(false)
@@ -25,7 +37,9 @@ export function AppShell() {
         <Topbar onMenu={() => setOpen(true)} />
         <main className="mx-auto max-w-[1400px] px-4 py-7 sm:px-6 lg:px-8">
           <div key={pathname} className="animate-fadeup">
-            <Outlet />
+            <Suspense fallback={<PageFallback />}>
+              <Outlet />
+            </Suspense>
           </div>
         </main>
         <footer className="mx-auto max-w-[1400px] px-4 pb-10 pt-4 sm:px-6 lg:px-8">

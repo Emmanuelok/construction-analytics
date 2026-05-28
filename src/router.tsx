@@ -1,22 +1,26 @@
+import { lazy } from 'react'
 import { createBrowserRouter } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import Overview from '@/pages/Overview'
-import Insights from '@/pages/Insights'
-import Ask from '@/pages/Ask'
-import Lakehouse from '@/pages/Lakehouse'
-import Marketplace from '@/pages/Marketplace'
-import AiStudio from '@/pages/AiStudio'
-import Governance from '@/pages/Governance'
-import Bim from '@/pages/Bim'
-import Documents from '@/pages/Documents'
-import CostSchedule from '@/pages/CostSchedule'
-import Procurement from '@/pages/Procurement'
-import Field from '@/pages/Field'
-import RealityCapture from '@/pages/RealityCapture'
-import Sustainability from '@/pages/Sustainability'
-import DigitalTwin from '@/pages/DigitalTwin'
-import PainPoints from '@/pages/PainPoints'
 import NotFound from '@/pages/NotFound'
+
+// Code-split heavier module pages so the landing page paints fast and
+// charting libraries only load when a data module is opened.
+const Insights = lazy(() => import('@/pages/Insights'))
+const Ask = lazy(() => import('@/pages/Ask'))
+const Lakehouse = lazy(() => import('@/pages/Lakehouse'))
+const Marketplace = lazy(() => import('@/pages/Marketplace'))
+const AiStudio = lazy(() => import('@/pages/AiStudio'))
+const Governance = lazy(() => import('@/pages/Governance'))
+const Bim = lazy(() => import('@/pages/Bim'))
+const Documents = lazy(() => import('@/pages/Documents'))
+const CostSchedule = lazy(() => import('@/pages/CostSchedule'))
+const Procurement = lazy(() => import('@/pages/Procurement'))
+const Field = lazy(() => import('@/pages/Field'))
+const RealityCapture = lazy(() => import('@/pages/RealityCapture'))
+const Sustainability = lazy(() => import('@/pages/Sustainability'))
+const DigitalTwin = lazy(() => import('@/pages/DigitalTwin'))
+const PainPoints = lazy(() => import('@/pages/PainPoints'))
 
 export const router = createBrowserRouter(
   [
