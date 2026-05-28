@@ -22,6 +22,11 @@ const Sustainability = lazy(() => import('@/pages/Sustainability'))
 const DigitalTwin = lazy(() => import('@/pages/DigitalTwin'))
 const PainPoints = lazy(() => import('@/pages/PainPoints'))
 
+// Match the router base to however the app is hosted (root on Vercel/Netlify,
+// a project sub-path on GitHub Pages). Vite injects the resolved base here.
+const rawBase = import.meta.env.BASE_URL
+const basename = rawBase.length > 1 ? rawBase.replace(/\/+$/, '') : '/'
+
 export const router = createBrowserRouter(
   [
     {
@@ -48,5 +53,5 @@ export const router = createBrowserRouter(
       ],
     },
   ],
-  { basename: '/construction-analytics' },
+  { basename },
 )

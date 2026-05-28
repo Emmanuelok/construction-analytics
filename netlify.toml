@@ -1,0 +1,10 @@
+# Netlify deploy config — auto-builds and serves at the domain root.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# SPA fallback so client-side routes (deep links / refresh) resolve.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
