@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   Boxes,
   Upload,
@@ -14,6 +14,9 @@ import {
   RefreshCw,
   Cpu,
   Ruler,
+  Loader2,
+  X,
+  FileCheck2,
 } from 'lucide-react'
 import {
   PageHeader,
@@ -31,6 +34,8 @@ import { LineTrend, Donut } from '@/components/charts'
 import { ACCENT, type Accent } from '@/lib/nav'
 import { cn } from '@/lib/cn'
 import { formatCurrency, formatNumber } from '@/lib/format'
+import { parseIfc, type ParsedIfc } from '@/lib/ifc'
+import { SAMPLE_IFC } from '@/lib/ifc-sample'
 
 const ACC: Accent = 'blue'
 
@@ -157,6 +162,32 @@ const DISCIPLINE_TABS = [
 export default function Bim() {
   const [discipline, setDiscipline] = useState<DisciplineKey>('all')
 
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [parsed, setParsed] = useState<ParsedIfc | null>(null)
+  const [parsing, setParsing] = useState(false)
+  const [parseError, setParseError] = useState<string | null>(null)
+
+  function runParse(text: string, fileName: string) {
+    setParsing(true)
+    setParseError(null)
+    try {
+      const result = parseIfc(text, fileName)
+      if (result.totalInstances === 0) throw new Error('No IFC instances found — is this a STEP/IFC file?')
+      setParsed(result)
+    } catch (err) {
+      setParsed(null)
+      setParseError(err instanceof Error ? err.message : 'Failed to parse file')
+    } finally {
+      setParsing(false)
+    }
+  }
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (!f) return
+    runParse(await f.text(), f.name)
+    e.target.value = ''
+  }
+
   const elements = ELEMENT_BREAKDOWN[discipline]
   const maxElements = Math.max(...elements.map((e) => e.value))
   const disciplineTotal = useMemo(() => elements.reduce((s, e) => s + e.value, 0), [elements])
@@ -174,14 +205,27 @@ export default function Bim() {
         actions={
           <>
             <Badge variant="brand" dot>
-              IFC 4.3
+              IFC 2x3 · 4 · 4.3
             </Badge>
-            <button className="btn-ghost">
-              <Upload className="h-4 w-4" /> Upload model
+            <button onClick={() => fileRef.current?.click()} className="btn-ghost">
+              <Upload className="h-4 w-4" /> Upload IFC
             </button>
+            <button onClick={() => runParse(SAMPLE_IFC, 'MeridianTower-Sample.ifc')} className="btn-primary" disabled={parsing}>
+              {parsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />} Parse sample
+            </button>
+            <input ref={fileRef} type="file" accept=".ifc,.step,.stp,.txt,text/plain" className="hidden" onChange={onFile} />
           </>
         }
       />
+
+      {parseError && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          <span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> {parseError}</span>
+          <button onClick={() => setParseError(null)} className="text-rose-300/70 hover:text-rose-200"><X className="h-4 w-4" /></button>
+        </div>
+      )}
+
+      {parsed && <ParsedModel data={parsed} onClear={() => setParsed(null)} />}
 
       {/* ----------------------------------------------------------- KPI row */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
@@ -443,5 +487,175 @@ export default function Bim() {
         </div>
       </Card>
     </div>
+  )
+}
+
+/* ----------------------------------------------- parsed-IFC results panel */
+const PALETTE: Accent[] = ['blue', 'sky', 'cyan', 'violet', 'teal', 'emerald', 'amber', 'rose', 'fuchsia', 'lime']
+const KIND_VARIANT: Record<string, 'cyan' | 'violet' | 'warn' | 'success' | 'neutral'> = {
+  Volume: 'cyan', Area: 'violet', Weight: 'warn', Length: 'success', Count: 'neutral',
+}
+const KIND_RATE: Record<string, number> = { Volume: 165, Weight: 1.28, Area: 85, Length: 70, Count: 0 }
+
+function MiniStat({ label, value, accent }: { label: string; value: string; accent: Accent }) {
+  const a = ACCENT[accent]
+  return (
+    <div className={cn('rounded-xl p-3 ring-1', a.bg, a.ring)}>
+      <div className="text-[11px] text-slate-400">{label}</div>
+      <div className={cn('data-mono text-lg font-semibold', a.text)}>{value}</div>
+    </div>
+  )
+}
+
+function ParsedModel({ data, onClear }: { data: ParsedIfc; onClear: () => void }) {
+  const maxEntity = data.entityCounts[0]?.count ?? 1
+  const indicativeTotal = data.quantities.reduce((s, q) => s + q.total * (KIND_RATE[q.kind] ?? 0), 0)
+  return (
+    <Card>
+      <CardHeader
+        title={`Parsed model — ${data.fileName}`}
+        subtitle={`${data.schema} · ${formatNumber(data.totalInstances)} instances · parsed in your browser`}
+        icon={FileCheck2}
+        accent="emerald"
+        action={
+          <button onClick={onClear} className="btn-ghost">
+            <X className="h-4 w-4" /> Clear
+          </button>
+        }
+      />
+      <div className="space-y-6 border-t border-edge/60 p-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <MiniStat label="Total instances" value={formatNumber(data.totalInstances)} accent="blue" />
+          <MiniStat label="Physical elements" value={formatNumber(data.elementCount)} accent="cyan" />
+          <MiniStat label="Distinct types" value={formatNumber(data.distinctTypes)} accent="violet" />
+          <MiniStat label="Storeys" value={formatNumber(data.storeys.length)} accent="teal" />
+        </div>
+
+        <div className="grid gap-6 lg:grid-cols-5">
+          <div className="lg:col-span-3">
+            <div className="space-y-1">
+              <KeyValue label="Project" value={data.project ?? '—'} />
+              <KeyValue label="Site" value={data.site ?? '—'} />
+              <KeyValue label="Building" value={data.building ?? '—'} />
+              <KeyValue label="Schema" value={data.schema} mono />
+              {data.authoringTool && <KeyValue label="Authoring tool" value={data.authoringTool} />}
+              {data.timestamp && <KeyValue label="Timestamp" value={data.timestamp} mono />}
+            </div>
+            {data.storeys.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {data.storeys.map((s) => (
+                  <Badge key={s} variant="neutral">
+                    {s}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="lg:col-span-2">
+            {data.disciplines.length > 0 ? (
+              <>
+                <Donut data={data.disciplines.map((d) => ({ name: d.label, value: d.value, accent: d.accent }))} valueFormatter={(v) => formatNumber(v)} />
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  {data.disciplines.map((d) => (
+                    <div key={d.label} className="flex items-center gap-2 text-xs">
+                      <span className={cn('h-2 w-2 rounded-full', ACCENT[d.accent].dot)} />
+                      <span className="text-slate-400">{d.label}</span>
+                      <span className="ml-auto data-mono text-slate-300">{formatNumber(d.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="grid h-full place-items-center text-sm text-slate-500">No classified elements.</p>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <h4 className="mb-3 text-sm font-medium text-slate-300">
+            Entity breakdown <span className="text-slate-500">· top {Math.min(12, data.entityCounts.length)} of {data.entityCounts.length}</span>
+          </h4>
+          <div className="space-y-3">
+            {data.entityCounts.slice(0, 12).map((e, i) => (
+              <div key={e.type}>
+                <div className="mb-1 flex items-center justify-between text-sm">
+                  <span className="data-mono text-slate-300">{e.type}</span>
+                  <span className="data-mono text-slate-400">{formatNumber(e.count)}</span>
+                </div>
+                <ProgressBar value={(e.count / maxEntity) * 100} accent={PALETTE[i % PALETTE.length]} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <h4 className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-300">
+            <Ruler className="h-4 w-4 text-emerald-400" /> Quantity takeoff <span className="text-slate-500">· from IfcElementQuantity</span>
+          </h4>
+          {data.quantities.length > 0 ? (
+            <>
+              <div className="overflow-x-auto rounded-xl border border-edge/60">
+                <table className="w-full min-w-[560px] text-sm">
+                  <thead>
+                    <tr className="border-b border-edge/60 text-left text-xs uppercase tracking-wider text-slate-500">
+                      <th className="px-4 py-2.5 font-medium">Quantity</th>
+                      <th className="px-4 py-2.5 font-medium">Kind</th>
+                      <th className="px-4 py-2.5 text-right font-medium">Total</th>
+                      <th className="px-4 py-2.5 text-right font-medium">Elements</th>
+                      <th className="px-4 py-2.5 text-right font-medium">Indicative cost</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-edge/40">
+                    {data.quantities.map((q) => (
+                      <tr key={`${q.kind}-${q.name}`} className="hover:bg-elevated/40">
+                        <td className="px-4 py-2.5 font-medium text-slate-200">{q.name}</td>
+                        <td className="px-4 py-2.5">
+                          <Badge variant={KIND_VARIANT[q.kind] ?? 'neutral'}>{q.kind}</Badge>
+                        </td>
+                        <td className="px-4 py-2.5 text-right data-mono text-slate-300">
+                          {q.total.toFixed(1)} {q.unit}
+                        </td>
+                        <td className="px-4 py-2.5 text-right data-mono text-slate-400">{formatNumber(q.count)}</td>
+                        <td className="px-4 py-2.5 text-right data-mono text-slate-300">
+                          {KIND_RATE[q.kind] ? formatCurrency(q.total * KIND_RATE[q.kind]) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-edge/60 bg-elevated/30">
+                      <td className="px-4 py-2.5 font-semibold text-slate-200" colSpan={4}>
+                        Indicative total
+                      </td>
+                      <td className="px-4 py-2.5 text-right data-mono font-bold text-emerald-300">{formatCurrency(indicativeTotal)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">
+                Indicative cost applies nominal unit rates to model-derived quantities — calibrate against the Cost Benchmarks dataset for project-grade estimates.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-slate-500">
+              No explicit quantities (IfcElementQuantity) found in this model. Element counts and properties above are still extracted.
+            </p>
+          )}
+        </div>
+
+        {data.properties.length > 0 && (
+          <div>
+            <h4 className="mb-3 text-sm font-medium text-slate-300">
+              Property single values <span className="text-slate-500">· {data.properties.length} parsed</span>
+            </h4>
+            <div className="grid gap-x-6 sm:grid-cols-2">
+              {data.properties.slice(0, 12).map((p, i) => (
+                <KeyValue key={`${p.name}-${i}`} label={p.name} value={p.value} mono />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </Card>
   )
 }
