@@ -1,15 +1,19 @@
 import { lazy } from 'react'
-import { createBrowserRouter } from 'react-router-dom'
+import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import Overview from '@/pages/Overview'
 import NotFound from '@/pages/NotFound'
 
-// Code-split heavier module pages so the landing page paints fast and
-// charting libraries only load when a data module is opened.
+// Code-split heavier pages so the landing paints fast and charting libraries
+// only load when a data module is opened.
+const DataCenter = lazy(() => import('@/pages/DataCenter'))
+const DatasetDetail = lazy(() => import('@/pages/DatasetDetail'))
+const AnalysisStudio = lazy(() => import('@/pages/AnalysisStudio'))
+const SellerStudio = lazy(() => import('@/pages/SellerStudio'))
+const Library = lazy(() => import('@/pages/Library'))
 const Insights = lazy(() => import('@/pages/Insights'))
 const Ask = lazy(() => import('@/pages/Ask'))
 const Lakehouse = lazy(() => import('@/pages/Lakehouse'))
-const Marketplace = lazy(() => import('@/pages/Marketplace'))
 const AiStudio = lazy(() => import('@/pages/AiStudio'))
 const Governance = lazy(() => import('@/pages/Governance'))
 const Bim = lazy(() => import('@/pages/Bim'))
@@ -34,10 +38,17 @@ export const router = createBrowserRouter(
       element: <AppShell />,
       children: [
         { index: true, element: <Overview /> },
+        // Pillars
+        { path: 'data', element: <DataCenter /> },
+        { path: 'data/:id', element: <DatasetDetail /> },
+        { path: 'analyze', element: <AnalysisStudio /> },
+        { path: 'sell', element: <SellerStudio /> },
+        { path: 'library', element: <Library /> },
+        { path: 'marketplace', element: <Navigate to="/data" replace /> },
+        // Intelligence + platform
         { path: 'insights', element: <Insights /> },
         { path: 'ask', element: <Ask /> },
         { path: 'lakehouse', element: <Lakehouse /> },
-        { path: 'marketplace', element: <Marketplace /> },
         { path: 'ai-studio', element: <AiStudio /> },
         { path: 'governance', element: <Governance /> },
         { path: 'bim', element: <Bim /> },
