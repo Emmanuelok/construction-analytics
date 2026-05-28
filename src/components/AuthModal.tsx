@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Loader2, Mail, Lock, User, ShieldCheck, Sparkles } from 'lucide-react'
 import { useAuth } from '@/store/auth'
 import { cn } from '@/lib/cn'
@@ -42,7 +43,7 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
     else onClose()
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-edge/70 bg-surface shadow-2xl">
@@ -103,7 +104,8 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
