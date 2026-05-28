@@ -32,7 +32,7 @@ create trigger on_auth_user_created
 
 -- ============================================================ datasets ===
 create table if not exists public.datasets (
-  id uuid primary key default gen_random_uuid(),
+  id text primary key,                 -- app-provided id (slug or seed id)
   owner uuid not null references auth.users(id) on delete cascade,
   name text not null,
   provider text,
@@ -68,7 +68,7 @@ create policy "datasets delete" on public.datasets for delete using (auth.uid() 
 -- ======================================================= dataset_files ===
 create table if not exists public.dataset_files (
   id uuid primary key default gen_random_uuid(),
-  dataset_id uuid not null references public.datasets(id) on delete cascade,
+  dataset_id text not null references public.datasets(id) on delete cascade,
   name text not null,
   format text not null,
   size text,
@@ -93,7 +93,7 @@ create policy "files write" on public.dataset_files for all
 create table if not exists public.licenses (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  dataset_id uuid not null references public.datasets(id) on delete cascade,
+  dataset_id text not null,                -- seed catalog id OR a published dataset id (no FK)
   tier text,
   price numeric default 0,
   status text not null default 'active',   -- active | pending | revoked
@@ -111,7 +111,7 @@ create policy "licenses insert" on public.licenses for insert with check (auth.u
 create table if not exists public.downloads (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  dataset_id uuid,
+  dataset_id text,
   file_name text,
   created_at timestamptz not null default now()
 );

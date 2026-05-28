@@ -43,10 +43,27 @@ the database; when absent it stays in demo mode.
 | Concern        | Demo mode (no env)     | Supabase mode                          |
 | -------------- | ---------------------- | -------------------------------------- |
 | Accounts       | Local fake user        | Real Supabase Auth (email + password)  |
-| Listings/library/downloads | `localStorage` | Postgres tables with row-level security |
-| Uploaded files | Stored in `localStorage` | `datasets` storage bucket            |
+| Listings / library / downloads | `localStorage` (per-user) | Postgres tables with row-level security; hydrated on login |
+| Uploaded file **bytes** | `localStorage` cache | `localStorage` cache today — file *metadata* syncs to Postgres; pushing bytes to the `datasets` Storage bucket is a follow-up |
 
-> Payments (Stripe) and full cloud data sync are layered on in later stages.
-> The storage read policy in the migration currently allows any signed-in user
-> to read bucket files; tighten it to require a matching `licenses` row before
-> production.
+When Supabase is configured and you sign in, your published listings, licensed
+library, and download history are loaded from Postgres and mirrored on every
+change, so they follow your account across devices. The local cache is still
+written, so the app keeps working offline.
+
+> Payments (Stripe) are layered on in the next stage. The storage read policy in
+> the migration currently allows any signed-in user to read bucket files;
+> tighten it to require a matching `licenses` row before production.
+
+## Verifying Supabase mode (quick checklist)
+
+After setting the env vars and running the migration:
+
+1. Click **Sign in → Create account**; confirm a row appears in
+   **Authentication → Users** and in `public.profiles`.
+2. In **Seller Studio**, publish a listing; confirm rows in `public.datasets`
+   and `public.dataset_files`.
+3. License/checkout a dataset; confirm a row in `public.licenses`. Download a
+   file; confirm a row in `public.downloads`.
+4. Sign in from a different browser; your listings, library, and downloads
+   should load from the cloud.

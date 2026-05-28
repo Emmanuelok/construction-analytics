@@ -1,5 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useReducer } from 'react'
+import { createContext, useContext, useEffect, useMemo, useReducer } from 'react'
 import { CATALOG, getDataset, type CatalogDataset } from '@/data/catalog'
+import { useAuth } from '@/store/auth'
+import { loadCloud, pushDownload, pushLicense, pushListing, removeListingCloud } from '@/lib/cloud'
 
 export type LibraryItem = { datasetId: string; tier: string; licensedAt: string; price: number }
 export type DownloadLog = { datasetId: string; fileName: string; at: string }
@@ -33,6 +35,7 @@ type Action =
   | { type: 'download'; log: DownloadLog }
   | { type: 'publish'; dataset: CatalogDataset }
   | { type: 'removeListing'; id: string }
+  | { type: 'hydrate'; state: Partial<State> }
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -57,6 +60,8 @@ function reducer(state: State, action: Action): State {
       return { ...state, listings: [action.dataset, ...state.listings.filter((l) => l.id !== action.dataset.id)] }
     case 'removeListing':
       return { ...state, listings: state.listings.filter((l) => l.id !== action.id) }
+    case 'hydrate':
+      return { ...state, ...action.state }
     default:
       return state
   }
@@ -86,14 +91,34 @@ const StudioContext = createContext<StudioValue | null>(null)
 
 export function StudioProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, load)
+  const { user, mode } = useAuth()
+  const cloud = mode === 'supabase' && !!user
+  const storageKey = useMemo(() => (user ? `${KEY}::${user.id}` : KEY), [user])
+
+  // Re-hydrate when the signed-in identity changes: local cache first (instant),
+  // then the cloud snapshot (authoritative) when a backend is configured.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(storageKey)
+      dispatch({ type: 'hydrate', state: raw ? JSON.parse(raw) : { library: [], downloads: [], listings: [] } })
+    } catch {
+      /* ignore */
+    }
+    if (cloud && user) {
+      loadCloud(user.id)
+        .then((snap) => snap && dispatch({ type: 'hydrate', state: snap }))
+        .catch(() => {})
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey, cloud, user?.id])
 
   useEffect(() => {
     try {
-      localStorage.setItem(KEY, JSON.stringify(state))
+      localStorage.setItem(storageKey, JSON.stringify(state))
     } catch {
       /* quota — ignore */
     }
-  }, [state])
+  }, [state, storageKey])
 
   const value = useMemo<StudioValue>(() => {
     const getAny = (id: string) => state.listings.find((l) => l.id === id) ?? getDataset(id)
@@ -115,14 +140,31 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
       addToCart: (id) => dispatch({ type: 'add', id }),
       removeFromCart: (id) => dispatch({ type: 'remove', id }),
       clearCart: () => dispatch({ type: 'clearCart' }),
-      checkout: () => dispatch({ type: 'checkout', items: state.cart.map(toItem) }),
-      license: (id) => dispatch({ type: 'license', item: toItem(id) }),
-      recordDownload: (datasetId, fileName) =>
-        dispatch({ type: 'download', log: { datasetId, fileName, at: new Date().toISOString() } }),
-      publishListing: (dataset) => dispatch({ type: 'publish', dataset }),
-      removeListing: (id) => dispatch({ type: 'removeListing', id }),
+      checkout: () => {
+        const items = state.cart.map(toItem)
+        dispatch({ type: 'checkout', items })
+        if (cloud && user) items.forEach((it) => void pushLicense(it, user.id))
+      },
+      license: (id) => {
+        const item = toItem(id)
+        dispatch({ type: 'license', item })
+        if (cloud && user) void pushLicense(item, user.id)
+      },
+      recordDownload: (datasetId, fileName) => {
+        const log = { datasetId, fileName, at: new Date().toISOString() }
+        dispatch({ type: 'download', log })
+        if (cloud && user) void pushDownload(log, user.id)
+      },
+      publishListing: (dataset) => {
+        dispatch({ type: 'publish', dataset })
+        if (cloud && user) void pushListing(dataset, user.id)
+      },
+      removeListing: (id) => {
+        dispatch({ type: 'removeListing', id })
+        if (cloud && user) void removeListingCloud(id)
+      },
     }
-  }, [state])
+  }, [state, cloud, user])
 
   return <StudioContext.Provider value={value}>{children}</StudioContext.Provider>
 }
