@@ -121,3 +121,42 @@ the requester owns the dataset, or they hold an active license. In short,
 **paid downloads require a license** and free samples stay open. This needs the
 same Supabase service-role key as the payments webhook, and only runs on a
 Vercel deployment (or `vercel dev`), not under plain `vite`.
+
+## Copilot (LLM-backed Ask & Workspaces)
+
+Ask AEC and the Workspace copilot reason with Claude when a key is configured;
+otherwise they use the always-on deterministic engine (`src/lib/intelligence.ts`),
+so the app is fully functional with no key.
+
+### Setup
+
+1. Get an API key at [console.anthropic.com](https://console.anthropic.com).
+2. Set it as a **server-only** env var in Vercel (and `.env.local` for
+   `vercel dev`):
+
+   ```
+   ANTHROPIC_API_KEY=sk-ant-...
+   COPILOT_MODEL=claude-sonnet-4-6   # optional; e.g. claude-opus-4-8
+   ```
+
+3. Redeploy. The client probes `GET /api/copilot`; when it reports `enabled`,
+   Ask shows a "Claude-powered" badge and free-text questions are answered by
+   the model, and the Workspace copilot shows an "Ask AI" action.
+
+### How it works
+
+- `api/copilot.ts` calls Claude with a **prompt-cached** system persona and
+  returns **structured output via forced tool use** (`analyst_answer` for Ask,
+  `workspace_plan` for Workspaces) — so responses are reliable JSON the UI
+  renders directly.
+- The client sends only a **compact, governed data context** (portfolio
+  aggregates for Ask; the problem, attached/available datasets and stage for
+  Workspaces) — never raw confidential rows.
+- The key is **never exposed to the browser**; all model calls go through the
+  serverless function. With no key, every feature still works via the
+  deterministic fallback. Like the other `/api` functions, the live path runs
+  on Vercel (or `vercel dev`), not under plain `vite`.
+
+> **Model note:** default is `claude-sonnet-4-6` (balanced for an interactive
+> copilot). Set `COPILOT_MODEL=claude-opus-4-8` for maximum reasoning depth at
+> higher cost/latency.

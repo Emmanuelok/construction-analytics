@@ -68,12 +68,52 @@ export default function WorkspaceDetail() {
   const navigate = useNavigate()
   const ws = useWorkspaces()
   const { getAny, allDatasets } = useStudio()
+  const { profile } = useProfile()
   const w = ws.get(id)
 
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState('')
   const [problem, setProblem] = useState('')
   const [metric, setMetric] = useState('')
+
+  // LLM copilot — gated by a server key; deterministic suggestions are always shown.
+  const [aiEnabled, setAiEnabled] = useState(false)
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiPlan, setAiPlan] = useState<WorkspacePlan | null>(null)
+  const [aiError, setAiError] = useState<string | null>(null)
+  useEffect(() => {
+    copilotStatus().then((s) => setAiEnabled(s.enabled))
+  }, [])
+
+  async function runAi() {
+    if (!w) return
+    setAiBusy(true)
+    setAiError(null)
+    const attached = w.datasetIds.map((dId) => getAny(dId)).filter(Boolean)
+    const available = allDatasets.slice(0, 24).map((d) => `- ${d!.name} [${d.category}/${d.modality}]`).join('\n')
+    const context = [
+      `Problem: ${w.problem || w.title}`,
+      w.metric ? `Target metric: ${w.metric}` : '',
+      w.sectors.length ? `Sectors: ${w.sectors.join(', ')}` : '',
+      `Current stage: ${STAGES.find((s) => s.id === w.stage)?.label}`,
+      profile.role ? `User role: ${profile.role}` : '',
+      attached.length ? `Attached datasets:\n${attached.map((d) => `- ${d!.name}`).join('\n')}` : 'No datasets attached yet.',
+      `Available datasets to choose from:\n${available}`,
+      w.hypotheses.length ? `Existing hypotheses:\n${w.hypotheses.map((h) => `- (${h.status}) ${h.text}`).join('\n')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n')
+    const res = await workspaceCopilot('Advance this workspace: give a plan, the best next step, tailored hypotheses, dataset picks and stage tasks.', context)
+    setAiBusy(false)
+    if (res.ok) setAiPlan(res.data)
+    else setAiError(res.error)
+  }
+
+  /** Map a copilot-suggested dataset name back to a real catalog id, if any. */
+  function datasetIdByName(name: string): string | undefined {
+    const lc = name.toLowerCase()
+    return allDatasets.find((d) => d.name.toLowerCase() === lc || d.name.toLowerCase().includes(lc) || lc.includes(d.name.toLowerCase()))?.id
+  }
 
   const recs = useMemo(
     () => (w ? recommendForProblem(w.problem || w.title, w.sectors, allDatasets, 8).filter((r) => !w.datasetIds.includes(r.dataset.id)).slice(0, 4) : []),
@@ -273,15 +313,105 @@ export default function WorkspaceDetail() {
           <Card className="overflow-hidden">
             <div className="relative border-b border-edge/60 px-5 py-4">
               <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-violet-500/15 to-transparent" />
-              <div className="relative flex items-center gap-2">
-                <span className="grid h-8 w-8 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-brand-500 text-white"><Sparkles className="h-4 w-4" /></span>
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-100">Copilot</h3>
-                  <p className="text-[11px] text-slate-400">Adapts to your problem & stage</p>
+              <div className="relative flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="grid h-8 w-8 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-brand-500 text-white"><Sparkles className="h-4 w-4" /></span>
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-100">Copilot</h3>
+                    <p className="text-[11px] text-slate-400">{aiEnabled ? 'AI reasoning over your workspace' : 'Adapts to your problem & stage'}</p>
+                  </div>
                 </div>
+                {aiEnabled && (
+                  <button onClick={runAi} disabled={aiBusy} className="btn-primary !px-2.5 !py-1.5 !text-xs">
+                    {aiBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />} {aiPlan ? 'Refresh' : 'Ask AI'}
+                  </button>
+                )}
               </div>
             </div>
             <div className="space-y-4 p-5">
+              {aiError && (
+                <div className="flex items-center gap-2 rounded-xl border border-rose-500/25 bg-rose-500/5 p-3 text-xs text-rose-300">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> {aiError}
+                </div>
+              )}
+
+              {aiPlan && (
+                <div className="space-y-3 rounded-xl border border-violet-500/30 bg-violet-500/[0.06] p-3">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-violet-200">
+                    <Wand2 className="h-3.5 w-3.5" /> AI plan
+                  </div>
+                  <p className="text-sm leading-relaxed text-slate-200">{aiPlan.summary}</p>
+                  <div className="rounded-lg bg-elevated/40 p-2.5 text-sm text-slate-200">
+                    <span className="text-[11px] font-medium text-violet-300">Next step · </span>{aiPlan.next_step}
+                  </div>
+                  {aiPlan.dataset_suggestions && aiPlan.dataset_suggestions.length > 0 && (
+                    <div>
+                      <div className="mb-1.5 text-[11px] font-medium text-slate-400">Suggested datasets</div>
+                      <div className="space-y-1.5">
+                        {aiPlan.dataset_suggestions.map((s) => {
+                          const did = datasetIdByName(s.name)
+                          const already = did ? w.datasetIds.includes(did) : false
+                          return (
+                            <div key={s.name} className="flex items-start gap-2 rounded-lg border border-edge/60 bg-elevated/30 p-2.5">
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm font-medium text-slate-200">{s.name}</div>
+                                <div className="truncate text-[11px] text-slate-500">{s.reason}</div>
+                              </div>
+                              {did && !already && (
+                                <button onClick={() => ws.addDataset(w.id, did)} className="shrink-0 rounded-lg bg-emerald-500/15 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-500/25"><Plus className="h-3.5 w-3.5" /></button>
+                              )}
+                              {already && <Check className="h-4 w-4 shrink-0 text-emerald-400" />}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {aiPlan.hypotheses.length > 0 && (
+                    <div>
+                      <div className="mb-1.5 text-[11px] font-medium text-slate-400">Hypotheses</div>
+                      <div className="space-y-1.5">
+                        {aiPlan.hypotheses.map((t) => (
+                          <button key={t} onClick={() => ws.addHypothesis(w.id, t)} className="flex w-full items-start gap-2 rounded-lg border border-edge/60 bg-elevated/30 p-2.5 text-left hover:border-amber-500/40">
+                            <Plus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" />
+                            <span className="text-xs leading-relaxed text-slate-300">{t}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {aiPlan.tasks.length > 0 && (
+                    <div>
+                      <div className="mb-1.5 text-[11px] font-medium text-slate-400">Tasks</div>
+                      <div className="space-y-1.5">
+                        {aiPlan.tasks.map((t) => (
+                          <button key={t} onClick={() => ws.addTask(w.id, t)} className="flex w-full items-start gap-2 rounded-lg border border-edge/60 bg-elevated/30 p-2.5 text-left hover:border-cyan-500/40">
+                            <Plus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-300" />
+                            <span className="text-xs leading-relaxed text-slate-300">{t}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {aiPlan.risks && aiPlan.risks.length > 0 && (
+                    <div>
+                      <div className="mb-1.5 text-[11px] font-medium text-slate-400">Risks to watch</div>
+                      <ul className="space-y-1">
+                        {aiPlan.risks.map((r) => (
+                          <li key={r} className="flex items-start gap-1.5 text-xs text-slate-400"><AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-400" /> {r}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!aiPlan && (
+                <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                  <span>{aiEnabled ? 'Heuristic suggestions below — or “Ask AI” for tailored reasoning.' : 'Heuristic suggestions (set ANTHROPIC_API_KEY for AI reasoning).'}</span>
+                </div>
+              )}
+
               <div className="rounded-xl border border-violet-500/25 bg-violet-500/5 p-3 text-sm text-slate-200">
                 <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-violet-300"><Sparkles className="h-3.5 w-3.5" /> Suggested next step</div>
                 {nextStep}

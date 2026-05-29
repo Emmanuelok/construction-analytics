@@ -13,10 +13,12 @@ import {
   Table2,
   CircleDot,
 } from 'lucide-react'
+import { Wand2, AlertTriangle } from 'lucide-react'
 import { Card, PageHeader, Badge } from '@/components/ui'
 import { BarSeries, AreaTrend } from '@/components/charts'
 import { PROJECTS, SUPPLIERS } from '@/data/platform'
 import { formatCurrency } from '@/lib/format'
+import { copilotStatus, askCopilot, type AnalystAnswer } from '@/lib/copilot'
 import { cn } from '@/lib/cn'
 import type { Accent } from '@/lib/nav'
 
@@ -45,6 +47,17 @@ const carbonTrend = [2026, 2030, 2035, 2040, 2045, 2050].map((y, i) => ({
   trajectory: Math.round(560 - i * 42),
   target: Math.round(560 - i * 78),
 }))
+
+/* A compact, real snapshot of the portfolio the LLM copilot can reason over.
+ * Kept small (token-budget friendly); the model grounds answers in this. */
+const DATA_CONTEXT = [
+  `Portfolio: ${PROJECTS.length} projects across sectors.`,
+  `Over-budget (>3% cost variance): ${overBudget.map((p) => `${p.name} +${p.costVariance}% (${p.sector}, ${p.location})`).join('; ')}.`,
+  `Cost intensity by sector ($/m²): ${bySector.map((b) => `${b.sector} ${b.cost}`).join(', ')}.`,
+  `Longest supplier lead times (days): ${lateSuppliers.map((s) => `${s.name} ${s.leadTime} (${s.category})`).join(', ')}.`,
+  `Highest schedule slip (days vs baseline): ${scheduleRisk.map((p) => `${p.name} +${p.scheduleVariance}`).join(', ')}.`,
+  `Embodied-carbon pathway kgCO₂e/m²: ${carbonTrend.map((c) => `${c.year}: traj ${c.trajectory} vs target ${c.target}`).join('; ')}.`,
+].join('\n')
 
 const QUESTIONS: { id: string; q: string; icon: typeof TrendingDown; accent: Accent }[] = [
   { id: 'budget', q: 'Which projects exceeded budget, and why?', icon: TrendingDown, accent: 'rose' },
@@ -217,18 +230,63 @@ LIMIT 5;`,
   }
 }
 
+/** Route a free-text question to the closest canned topic (deterministic fallback). */
+function routeToTopic(text: string): string {
+  const q = text.toLowerCase()
+  const map: Record<string, string[]> = {
+    budget: ['budget', 'overrun', 'cost variance', 'over budget'],
+    suppliers: ['supplier', 'lead time', 'vendor', 'procure'],
+    carbon: ['carbon', 'net zero', 'embodied', 'esg', 'emission'],
+    'cost-m2': ['cost per', 'm2', 'm²', 'unit cost', 'intensity'],
+    risk: ['risk', 'delay', 'schedule', 'slip', 'late'],
+  }
+  for (const [id, kws] of Object.entries(map)) if (kws.some((k) => q.includes(k))) return id
+  return 'budget'
+}
+
 export default function Ask() {
   const [input, setInput] = useState('')
   const [activeId, setActiveId] = useState<string>('budget')
   const [loading, setLoading] = useState(false)
 
+  // LLM path — used for free-text questions when a server key is configured.
+  const [aiEnabled, setAiEnabled] = useState(false)
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiAnswer, setAiAnswer] = useState<AnalystAnswer | null>(null)
+  const [aiError, setAiError] = useState<string | null>(null)
+  const [askedText, setAskedText] = useState('')
+
+  useEffect(() => {
+    copilotStatus().then((s) => setAiEnabled(s.enabled))
+  }, [])
+
   const answer = useMemo(() => buildAnswer(activeId), [activeId])
   const activeQ = QUESTIONS.find((q) => q.id === activeId) ?? QUESTIONS[0]
+  const showAi = aiBusy || !!aiAnswer || !!aiError
 
   function run(id: string, text?: string) {
+    setAiAnswer(null)
+    setAiError(null)
     setActiveId(id)
     if (text) setInput(text)
     setLoading(true)
+  }
+
+  async function submit(text: string) {
+    const q = text.trim()
+    if (!q) return
+    setAskedText(q)
+    if (aiEnabled) {
+      setAiBusy(true)
+      setAiError(null)
+      setAiAnswer(null)
+      const res = await askCopilot(q, DATA_CONTEXT)
+      setAiBusy(false)
+      if (res.ok) setAiAnswer(res.data)
+      else setAiError(res.error)
+    } else {
+      run(routeToTopic(q), q)
+    }
   }
 
   useEffect(() => {
@@ -245,7 +303,7 @@ export default function Ask() {
         eyebrow="Core"
         title="Ask AEC"
         description="Natural-language analytics over 4.7B records spanning every project, dataset and lifecycle stage. Ask in plain English — get an answer, the query behind it, and a visualization."
-        actions={<Badge variant="violet" dot>NL → SQL + charts</Badge>}
+        actions={aiEnabled ? <Badge variant="violet" dot>Claude-powered</Badge> : <Badge variant="violet" dot>NL → SQL + charts</Badge>}
       />
 
       {/* Ask box */}
@@ -256,17 +314,18 @@ export default function Ask() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && input.trim()) run(activeId, input)
+              if (e.key === 'Enter' && input.trim()) submit(input)
             }}
             placeholder="Ask anything — “which projects exceeded budget and why?”"
             className="flex-1 bg-transparent text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
           />
           <button
-            onClick={() => input.trim() && run(activeId, input)}
+            onClick={() => input.trim() && submit(input)}
+            disabled={aiBusy}
             className="btn-primary !px-3 !py-2"
             aria-label="Ask"
           >
-            <Send className="h-4 w-4" />
+            {aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </button>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
@@ -296,11 +355,19 @@ export default function Ask() {
         <div className="space-y-4 lg:col-span-2">
           <Card className="p-6">
             <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
-              <activeQ.icon className="h-4 w-4 text-violet-400" />
-              {activeQ.q}
+              {showAi ? <Wand2 className="h-4 w-4 text-violet-400" /> : <activeQ.icon className="h-4 w-4 text-violet-400" />}
+              {showAi ? askedText : activeQ.q}
             </div>
-            <div className="mt-4 min-h-[80px] text-sm leading-relaxed text-slate-300">
-              {loading ? (
+            <div className="mt-4 min-h-[80px] whitespace-pre-line text-sm leading-relaxed text-slate-300">
+              {aiBusy ? (
+                <div className="flex items-center gap-2 text-slate-500">
+                  <Loader2 className="h-4 w-4 animate-spin text-violet-400" /> Reasoning with Claude over the lakehouse…
+                </div>
+              ) : aiError ? (
+                <div className="flex items-center gap-2 text-rose-300"><AlertTriangle className="h-4 w-4" /> {aiError}</div>
+              ) : aiAnswer ? (
+                aiAnswer.answer
+              ) : loading ? (
                 <div className="flex items-center gap-2 text-slate-500">
                   <Loader2 className="h-4 w-4 animate-spin text-violet-400" /> Reasoning over the lakehouse…
                 </div>
@@ -310,12 +377,27 @@ export default function Ask() {
             </div>
           </Card>
 
-          {!loading && (
+          {!showAi && !loading && (
             <Card className="overflow-hidden">
               <div className="flex items-center gap-2 border-b border-edge/50 px-5 py-3 text-sm font-medium text-slate-300">
                 <Table2 className="h-4 w-4 text-violet-400" /> Generated visualization
               </div>
               <div className="px-3 pb-4 pt-4">{answer.chart}</div>
+            </Card>
+          )}
+
+          {aiAnswer?.followups && aiAnswer.followups.length > 0 && (
+            <Card className="p-5">
+              <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-300">
+                <Sparkles className="h-4 w-4 text-violet-400" /> Follow-up questions
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {aiAnswer.followups.map((f) => (
+                  <button key={f} onClick={() => submit(f)} className="rounded-full border border-edge/70 bg-elevated/40 px-3 py-1.5 text-xs text-slate-300 hover:border-violet-500/40 hover:text-white">
+                    {f}
+                  </button>
+                ))}
+              </div>
             </Card>
           )}
         </div>
@@ -326,7 +408,7 @@ export default function Ask() {
               <Code2 className="h-4 w-4 text-cyan-400" /> Query plan
             </div>
             <pre className="overflow-x-auto px-5 py-4 text-[12px] leading-relaxed text-cyan-200/90">
-              <code className="font-mono">{answer.sql}</code>
+              <code className="font-mono">{aiAnswer?.sql ?? answer.sql}</code>
             </pre>
           </Card>
 
@@ -335,15 +417,16 @@ export default function Ask() {
               <Database className="h-4 w-4 text-emerald-400" /> Data domains queried
             </div>
             <div className="mt-3 space-y-2">
-              {answer.sources.map((s) => (
+              {(aiAnswer?.domains ?? answer.sources).map((s) => (
                 <div key={s} className="flex items-center gap-2 text-sm text-slate-400">
                   <CircleDot className="h-3.5 w-3.5 text-emerald-500/70" /> {s}
                 </div>
               ))}
             </div>
             <div className="mt-4 border-t border-edge/50 pt-3 text-xs text-slate-500">
-              Answers respect row-level permissions and dataset licensing. Confidential figures are aggregated in a clean
-              room before leaving their owner’s boundary.
+              {aiEnabled
+                ? 'Answers are generated by Claude over a governed data context, respecting row-level permissions and dataset licensing.'
+                : 'Answers respect row-level permissions and dataset licensing. Confidential figures are aggregated in a clean room before leaving their owner’s boundary.'}
             </div>
           </Card>
         </div>
