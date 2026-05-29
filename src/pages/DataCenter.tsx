@@ -7,6 +7,7 @@ import {
   ShoppingCart,
   Check,
   Microscope,
+  Table2,
   UploadCloud,
   Database,
   Layers,
@@ -43,6 +44,8 @@ function DatasetCard({ d, isOwn }: { d: CatalogDataset; isOwn?: boolean }) {
   const a = ACCENT[d.accent]
   const owned = owns(d.id)
   const free = d.price === 0
+  // Tabular datasets with real content can be opened in the Workbench / Analysis.
+  const analyzable = d.files.some((f) => (f.generate || f.content != null) && ['CSV', 'TSV', 'JSON', 'GEOJSON'].includes(f.format.toUpperCase()))
   return (
     <Card className="group flex flex-col p-5" hover>
       <div className="flex items-start justify-between gap-3">
@@ -90,6 +93,11 @@ function DatasetCard({ d, isOwn }: { d: CatalogDataset; isOwn?: boolean }) {
       <div className="mt-4 flex items-center justify-between gap-2">
         <span className={cn('text-base font-bold', free ? 'text-emerald-300' : a.text)}>{priceLabel(d.price)}</span>
         <div className="flex items-center gap-1.5">
+          {analyzable && (
+            <Link to={`/workbench?dataset=${d.id}`} className="btn-ghost !px-2.5 !py-1.5 !text-xs" title="Open in Data Workbench">
+              <Table2 className="h-3.5 w-3.5" />
+            </Link>
+          )}
           <Link to={`/analyze?dataset=${d.id}`} className="btn-ghost !px-2.5 !py-1.5 !text-xs" title="Analyze in Studio">
             <Microscope className="h-3.5 w-3.5" />
           </Link>

@@ -8,6 +8,7 @@ import {
   ShoppingCart,
   Check,
   Microscope,
+  Table2,
   ShieldCheck,
   Fingerprint,
   GitBranch,
@@ -369,6 +370,11 @@ export default function DatasetDetail() {
                     License now
                   </button>
                 </>
+              )}
+              {preview?.kind === 'table' && (
+                <Link to={`/workbench?dataset=${d.id}`} className="btn-ghost w-full">
+                  <Table2 className="h-4 w-4" /> Open in Data Workbench
+                </Link>
               )}
               <Link to={`/analyze?dataset=${d.id}`} className="btn-ghost w-full">
                 <Microscope className="h-4 w-4" /> Analyze in Studio
