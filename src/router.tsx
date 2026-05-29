@@ -14,6 +14,8 @@ const SellerStudio = lazy(() => import('@/pages/SellerStudio'))
 const Library = lazy(() => import('@/pages/Library'))
 const Workspaces = lazy(() => import('@/pages/Workspaces'))
 const WorkspaceDetail = lazy(() => import('@/pages/WorkspaceDetail'))
+const Teams = lazy(() => import('@/pages/Teams'))
+const TeamDetail = lazy(() => import('@/pages/TeamDetail'))
 const Insights = lazy(() => import('@/pages/Insights'))
 const Ask = lazy(() => import('@/pages/Ask'))
 const Lakehouse = lazy(() => import('@/pages/Lakehouse'))
@@ -50,6 +52,8 @@ export const router = createBrowserRouter(
         { path: 'library', element: <Library /> },
         { path: 'workspaces', element: <Workspaces /> },
         { path: 'workspaces/:id', element: <WorkspaceDetail /> },
+        { path: 'teams', element: <Teams /> },
+        { path: 'teams/:id', element: <TeamDetail /> },
         { path: 'marketplace', element: <Navigate to="/data" replace /> },
         // Intelligence + platform
         { path: 'insights', element: <Insights /> },

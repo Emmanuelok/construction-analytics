@@ -23,11 +23,13 @@ import {
   Wand2,
   Loader2,
   AlertTriangle,
+  Users,
 } from 'lucide-react'
 import { Card, CardHeader, Badge, ProgressBar, IconBadge } from '@/components/ui'
 import { useWorkspaces, workspaceProgress, STAGES, type Stage, type HypothesisStatus } from '@/store/workspaces'
 import { useStudio } from '@/store/studio'
 import { useProfile } from '@/store/profile'
+import { useTeams } from '@/store/teams'
 import { recommendForProblem, suggestHypotheses, suggestTasks } from '@/lib/intelligence'
 import { copilotStatus, workspaceCopilot, type WorkspacePlan } from '@/lib/copilot'
 import { ACCENT } from '@/lib/nav'
@@ -74,7 +76,28 @@ export default function WorkspaceDetail() {
   const ws = useWorkspaces()
   const { getAny, allDatasets } = useStudio()
   const { profile } = useProfile()
+  const { teamsForWorkspace, logWorkspaceActivity } = useTeams()
   const w = ws.get(id)
+  const sharedTeams = teamsForWorkspace(id)
+
+  // Workspace mutations that also surface on shared teams' activity feeds.
+  function validateHypothesis(hid: string, text: string, status: 'validated' | 'rejected' | 'open') {
+    ws.updateHypothesis(id, hid, { status })
+    if (status !== 'open') logWorkspaceActivity(id, status === 'validated' ? 'hypothesis_validated' : 'hypothesis_rejected', `${status} “${text.slice(0, 48)}${text.length > 48 ? '…' : ''}”`)
+  }
+  function attachDataset(datasetId: string) {
+    ws.addDataset(id, datasetId)
+    const d = getAny(datasetId)
+    if (d) logWorkspaceActivity(id, 'dataset_added', `added “${d.name}” to ${w?.title ?? 'a workspace'}`)
+  }
+  function logNote(text: string) {
+    ws.addNote(id, text)
+    logWorkspaceActivity(id, 'note_added', `logged a decision in ${w?.title ?? 'a workspace'}`)
+  }
+  function changeStage(stage: Stage) {
+    ws.setStage(id, stage)
+    logWorkspaceActivity(id, 'stage_changed', `moved ${w?.title ?? 'a workspace'} to ${STAGES.find((s) => s.id === stage)?.label}`)
+  }
 
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState('')
@@ -196,6 +219,17 @@ export default function WorkspaceDetail() {
                   {w.sectors.map((s) => <Badge key={s} variant="neutral">{s}</Badge>)}
                 </div>
               )}
+              {sharedTeams.length > 0 && !editing && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <Users className="h-3.5 w-3.5 text-cyan-400" />
+                  <span className="text-xs text-slate-500">Shared with</span>
+                  {sharedTeams.map((t) => (
+                    <Link key={t.id} to={`/teams/${t.id}`}>
+                      <Badge variant="cyan">{t.name}</Badge>
+                    </Link>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -230,7 +264,7 @@ export default function WorkspaceDetail() {
               const done = i < stageIdx
               const cur = i === stageIdx
               return (
-                <button key={s.id} onClick={() => ws.setStage(w.id, s.id as Stage)} className="group text-left">
+                <button key={s.id} onClick={() => changeStage(s.id as Stage)} className="group text-left">
                   <div className={cn('h-1.5 rounded-full transition-colors', done ? a.dot : cur ? a.dot : 'bg-edge')} />
                   <div className={cn('mt-1.5 flex items-center gap-1 text-xs font-medium', cur ? a.text : done ? 'text-slate-300' : 'text-slate-600 group-hover:text-slate-400')}>
                     {done ? <Check className="h-3 w-3" /> : <CircleDot className="h-3 w-3" />} {s.label}
@@ -282,8 +316,8 @@ export default function WorkspaceDetail() {
                       <button onClick={() => ws.removeHypothesis(w.id, h.id)} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
                     </div>
                     <div className="mt-2 flex items-center gap-1.5">
-                      <button onClick={() => ws.updateHypothesis(w.id, h.id, { status: 'validated' })} className={cn('inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs', h.status === 'validated' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-400 hover:bg-elevated hover:text-emerald-300')}><CheckCircle2 className="h-3.5 w-3.5" /> Validate</button>
-                      <button onClick={() => ws.updateHypothesis(w.id, h.id, { status: 'rejected' })} className={cn('inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs', h.status === 'rejected' ? 'bg-rose-500/15 text-rose-300' : 'text-slate-400 hover:bg-elevated hover:text-rose-300')}><XCircle className="h-3.5 w-3.5" /> Reject</button>
+                      <button onClick={() => validateHypothesis(h.id, h.text, 'validated')} className={cn('inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs', h.status === 'validated' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-400 hover:bg-elevated hover:text-emerald-300')}><CheckCircle2 className="h-3.5 w-3.5" /> Validate</button>
+                      <button onClick={() => validateHypothesis(h.id, h.text, 'rejected')} className={cn('inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs', h.status === 'rejected' ? 'bg-rose-500/15 text-rose-300' : 'text-slate-400 hover:bg-elevated hover:text-rose-300')}><XCircle className="h-3.5 w-3.5" /> Reject</button>
                       {h.status !== 'open' && (
                         <button onClick={() => ws.updateHypothesis(w.id, h.id, { status: 'open' })} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-slate-400 hover:bg-elevated hover:text-slate-200"><RotateCcw className="h-3.5 w-3.5" /> Reopen</button>
                       )}
@@ -363,7 +397,7 @@ export default function WorkspaceDetail() {
                                 <div className="truncate text-[11px] text-slate-500">{s.reason}</div>
                               </div>
                               {did && !already && (
-                                <button onClick={() => ws.addDataset(w.id, did)} className="shrink-0 rounded-lg bg-emerald-500/15 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-500/25"><Plus className="h-3.5 w-3.5" /></button>
+                                <button onClick={() => attachDataset(did)} className="shrink-0 rounded-lg bg-emerald-500/15 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-500/25"><Plus className="h-3.5 w-3.5" /></button>
                               )}
                               {already && <Check className="h-4 w-4 shrink-0 text-emerald-400" />}
                             </div>
@@ -432,7 +466,7 @@ export default function WorkspaceDetail() {
                           <div className="truncate text-sm font-medium text-slate-200">{r.dataset.name}</div>
                           <div className="truncate text-[11px] text-slate-500">{r.reasons[0]}</div>
                         </div>
-                        <button onClick={() => ws.addDataset(w.id, r.dataset.id)} className="shrink-0 rounded-lg bg-emerald-500/15 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-500/25"><Plus className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => attachDataset(r.dataset.id)} className="shrink-0 rounded-lg bg-emerald-500/15 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-500/25"><Plus className="h-3.5 w-3.5" /></button>
                       </div>
                     ))}
                   </div>
@@ -473,7 +507,7 @@ export default function WorkspaceDetail() {
           <Card>
             <CardHeader icon={MessageSquarePlus} accent="violet" title="Decision log" subtitle="Capture decisions & findings" />
             <div className="space-y-3 border-t border-edge/50 p-5">
-              <AddRow placeholder="Log a decision or finding…" onAdd={(v) => ws.addNote(w.id, v)} icon={MessageSquarePlus} />
+              <AddRow placeholder="Log a decision or finding…" onAdd={logNote} icon={MessageSquarePlus} />
               <div className="space-y-2">
                 {w.notes.length === 0 && <p className="text-sm text-slate-500">Nothing logged yet.</p>}
                 {w.notes.map((n) => (

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Bell, ChevronRight, Globe, Menu, Search, Sparkles, LogOut, Library, UploadCloud, ChevronDown, LogIn, Sun, Moon, Monitor } from 'lucide-react'
+import { Bell, ChevronRight, Globe, Menu, Search, Sparkles, LogOut, Library, UploadCloud, ChevronDown, LogIn, Sun, Moon, Monitor, Users } from 'lucide-react'
 import { NAV } from '@/lib/nav'
 import { useAuth } from '@/store/auth'
 import { useTheme, type ThemeMode } from '@/store/theme'
@@ -118,6 +118,7 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
                   <div className="truncate text-[11px] text-slate-500">{user.email}</div>
                 </div>
                 <MenuLink to="/library" icon={Library} label="My Library" />
+                <MenuLink to="/teams" icon={Users} label="Teams" />
                 <MenuLink to="/sell" icon={UploadCloud} label="Seller Studio" />
                 <button
                   onClick={() => { setMenuOpen(false); void signOut() }}
