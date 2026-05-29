@@ -23,7 +23,7 @@ export function AppShell() {
   const [onbOpen, setOnbOpen] = useState(false)
   const { pathname } = useLocation()
   // Routes that take over the full viewport (canvas-style), no max-width/footer.
-  const fullBleed = pathname === '/flow'
+  const fullBleed = pathname === '/flow' || pathname === '/workbench'
   const { profile } = useProfile()
 
   // Close the mobile drawer whenever the route changes.

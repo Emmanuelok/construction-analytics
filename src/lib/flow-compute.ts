@@ -37,6 +37,13 @@ export function analyzableCatalog(): CatalogDataset[] {
   return CATALOG.filter((d) => d.files.some((f) => f.generate || f.content != null))
 }
 
+/** Raw text of a dataset's first analyzable file (generated sample or content). */
+export function analyzableFileText(id: string): string | null {
+  const d = getDataset(id)
+  const file = d?.files.find((f) => f.generate || f.content != null)
+  return file?.generate?.() ?? file?.content ?? null
+}
+
 /** Flatten upstream payloads into the dataset list a node can operate on. */
 function gatherDatasets(inputs: (Payload | undefined)[]): { id: string; name: string; table: Table; cols: ColumnProfile[] }[] {
   const out: { id: string; name: string; table: Table; cols: ColumnProfile[] }[] = []

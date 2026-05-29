@@ -199,6 +199,23 @@ export default function AnalysisStudio() {
 
   /* ---- on mount: preload from ?dataset=ID, else first analyzable ---- */
   useEffect(() => {
+    // Handoff from the Data Workbench: analyze the user's edited table.
+    if (params.get('from') === 'workbench') {
+      try {
+        const raw = sessionStorage.getItem('aec-workbench-handoff')
+        if (raw) {
+          const { name, csv } = JSON.parse(raw) as { name: string; csv: string }
+          const parsed = parseAny(csv)
+          if (parsed.columns.length) {
+            setTable(parsed)
+            setSource({ kind: 'upload', label: name || 'Edited data', sub: 'Edited in Data Workbench' })
+            return
+          }
+        }
+      } catch {
+        /* fall through to default */
+      }
+    }
     const wanted = params.get('dataset')
     const target = (wanted && analyzable.find((d) => d.id === wanted)) || analyzable[0]
     if (target) loadCatalog(target.id)

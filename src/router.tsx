@@ -17,6 +17,7 @@ const WorkspaceDetail = lazy(() => import('@/pages/WorkspaceDetail'))
 const Teams = lazy(() => import('@/pages/Teams'))
 const TeamDetail = lazy(() => import('@/pages/TeamDetail'))
 const FlowStudio = lazy(() => import('@/pages/FlowStudio'))
+const DataWorkbench = lazy(() => import('@/pages/DataWorkbench'))
 const Insights = lazy(() => import('@/pages/Insights'))
 const Ask = lazy(() => import('@/pages/Ask'))
 const Lakehouse = lazy(() => import('@/pages/Lakehouse'))
@@ -54,6 +55,7 @@ export const router = createBrowserRouter(
         { path: 'workspaces', element: <Workspaces /> },
         { path: 'workspaces/:id', element: <WorkspaceDetail /> },
         { path: 'flow', element: <FlowStudio /> },
+        { path: 'workbench', element: <DataWorkbench /> },
         { path: 'teams', element: <Teams /> },
         { path: 'teams/:id', element: <TeamDetail /> },
         { path: 'marketplace', element: <Navigate to="/data" replace /> },
