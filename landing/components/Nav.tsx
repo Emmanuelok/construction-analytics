@@ -36,7 +36,7 @@ export function Nav({ appUrl }: { appUrl: string }) {
             <span className="h-1.5 w-1.5 rounded-full bg-brand-400" /> Analyze live
           </a>
           <a href="#data" className="transition-colors hover:text-white">Data Center</a>
-          <a href="#pillars" className="transition-colors hover:text-white">Studio</a>
+          <a href="#bim" className="transition-colors hover:text-white">BIM</a>
         </div>
         <a
           href={appUrl}
