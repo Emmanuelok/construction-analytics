@@ -32,9 +32,11 @@ export function Nav({ appUrl }: { appUrl: string }) {
           </span>
         </a>
         <div className="hidden items-center gap-7 text-sm text-slate-400 md:flex">
-          <a href="#problem" className="transition-colors hover:text-white">Problem</a>
+          <a href="#analyze" className="inline-flex items-center gap-1.5 text-brand-300 transition-colors hover:text-brand-200">
+            <span className="h-1.5 w-1.5 rounded-full bg-brand-400" /> Analyze live
+          </a>
           <a href="#pillars" className="transition-colors hover:text-white">Studio</a>
-          <a href="#top" className="transition-colors hover:text-white">Intelligence</a>
+          <a href="#problem" className="transition-colors hover:text-white">Why</a>
         </div>
         <a
           href={appUrl}

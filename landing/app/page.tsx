@@ -1,5 +1,6 @@
 import { Nav, Footer } from '@/components/Nav'
 import { Hero } from '@/components/Hero'
+import { Analyzer } from '@/components/Analyzer'
 import { Ticker, Stats, Problem, Pillars, Intelligence, Lifecycle, Trust, CTA } from '@/components/Sections'
 
 // Where "Launch / Enter the studio" points. Override at build time with
@@ -12,6 +13,7 @@ export default function Page() {
       <Nav appUrl={APP_URL} />
       <Hero appUrl={APP_URL} />
       <Ticker />
+      <Analyzer />
       <Stats />
       <Problem />
       <Pillars />
