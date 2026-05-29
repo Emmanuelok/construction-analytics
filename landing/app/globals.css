@@ -40,6 +40,21 @@
   }
 }
 
+/* Seamless marketplace ticker (duplicated row scrolls one half-width). */
+@keyframes ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-\[ticker_38s_linear_infinite\] {
+    animation: none !important;
+  }
+}
+
 html {
   scroll-behavior: smooth;
 }

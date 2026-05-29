@@ -1,7 +1,8 @@
 'use client'
 
 import { motion, useReducedMotion } from 'framer-motion'
-import { ArrowRight, Sparkles, Boxes, GitCompare, TrendingUp } from 'lucide-react'
+import { ArrowRight, Sparkles } from 'lucide-react'
+import { LiveConsole } from './LiveConsole'
 
 const ease = [0.16, 1, 0.3, 1] as const
 
@@ -45,9 +46,9 @@ export function Hero({ appUrl }: { appUrl: string }) {
         </motion.h1>
 
         <motion.p {...rise(0.16)} className="mx-auto mt-6 max-w-2xl text-center text-lg leading-relaxed text-slate-400">
-          Collect, standardize, license and analyze data across the entire project lifecycle. Frame a problem, assemble
-          the right datasets, compute <span className="text-slate-200">real statistical findings</span>, and decide as a
-          team — from brainstorm to full-scale production.
+          Not a dashboard you read — an instrument you operate. Query 4.7B records, compute{' '}
+          <span className="text-slate-200">real correlations, trends and outliers</span> on any dataset, and turn a
+          finding into a tracked decision. The live terminal below is the actual product.
         </motion.p>
 
         <motion.div {...rise(0.24)} className="mt-9 flex flex-wrap items-center justify-center gap-3">
@@ -66,67 +67,14 @@ export function Hero({ appUrl }: { appUrl: string }) {
           </a>
         </motion.div>
 
-        {/* floating product preview */}
+        {/* live analytics console — the actual instrument, not a brochure */}
         <motion.div
-          initial={reduce ? { opacity: 0 } : { opacity: 0, y: 40, rotateX: 8 }}
-          animate={{ opacity: 1, y: 0, rotateX: 0 }}
+          initial={reduce ? { opacity: 0 } : { opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 1, ease, delay: 0.32 }}
-          className="relative mx-auto mt-16 max-w-4xl"
-          style={{ perspective: 1200 }}
+          className="relative mx-auto mt-16 max-w-5xl"
         >
-          <div className="card overflow-hidden p-2 shadow-2xl">
-            <div className="rounded-xl border border-edge/60 bg-base/80">
-              {/* faux window chrome */}
-              <div className="flex items-center gap-2 border-b border-edge/50 px-4 py-2.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-rose-400/70" />
-                <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" />
-                <span className="ml-3 text-[11px] text-slate-500">studio · Analysis · Insight report</span>
-              </div>
-              <div className="grid gap-3 p-4 sm:grid-cols-3">
-                {[
-                  { icon: GitCompare, label: 'Correlation', stat: 'r = 0.82', tint: 'text-emerald-400', desc: 'cost rises with GFA' },
-                  { icon: TrendingUp, label: 'Trend', stat: 'R² = 0.74', tint: 'text-sky-400', desc: 'carbon ↑ over time' },
-                  { icon: Boxes, label: 'Segment gap', stat: '1.8σ', tint: 'text-violet-400', desc: 'Healthcare leads cost/m²' },
-                ].map((f, i) => (
-                  <motion.div
-                    key={f.label}
-                    initial={reduce ? { opacity: 0 } : { opacity: 0, y: 14 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.6, ease, delay: 0.5 + i * 0.12 }}
-                    className="rounded-lg border border-edge/60 bg-elevated/40 p-3"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${f.tint}`}>
-                        <f.icon className="h-3 w-3" /> {f.label}
-                      </span>
-                      <span className="font-mono text-[11px] text-slate-400">{f.stat}</span>
-                    </div>
-                    <p className="mt-2 text-xs text-slate-400">{f.desc}</p>
-                    <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-edge">
-                      <motion.div
-                        className={`h-full rounded-full ${i === 0 ? 'bg-emerald-400' : i === 1 ? 'bg-sky-400' : 'bg-violet-400'}`}
-                        initial={{ width: 0 }}
-                        animate={{ width: `${70 + i * 8}%` }}
-                        transition={{ duration: 1, ease, delay: 0.7 + i * 0.12 }}
-                      />
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            </div>
-          </div>
-          {/* floating chip */}
-          <motion.div
-            aria-hidden
-            className="absolute -right-4 -top-4 hidden rounded-xl border border-violet-500/30 bg-surface/90 px-3 py-2 text-xs text-slate-200 shadow-xl backdrop-blur sm:block"
-            animate={reduce ? {} : { y: [0, -8, 0] }}
-            transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}
-          >
-            <span className="flex items-center gap-1.5">
-              <Sparkles className="h-3.5 w-3.5 text-violet-400" /> Pinned as hypothesis
-            </span>
-          </motion.div>
+          <LiveConsole />
         </motion.div>
       </div>
     </section>

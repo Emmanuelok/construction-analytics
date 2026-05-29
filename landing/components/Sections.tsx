@@ -28,6 +28,40 @@ const STATS: { value: string; label: string }[] = [
   { value: '24', label: 'AEC data domains, one schema' },
 ]
 
+/* ----------------------------------------------------- marketplace ticker -- */
+const TICKER: { name: string; cat: string; rows: string; price: string; up: boolean }[] = [
+  { name: 'Global Cost Benchmarks', cat: 'Cost', rows: '92K', price: '$4,800', up: true },
+  { name: 'EPD & Embodied-Carbon Factors', cat: 'Sustainability', rows: '410K', price: '$2,900', up: false },
+  { name: 'Schedule Outcomes', cat: 'Controls', rows: '38K', price: '$6,200', up: true },
+  { name: 'Supplier Performance Index', cat: 'Procurement', rows: '64K', price: '$3,800', up: true },
+  { name: 'IFC Object Library', cat: 'BIM', rows: '2.1M', price: 'Free', up: true },
+  { name: 'RFI → Response Pairs', cat: 'AI Training', rows: '1.28M', price: '$5,400', up: false },
+  { name: 'Defect & NCR Annotations', cat: 'Quality', rows: '760K', price: '$4,100', up: true },
+  { name: 'Building Operations Telemetry', cat: 'Operations', rows: '920M', price: '$4,400', up: true },
+]
+
+export function Ticker() {
+  const row = [...TICKER, ...TICKER] // duplicate for seamless marquee
+  return (
+    <section aria-label="Live marketplace" className="overflow-hidden border-b border-edge/50 bg-base/60 py-3">
+      <div className="relative flex">
+        <div className="flex shrink-0 animate-[ticker_38s_linear_infinite] gap-3 pr-3">
+          {row.map((t, i) => (
+            <div key={i} className="flex shrink-0 items-center gap-2.5 rounded-lg border border-edge/60 bg-elevated/40 px-3 py-1.5 text-xs">
+              <Store className="h-3.5 w-3.5 text-emerald-400" />
+              <span className="font-medium text-slate-200">{t.name}</span>
+              <span className="text-slate-500">{t.cat}</span>
+              <span className="font-mono text-slate-500">{t.rows} rows</span>
+              <span className={`font-mono font-semibold ${t.price === 'Free' ? 'text-emerald-400' : 'text-slate-200'}`}>{t.price}</span>
+              <span className={t.up ? 'text-emerald-400' : 'text-rose-400'}>{t.up ? '▲' : '▼'}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 export function Stats() {
   return (
     <section className="border-y border-edge/50 bg-panel/40">
