@@ -24,6 +24,7 @@ import {
   Loader2,
   AlertTriangle,
   Users,
+  LineChart,
 } from 'lucide-react'
 import { Card, CardHeader, Badge, ProgressBar, IconBadge } from '@/components/ui'
 import { useWorkspaces, workspaceProgress, STAGES, type Stage, type HypothesisStatus } from '@/store/workspaces'
@@ -315,6 +316,21 @@ export default function WorkspaceDetail() {
                       <p className="flex-1 text-sm text-slate-200">{h.text}</p>
                       <button onClick={() => ws.removeHypothesis(w.id, h.id)} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
                     </div>
+                    {h.evidence && (
+                      <div className="mt-2 rounded-lg border border-violet-500/25 bg-violet-500/[0.06] p-2.5">
+                        <div className="flex items-center gap-1.5 text-[11px] font-medium text-violet-200">
+                          <LineChart className="h-3 w-3" /> Evidence
+                          {h.evidence.stat && <span className="data-mono ml-1 rounded bg-violet-500/15 px-1.5 py-0.5 text-violet-200">{h.evidence.stat}</span>}
+                        </div>
+                        {h.evidence.detail && <p className="mt-1 text-xs leading-relaxed text-slate-400">{h.evidence.detail}</p>}
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-slate-500">
+                          {h.evidence.source && <span>from <span className="text-slate-400">{h.evidence.source}</span></span>}
+                          {h.evidence.columns && h.evidence.columns.length > 0 && (
+                            <span className="data-mono">· {h.evidence.columns.join(' × ')}</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     <div className="mt-2 flex items-center gap-1.5">
                       <button onClick={() => validateHypothesis(h.id, h.text, 'validated')} className={cn('inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs', h.status === 'validated' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-400 hover:bg-elevated hover:text-emerald-300')}><CheckCircle2 className="h-3.5 w-3.5" /> Validate</button>
                       <button onClick={() => validateHypothesis(h.id, h.text, 'rejected')} className={cn('inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs', h.status === 'rejected' ? 'bg-rose-500/15 text-rose-300' : 'text-slate-400 hover:bg-elevated hover:text-rose-300')}><XCircle className="h-3.5 w-3.5" /> Reject</button>

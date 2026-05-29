@@ -15,7 +15,16 @@ export const STAGES: { id: Stage; label: string; blurb: string }[] = [
 ]
 
 export type HypothesisStatus = 'open' | 'validated' | 'rejected'
-export type Hypothesis = { id: string; text: string; status: HypothesisStatus; note?: string }
+/** Evidence pinned from a computed statistical finding (Analysis Studio). */
+export type HypothesisEvidence = {
+  kind: string // finding kind, e.g. 'correlation'
+  stat?: string // supporting statistic, e.g. "r = 0.82"
+  detail?: string // the finding's narrative
+  source?: string // dataset / file the finding came from
+  columns?: string[]
+  at: string
+}
+export type Hypothesis = { id: string; text: string; status: HypothesisStatus; note?: string; evidence?: HypothesisEvidence }
 export type Task = { id: string; text: string; done: boolean }
 export type Note = { id: string; text: string; at: string }
 
@@ -111,7 +120,7 @@ type WorkspacesValue = {
   remove: (id: string) => void
   addDataset: (id: string, datasetId: string) => void
   removeDataset: (id: string, datasetId: string) => void
-  addHypothesis: (id: string, text: string) => void
+  addHypothesis: (id: string, text: string, evidence?: HypothesisEvidence) => void
   updateHypothesis: (id: string, hid: string, patch: Partial<Hypothesis>) => void
   removeHypothesis: (id: string, hid: string) => void
   addTask: (id: string, text: string) => void
@@ -199,7 +208,7 @@ export function WorkspacesProvider({ children }: { children: React.ReactNode }) 
       remove: (id) => setWorkspaces((list) => list.filter((w) => w.id !== id)),
       addDataset: (id, datasetId) => mutate(id, (w) => (w.datasetIds.includes(datasetId) ? w : { ...w, datasetIds: [...w.datasetIds, datasetId] })),
       removeDataset: (id, datasetId) => mutate(id, (w) => ({ ...w, datasetIds: w.datasetIds.filter((d) => d !== datasetId) })),
-      addHypothesis: (id, text) => mutate(id, (w) => ({ ...w, hypotheses: [...w.hypotheses, { id: uid('h'), text, status: 'open' }] })),
+      addHypothesis: (id, text, evidence) => mutate(id, (w) => ({ ...w, hypotheses: [...w.hypotheses, { id: uid('h'), text, status: 'open', evidence }] })),
       updateHypothesis: (id, hid, patch) => mutate(id, (w) => ({ ...w, hypotheses: w.hypotheses.map((h) => (h.id === hid ? { ...h, ...patch } : h)) })),
       removeHypothesis: (id, hid) => mutate(id, (w) => ({ ...w, hypotheses: w.hypotheses.filter((h) => h.id !== hid) })),
       addTask: (id, text) => mutate(id, (w) => ({ ...w, tasks: [...w.tasks, { id: uid('t'), text, done: false }] })),

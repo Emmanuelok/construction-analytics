@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   Microscope,
@@ -25,6 +26,10 @@ import {
   ShieldAlert,
   Copy,
   Check,
+  Pin,
+  FolderKanban,
+  Plus,
+  X,
 } from 'lucide-react'
 import { Card, CardHeader, PageHeader, StatTile, Badge, ProgressBar } from '@/components/ui'
 import { BarSeries, LineTrend, AreaTrend, Donut, ScatterViz } from '@/components/charts'
@@ -32,6 +37,7 @@ import { useStudio } from '@/store/studio'
 import { type CatalogDataset, type DatasetFile } from '@/data/catalog'
 import { parseAny, profile, num, type Table, type ColumnProfile } from '@/lib/parse'
 import { analyze, type Finding, type FindingKind } from '@/lib/insights'
+import { useWorkspaces } from '@/store/workspaces'
 import { downloadText, readFileAsText } from '@/lib/download'
 import { ACCENT } from '@/lib/nav'
 import { cn } from '@/lib/cn'
@@ -351,6 +357,50 @@ export default function AnalysisStudio() {
   /* ---- statistical insight report (real math over the parsed table) ---- */
   const findings = useMemo<Finding[]>(() => (hasData ? analyze(table, cols, { max: 8 }) : []), [hasData, table, cols])
   const [copied, setCopied] = useState(false)
+
+  /* ---- pin a finding as an evidence-backed hypothesis in a workspace ---- */
+  const { workspaces, addHypothesis, create } = useWorkspaces()
+  const [pinFor, setPinFor] = useState<Finding | null>(null)
+  const [pinnedTo, setPinnedTo] = useState<string | null>(null)
+
+  function hypothesisText(f: Finding): string {
+    // Turn a finding title into a testable statement.
+    switch (f.kind) {
+      case 'correlation':
+        return `${f.title} — and the relationship is causal enough to act on.`
+      case 'trend':
+        return `${f.title}, and the trend will continue.`
+      case 'segment':
+        return `${f.title} for a structural reason we can address.`
+      case 'outlier':
+        return `The outliers in ${f.columns[0] ?? 'this column'} are genuine signal, not data errors.`
+      default:
+        return f.title
+    }
+  }
+
+  function pin(f: Finding, workspaceId: string) {
+    addHypothesis(workspaceId, hypothesisText(f), {
+      kind: f.kind,
+      stat: f.stat,
+      detail: f.detail,
+      source: source?.label,
+      columns: f.columns,
+      at: new Date().toISOString(),
+    })
+    setPinFor(null)
+    setPinnedTo(workspaceId)
+    setTimeout(() => setPinnedTo(null), 2400)
+  }
+
+  function pinToNew(f: Finding) {
+    const id = create({
+      title: source ? `Investigate: ${source.label}` : 'New investigation',
+      problem: `Explore the finding: ${f.title}.`,
+      accent: 'violet',
+    })
+    pin(f, id)
+  }
 
   function copyReport() {
     const lines = [
@@ -714,10 +764,9 @@ export default function AnalysisStudio() {
                     const fa = ACCENT[f.accent]
                     const Icon = FINDING_ICON[f.kind]
                     return (
-                      <button
+                      <div
                         key={f.id}
-                        onClick={() => focusFinding(f)}
-                        className="group flex flex-col rounded-xl border border-edge/60 bg-elevated/30 p-4 text-left transition-colors hover:border-brand-500/40 hover:bg-elevated/50"
+                        className="group flex flex-col rounded-xl border border-edge/60 bg-elevated/30 p-4 transition-colors hover:border-brand-500/40 hover:bg-elevated/50"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className={cn('inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-medium ring-1', fa.bg, fa.text, fa.ring)}>
@@ -729,11 +778,16 @@ export default function AnalysisStudio() {
                           <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-elevated text-[10px] font-bold text-slate-500">{i + 1}</span>
                           <h4 className="text-sm font-semibold text-slate-100 group-hover:text-white">{f.title}</h4>
                         </div>
-                        <p className="mt-1.5 text-xs leading-relaxed text-slate-400">{f.detail}</p>
-                        <span className="mt-2 inline-flex items-center gap-1 text-[11px] text-slate-500 opacity-0 transition-opacity group-hover:opacity-100">
-                          Visualize <ArrowRight className="h-3 w-3" />
-                        </span>
-                      </button>
+                        <p className="mt-1.5 flex-1 text-xs leading-relaxed text-slate-400">{f.detail}</p>
+                        <div className="mt-3 flex items-center gap-2 border-t border-edge/40 pt-2.5">
+                          <button onClick={() => focusFinding(f)} className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-slate-200">
+                            <BarChart3 className="h-3.5 w-3.5" /> Visualize
+                          </button>
+                          <button onClick={() => setPinFor(f)} className={cn('ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium', fa.bg, fa.text, 'hover:brightness-125')}>
+                            <Pin className="h-3.5 w-3.5" /> Pin to workspace
+                          </button>
+                        </div>
+                      </div>
                     )
                   })}
                 </div>
@@ -901,6 +955,73 @@ export default function AnalysisStudio() {
           </Card>
         </>
       )}
+
+      {/* ---- pin-to-workspace picker ---- */}
+      {pinFor &&
+        createPortal(
+          <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4">
+            <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={() => setPinFor(null)} />
+            <div className="relative my-8 w-full max-w-md overflow-hidden rounded-2xl border border-edge/70 bg-surface shadow-2xl">
+              <div className="flex items-center justify-between border-b border-edge/60 px-5 py-4">
+                <div className="flex items-center gap-2">
+                  <span className="grid h-8 w-8 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-brand-500 text-white">
+                    <Pin className="h-4 w-4" />
+                  </span>
+                  <h2 className="text-sm font-semibold text-slate-100">Pin as a hypothesis</h2>
+                </div>
+                <button onClick={() => setPinFor(null)} className="rounded-lg p-1.5 text-slate-500 hover:bg-elevated hover:text-white">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="space-y-3 px-5 py-5">
+                <div className="rounded-xl border border-edge/60 bg-elevated/30 p-3">
+                  <p className="text-sm font-medium text-slate-100">{hypothesisText(pinFor)}</p>
+                  <p className="mt-1.5 text-[11px] text-slate-500">
+                    Evidence: <span className="data-mono text-slate-400">{pinFor.stat ?? FINDING_LABEL[pinFor.kind]}</span>
+                    {source ? ` · ${truncate(source.label, 28)}` : ''}
+                  </p>
+                </div>
+                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Choose a workspace</div>
+                <div className="max-h-60 space-y-1.5 overflow-y-auto">
+                  {workspaces.map((w) => (
+                    <button
+                      key={w.id}
+                      onClick={() => pin(pinFor, w.id)}
+                      className="flex w-full items-center gap-2 rounded-lg border border-edge/60 bg-elevated/30 px-3 py-2 text-left hover:border-violet-500/40"
+                    >
+                      <FolderKanban className="h-4 w-4 shrink-0 text-violet-300" />
+                      <span className="flex-1 truncate text-sm text-slate-200">{w.title}</span>
+                      <span className="text-[11px] text-slate-500">{w.stage}</span>
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => pinToNew(pinFor)}
+                    className="flex w-full items-center gap-2 rounded-lg border border-dashed border-edge/70 px-3 py-2 text-left text-sm text-slate-300 hover:border-brand-500/40 hover:text-white"
+                  >
+                    <Plus className="h-4 w-4 shrink-0 text-brand-300" /> Create a new workspace from this finding
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {/* ---- pinned toast ---- */}
+      {pinnedTo &&
+        createPortal(
+          <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2">
+            <Link
+              to={`/workspaces/${pinnedTo}`}
+              className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-surface px-4 py-2.5 text-sm text-slate-200 shadow-2xl hover:border-emerald-400"
+            >
+              <CheckCircle2 className="h-4 w-4 text-emerald-400" /> Pinned as a hypothesis ·
+              <span className="font-medium text-emerald-300">Open workspace</span>
+              <ArrowRight className="h-3.5 w-3.5 text-emerald-300" />
+            </Link>
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }
