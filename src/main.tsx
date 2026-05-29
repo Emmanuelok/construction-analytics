@@ -7,6 +7,7 @@ import { AuthProvider } from './store/auth'
 import { ProfileProvider } from './store/profile'
 import { WorkspacesProvider } from './store/workspaces'
 import { TeamsProvider } from './store/teams'
+import { FlowsProvider } from './store/flows'
 import { ThemeProvider } from './store/theme'
 import './index.css'
 
@@ -18,7 +19,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <StudioProvider>
             <WorkspacesProvider>
               <TeamsProvider>
-                <RouterProvider router={router} />
+                <FlowsProvider>
+                  <RouterProvider router={router} />
+                </FlowsProvider>
               </TeamsProvider>
             </WorkspacesProvider>
           </StudioProvider>
