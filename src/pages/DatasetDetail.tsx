@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -19,9 +19,10 @@ import {
 } from 'lucide-react'
 import { Card, CardHeader, Badge, RingProgress, KeyValue, IconBadge } from '@/components/ui'
 import { useStudio } from '@/store/studio'
+import { useAuth } from '@/store/auth'
 import type { CatalogDataset, DatasetFile, License } from '@/data/catalog'
 import { parseAny, profile } from '@/lib/parse'
-import { downloadText } from '@/lib/download'
+import { downloadDatasetFile } from '@/lib/download'
 import { ACCENT } from '@/lib/nav'
 import { cn } from '@/lib/cn'
 import { formatCurrency, formatNumber } from '@/lib/format'
@@ -50,6 +51,8 @@ function priceLabel(price: number | null) {
 export default function DatasetDetail() {
   const { id = '' } = useParams()
   const { getAny, owns, inCart, addToCart, license, recordDownload } = useStudio()
+  const { user } = useAuth()
+  const [dlError, setDlError] = useState<string | null>(null)
   const d: CatalogDataset | undefined = getAny(id)
 
   const preview = useMemo(() => {
@@ -89,11 +92,14 @@ export default function DatasetDetail() {
   const owned = owns(d.id)
   const free = d.price === 0
 
-  function handleDownload(f: DatasetFile) {
-    const text = f.generate?.() ?? f.content
-    if (!text) return
-    downloadText(f.name, text, f.format)
-    recordDownload(d!.id, f.name)
+  async function handleDownload(f: DatasetFile) {
+    setDlError(null)
+    try {
+      await downloadDatasetFile(f, d!.id, { userId: user?.id })
+      recordDownload(d!.id, f.name)
+    } catch (e) {
+      setDlError(e instanceof Error ? e.message : 'Download failed')
+    }
   }
 
   return (
@@ -138,9 +144,10 @@ export default function DatasetDetail() {
           {/* Files */}
           <Card>
             <CardHeader icon={FileText} accent={d.accent} title="Files" subtitle={`${d.files.length} file${d.files.length !== 1 ? 's' : ''} in this dataset`} />
+            {dlError && <p className="border-t border-edge/50 bg-rose-500/10 px-5 py-2.5 text-xs text-rose-300">{dlError}</p>}
             <div className="divide-y divide-edge/40 border-t border-edge/50">
               {d.files.map((f) => {
-                const canDownload = (f.free || owned) && (f.generate || f.content)
+                const canDownload = (f.free || owned) && (f.generate || f.content || f.storagePath)
                 const lockedPaid = !f.free && !owned
                 return (
                   <div key={f.id} className="flex items-center gap-3 px-5 py-3.5">

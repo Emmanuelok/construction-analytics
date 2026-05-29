@@ -134,8 +134,8 @@ create policy "owners upload to their folder" on storage.objects for insert to a
 drop policy if exists "owners manage their folder" on storage.objects;
 create policy "owners manage their folder" on storage.objects for all to authenticated
   using (bucket_id = 'datasets' and (storage.foldername(name))[1] = auth.uid()::text);
--- NOTE: this lets any signed-in user read bucket files; tighten to require a
--- matching row in public.licenses for paid files when you go to production.
+-- Reads are owner-only via the policy above. Everyone else obtains files through
+-- the license-checked /api/download endpoint, which mints short-lived signed
+-- URLs with the service role (bypassing RLS) only after verifying the file is a
+-- free sample, the requester owns the dataset, or they hold an active license.
 drop policy if exists "authenticated read dataset files" on storage.objects;
-create policy "authenticated read dataset files" on storage.objects for select to authenticated
-  using (bucket_id = 'datasets');

@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { DATASET_BUCKET, supabase } from './supabase'
 import type { Accent } from '@/lib/nav'
 import type { CatalogDataset, FileFormat, License, Modality } from '@/data/catalog'
 import type { DownloadLog, LibraryItem } from '@/store/studio'
@@ -6,8 +6,8 @@ import type { DownloadLog, LibraryItem } from '@/store/studio'
 /* Maps between the app's CatalogDataset/library/download shapes and the
  * Supabase tables defined in supabase/migrations/0001_init.sql. All writes are
  * best-effort: callers fire-and-forget so a backend hiccup never breaks the UI.
- * Seller-uploaded file *bytes* (file.content) are kept in the local cache and
- * are intentionally NOT pushed to Postgres — only file metadata is synced. */
+ * Seller-uploaded file *bytes* are uploaded to Storage on publish; Postgres
+ * rows hold only metadata (name/format/size/free) plus the storage path. */
 
 type DatasetRow = {
   id: string
@@ -30,7 +30,15 @@ type DatasetRow = {
   created_at: string | null
 }
 
-type FileRow = { dataset_id: string; name: string; format: string; size: string | null; rows: number | null; free: boolean | null }
+type FileRow = {
+  dataset_id: string
+  name: string
+  format: string
+  size: string | null
+  rows: number | null
+  free: boolean | null
+  storage_path?: string | null
+}
 
 function rowToDataset(row: DatasetRow, files: FileRow[]): CatalogDataset {
   return {
@@ -58,6 +66,7 @@ function rowToDataset(row: DatasetRow, files: FileRow[]): CatalogDataset {
       size: f.size ?? '',
       rows: f.rows ?? undefined,
       free: Boolean(f.free),
+      storagePath: f.storage_path ?? undefined,
     })),
   }
 }
@@ -94,7 +103,7 @@ export async function loadCloud(userId: string): Promise<CloudSnapshot | null> {
   const { data: ds } = await supabase.from('datasets').select('*').eq('owner', userId)
   const ids = (ds ?? []).map((d) => d.id)
   const { data: files } = ids.length
-    ? await supabase.from('dataset_files').select('dataset_id,name,format,size,rows,free').in('dataset_id', ids)
+    ? await supabase.from('dataset_files').select('dataset_id,name,format,size,rows,free,storage_path').in('dataset_id', ids)
     : { data: [] as FileRow[] }
   const listings = (ds ?? []).map((d) => rowToDataset(d as DatasetRow, (files ?? []).filter((f) => f.dataset_id === d.id)))
 
@@ -120,13 +129,49 @@ export async function loadCloud(userId: string): Promise<CloudSnapshot | null> {
 /** Upsert a published listing (metadata + file metadata, not file bytes). */
 export async function pushListing(d: CatalogDataset, userId: string): Promise<void> {
   if (!supabase) return
-  const { error } = await supabase.from('datasets').upsert(datasetToRow(d, userId))
+  const sb = supabase
+  const { error } = await sb.from('datasets').upsert(datasetToRow(d, userId))
   if (error) return void console.warn('pushListing:', error.message)
-  await supabase.from('dataset_files').delete().eq('dataset_id', d.id)
-  if (d.files.length) {
-    await supabase.from('dataset_files').insert(
-      d.files.map((f) => ({ dataset_id: d.id, name: f.name, format: f.format, size: f.size, rows: f.rows ?? null, free: f.free })),
-    )
+  await sb.from('dataset_files').delete().eq('dataset_id', d.id)
+  if (!d.files.length) return
+
+  // Upload seller-provided file bytes to Storage; record the path on each row.
+  const rows = await Promise.all(
+    d.files.map(async (f) => {
+      let storage_path: string | null = f.storagePath ?? null
+      if (f.content != null) {
+        const safe = f.name.replace(/[^a-zA-Z0-9._-]+/g, '_')
+        const path = `${userId}/${d.id}/${f.id}-${safe}`
+        const { error: upErr } = await sb.storage
+          .from(DATASET_BUCKET)
+          .upload(path, new Blob([f.content], { type: 'text/plain' }), { upsert: true })
+        if (upErr) console.warn('upload:', upErr.message)
+        else storage_path = path
+      }
+      return { dataset_id: d.id, name: f.name, format: f.format, size: f.size, rows: f.rows ?? null, free: f.free, storage_path }
+    }),
+  )
+  await sb.from('dataset_files').insert(rows)
+}
+
+/** Ask the license-checked /api/download endpoint for a short-lived signed URL. */
+export async function signedDownloadUrl(input: {
+  datasetId: string
+  storagePath: string
+  fileName?: string
+  userId?: string
+}): Promise<string | null> {
+  try {
+    const res = await fetch('/api/download', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) return null
+    const data = (await res.json().catch(() => ({}))) as { url?: string }
+    return data.url ?? null
+  } catch {
+    return null
   }
 }
 

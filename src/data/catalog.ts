@@ -16,6 +16,8 @@ export type DatasetFile = {
   generate?: () => string
   /** Stored content for seller-uploaded files (used when there is no generator). */
   content?: string
+  /** Path within the Supabase Storage bucket (set after a cloud upload). */
+  storagePath?: string
 }
 
 export type CatalogDataset = {

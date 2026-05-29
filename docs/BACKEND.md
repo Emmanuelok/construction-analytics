@@ -44,7 +44,7 @@ the database; when absent it stays in demo mode.
 | -------------- | ---------------------- | -------------------------------------- |
 | Accounts       | Local fake user        | Real Supabase Auth (email + password)  |
 | Listings / library / downloads | `localStorage` (per-user) | Postgres tables with row-level security; hydrated on login |
-| Uploaded file **bytes** | `localStorage` cache | `localStorage` cache today — file *metadata* syncs to Postgres; pushing bytes to the `datasets` Storage bucket is a follow-up |
+| Uploaded file **bytes** | `localStorage` cache | Uploaded to the private `datasets` Storage bucket on publish; non-owners download via license-checked signed URLs (`/api/download`) |
 
 When Supabase is configured and you sign in, your published listings, licensed
 library, and download history are loaded from Postgres and mirrored on every
@@ -106,3 +106,18 @@ falls back to **instant licensing** (the verified demo path).
 > `vercel dev` or a preview deployment to test the full payment flow. Use
 > Stripe's [test cards](https://stripe.com/docs/testing) (e.g. `4242 4242 4242
 > 4242`).
+
+## Storage & downloads
+
+When a seller publishes a listing while signed in, each file's bytes are
+uploaded to the private `datasets` Storage bucket under `{userId}/{datasetId}/`.
+Downloads resolve in this order: a generator (seed samples) → cached content
+(files you just uploaded this session) → a **signed URL** from `/api/download`.
+
+The Storage SELECT policy is **owner-only**, so other users can't read the
+bucket directly. `/api/download` (service role) is the only path for them: it
+mints a 60-second signed URL only after confirming the file is a free sample,
+the requester owns the dataset, or they hold an active license. In short,
+**paid downloads require a license** and free samples stay open. This needs the
+same Supabase service-role key as the payments webhook, and only runs on a
+Vercel deployment (or `vercel dev`), not under plain `vite`.
