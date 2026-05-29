@@ -108,6 +108,33 @@ export function num(v: string): number {
   return Number(String(v).replace(/[,%$\s]/g, ''))
 }
 
+/* ------------------------------------------------------- format conversion */
+function csvEscape(v: string): string {
+  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
+}
+
+/** Serialize a table to CSV / TSV / JSON / Markdown for alternate-format export. */
+export function tableToFormat(table: Table, format: 'CSV' | 'TSV' | 'JSON' | 'MD'): string {
+  const { columns, rows } = table
+  if (format === 'JSON') return JSON.stringify(rows, null, 2)
+  if (format === 'MD') {
+    const head = `| ${columns.join(' | ')} |`
+    const sep = `| ${columns.map(() => '---').join(' | ')} |`
+    const body = rows.map((r) => `| ${columns.map((c) => (r[c] ?? '').replace(/\|/g, '\\|')).join(' | ')} |`).join('\n')
+    return [head, sep, body].join('\n')
+  }
+  const delim = format === 'TSV' ? '\t' : ','
+  const esc = format === 'TSV' ? (v: string) => v.replace(/\t/g, ' ') : csvEscape
+  return [columns.join(delim), ...rows.map((r) => columns.map((c) => esc(r[c] ?? '')).join(delim))].join('\n')
+}
+
+/** Which alternate formats a source format can be converted to (besides itself). */
+export function alternateFormats(format: string): ('CSV' | 'TSV' | 'JSON' | 'MD')[] {
+  const f = format.toUpperCase()
+  if (['CSV', 'TSV', 'JSON', 'GEOJSON', 'XLSX'].includes(f)) return ['CSV', 'JSON', 'TSV', 'MD']
+  return []
+}
+
 export function profile(table: Table): ColumnProfile[] {
   return table.columns.map((name) => {
     const values = table.rows.map((r) => r[name] ?? '')

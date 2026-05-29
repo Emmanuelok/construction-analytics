@@ -1,10 +1,34 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Bell, ChevronRight, Globe, Menu, Search, Sparkles, LogOut, Library, UploadCloud, ChevronDown, LogIn } from 'lucide-react'
+import { Bell, ChevronRight, Globe, Menu, Search, Sparkles, LogOut, Library, UploadCloud, ChevronDown, LogIn, Sun, Moon, Monitor } from 'lucide-react'
 import { NAV } from '@/lib/nav'
 import { useAuth } from '@/store/auth'
+import { useTheme, type ThemeMode } from '@/store/theme'
 import { AuthModal } from '@/components/AuthModal'
 import { cn } from '@/lib/cn'
+
+function ThemeToggle() {
+  const { mode, setMode } = useTheme()
+  const opts: { m: ThemeMode; icon: typeof Sun; label: string }[] = [
+    { m: 'light', icon: Sun, label: 'Light' },
+    { m: 'dark', icon: Moon, label: 'Dark' },
+    { m: 'system', icon: Monitor, label: 'System' },
+  ]
+  return (
+    <div className="hidden items-center gap-0.5 rounded-xl border border-edge/70 bg-elevated/50 p-0.5 sm:flex">
+      {opts.map((o) => (
+        <button
+          key={o.m}
+          onClick={() => setMode(o.m)}
+          title={`${o.label} theme`}
+          className={cn('grid h-7 w-7 place-items-center rounded-lg transition-colors', mode === o.m ? 'bg-surface text-brand-400 shadow-sm' : 'text-slate-500 hover:text-slate-200')}
+        >
+          <o.icon className="h-4 w-4" />
+        </button>
+      ))}
+    </div>
+  )
+}
 
 function initials(user: { name?: string; email: string }) {
   const base = user.name?.trim() || user.email
@@ -64,6 +88,8 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
         >
           <Sparkles className="h-4 w-4" />
         </button>
+
+        <ThemeToggle />
 
         <button className="relative grid h-9 w-9 place-items-center rounded-xl border border-edge/70 bg-elevated/50 text-slate-400 hover:text-white">
           <Bell className="h-4 w-4" />

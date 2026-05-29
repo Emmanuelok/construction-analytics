@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -17,14 +17,18 @@ import {
   HardDrive,
   Server,
   Sparkles,
+  ChevronDown,
+  Compass,
+  Target,
 } from 'lucide-react'
 import { Card, CardHeader, Badge, RingProgress, KeyValue, IconBadge } from '@/components/ui'
 import { useStudio } from '@/store/studio'
 import { useAuth } from '@/store/auth'
 import { useProfile } from '@/store/profile'
 import type { CatalogDataset, DatasetFile, License } from '@/data/catalog'
-import { parseAny, profile } from '@/lib/parse'
-import { downloadDatasetFile } from '@/lib/download'
+import { parseAny, profile, tableToFormat, alternateFormats } from '@/lib/parse'
+import { downloadDatasetFile, downloadText } from '@/lib/download'
+import { datasetGuidance } from '@/lib/guidance'
 import { similarTo } from '@/lib/intelligence'
 import { ACCENT } from '@/lib/nav'
 import { cn } from '@/lib/cn'
@@ -49,6 +53,56 @@ function priceLabel(price: number | null) {
   if (price === null) return 'On request'
   if (price === 0) return 'Free'
   return formatCurrency(price, { compact: false })
+}
+
+function FileDownload({
+  file,
+  canConvert,
+  onOriginal,
+  onConvert,
+}: {
+  file: DatasetFile
+  canConvert: boolean
+  onOriginal: () => void
+  onConvert: (fmt: 'CSV' | 'TSV' | 'JSON' | 'MD') => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onClick)
+    return () => document.removeEventListener('mousedown', onClick)
+  }, [])
+
+  if (!canConvert) {
+    return (
+      <button onClick={onOriginal} className="btn-ghost !px-3 !py-1.5 !text-xs">
+        <Download className="h-3.5 w-3.5" /> Download
+      </button>
+    )
+  }
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((o) => !o)} className="btn-ghost !px-3 !py-1.5 !text-xs">
+        <Download className="h-3.5 w-3.5" /> Download <ChevronDown className="h-3 w-3" />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-xl border border-edge/70 bg-surface py-1 shadow-2xl">
+          <button onClick={() => { onOriginal(); setOpen(false) }} className="flex w-full items-center justify-between px-3 py-2 text-left text-xs text-slate-200 hover:bg-elevated">
+            Original <span className="text-slate-500">{file.format}</span>
+          </button>
+          <div className="my-1 border-t border-edge/50" />
+          {alternateFormats(file.format).map((fmt) => (
+            <button key={fmt} onClick={() => { onConvert(fmt); setOpen(false) }} className="flex w-full items-center justify-between px-3 py-2 text-left text-xs text-slate-300 hover:bg-elevated">
+              Download as <span className="text-slate-500">{fmt === 'MD' ? 'Markdown' : fmt}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function DatasetDetail() {
@@ -102,6 +156,7 @@ export default function DatasetDetail() {
   const a = ACCENT[d.accent]
   const owned = owns(d.id)
   const free = d.price === 0
+  const guide = datasetGuidance(d)
 
   async function handleDownload(f: DatasetFile) {
     setDlError(null)
@@ -110,6 +165,20 @@ export default function DatasetDetail() {
       recordDownload(d!.id, f.name)
     } catch (e) {
       setDlError(e instanceof Error ? e.message : 'Download failed')
+    }
+  }
+
+  function downloadAs(f: DatasetFile, fmt: 'CSV' | 'TSV' | 'JSON' | 'MD') {
+    const text = f.generate?.() ?? f.content
+    if (text == null) return
+    try {
+      const table = parseAny(text, f.format)
+      const out = tableToFormat(table, fmt)
+      const ext = fmt === 'MD' ? 'md' : fmt.toLowerCase()
+      downloadText(`${f.name.replace(/\.[^.]+$/, '')}.${ext}`, out, fmt === 'MD' ? 'TXT' : fmt)
+      recordDownload(d!.id, `${f.name} → ${fmt}`)
+    } catch {
+      setDlError('Could not convert this file to that format.')
     }
   }
 
@@ -151,6 +220,44 @@ export default function DatasetDetail() {
               <span key={t} className="rounded-md bg-elevated/60 px-2 py-1 text-xs text-slate-400">#{t}</span>
             ))}
           </div>
+
+          {/* How & where to use */}
+          <Card className="p-5">
+            <div className="flex items-center gap-2">
+              <Compass className="h-4 w-4 text-cyan-400" />
+              <h3 className="text-sm font-semibold text-slate-100">How &amp; where to use this</h3>
+            </div>
+            <p className="mt-2 text-sm leading-relaxed text-slate-300">{guide.howTo}</p>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {guide.worksWith.map((wk) => (
+                <Link key={wk.to} to={wk.to} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1 text-xs text-slate-300 hover:border-brand-500/40 hover:text-white">
+                  <span className="h-1.5 w-1.5 rounded-full bg-brand-400" /> {wk.label}
+                </Link>
+              ))}
+            </div>
+            <div className="mt-4 grid gap-4 border-t border-edge/50 pt-4 sm:grid-cols-2">
+              <div>
+                <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-slate-500">Common use cases</div>
+                <ul className="space-y-1.5">
+                  {guide.useCases.map((u) => (
+                    <li key={u} className="flex items-start gap-2 text-sm text-slate-300">
+                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-400" /> {u}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-slate-500">Intended results</div>
+                <ul className="space-y-1.5">
+                  {guide.outcomes.map((o) => (
+                    <li key={o} className="flex items-start gap-2 text-sm text-slate-300">
+                      <Target className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" /> {o}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </Card>
 
           {/* Files */}
           <Card>
