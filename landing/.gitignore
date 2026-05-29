@@ -1,0 +1,7 @@
+# Dependencies & build output for the Next.js landing app
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+.DS_Store
