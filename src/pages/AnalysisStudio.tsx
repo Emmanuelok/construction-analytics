@@ -17,12 +17,21 @@ import {
   CheckCircle2,
   ArrowRight,
   Lightbulb,
+  GitCompare,
+  TrendingUp,
+  Layers,
+  AlertTriangle,
+  PieChart,
+  ShieldAlert,
+  Copy,
+  Check,
 } from 'lucide-react'
 import { Card, CardHeader, PageHeader, StatTile, Badge, ProgressBar } from '@/components/ui'
 import { BarSeries, LineTrend, AreaTrend, Donut, ScatterViz } from '@/components/charts'
 import { useStudio } from '@/store/studio'
 import { type CatalogDataset, type DatasetFile } from '@/data/catalog'
 import { parseAny, profile, num, type Table, type ColumnProfile } from '@/lib/parse'
+import { analyze, type Finding, type FindingKind } from '@/lib/insights'
 import { downloadText, readFileAsText } from '@/lib/download'
 import { ACCENT } from '@/lib/nav'
 import { cn } from '@/lib/cn'
@@ -52,6 +61,25 @@ const BADGE_FOR_TYPE: Record<ColumnProfile['type'], 'brand' | 'cyan' | 'violet' 
 }
 
 const DONUT_PALETTE = ['violet', 'cyan', 'blue', 'emerald', 'amber', 'rose', 'teal', 'fuchsia'] as const
+
+const FINDING_ICON: Record<FindingKind, typeof GitCompare> = {
+  correlation: GitCompare,
+  trend: TrendingUp,
+  segment: Layers,
+  outlier: AlertTriangle,
+  concentration: PieChart,
+  quality: ShieldAlert,
+  overview: Sparkles,
+}
+const FINDING_LABEL: Record<FindingKind, string> = {
+  correlation: 'Correlation',
+  trend: 'Trend',
+  segment: 'Segment gap',
+  outlier: 'Outlier',
+  concentration: 'Concentration',
+  quality: 'Data quality',
+  overview: 'Overview',
+}
 
 const fmt = (n: number | undefined) =>
   n == null || Number.isNaN(n) ? '—' : formatNumber(n, { compact: Math.abs(n) >= 10000, digits: Number.isInteger(n) ? 0 : 2 })
@@ -319,6 +347,55 @@ export default function AnalysisStudio() {
     scatterX,
     scatterY,
   ])
+
+  /* ---- statistical insight report (real math over the parsed table) ---- */
+  const findings = useMemo<Finding[]>(() => (hasData ? analyze(table, cols, { max: 8 }) : []), [hasData, table, cols])
+  const [copied, setCopied] = useState(false)
+
+  function copyReport() {
+    const lines = [
+      `Insight report — ${source?.label ?? 'dataset'}`,
+      `${formatNumber(table.rows.length)} rows × ${cols.length} columns`,
+      '',
+      ...findings.map((f, i) => `${i + 1}. [${FINDING_LABEL[f.kind]}] ${f.title}${f.stat ? ` (${f.stat})` : ''}\n   ${f.detail}`),
+    ]
+    navigator.clipboard?.writeText(lines.join('\n')).then(
+      () => { setCopied(true); setTimeout(() => setCopied(false), 1800) },
+      () => {},
+    )
+  }
+
+  /* clicking a finding focuses the chart builder on its columns */
+  function focusFinding(f: Finding) {
+    const [c1, c2] = f.columns
+    const isNum = (n: string) => numericCols.some((c) => c.name === n)
+    if (f.kind === 'correlation' && c1 && c2 && isNum(c1) && isNum(c2)) {
+      setChartType('scatter')
+      setScatterX(c1)
+      setScatterY(c2)
+    } else if (f.kind === 'segment' && c1 && c2) {
+      setChartType('bar')
+      setDimKey(isNum(c1) ? c2 : c1)
+      setMeasureKey(isNum(c1) ? c1 : c2)
+      setAgg('avg')
+    } else if (f.kind === 'trend' && c1) {
+      setChartType('line')
+      setDimKey(c2 || c1)
+      setMeasureKey(isNum(c1) ? c1 : c2)
+      setAgg('avg')
+    } else if ((f.kind === 'outlier' || f.kind === 'quality') && c1 && isNum(c1)) {
+      setChartType('bar')
+      setDimKey(c1)
+      setMeasureKey(c1)
+      setAgg('count')
+    } else if (f.kind === 'concentration' && c1) {
+      setChartType('donut')
+      setDimKey(c1)
+      setMeasureKey('')
+      setAgg('count')
+    }
+    document.getElementById('chart-builder')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   /* ---- suggested-question chips that reconfigure the builder ---- */
   type Suggestion = { label: string; apply: () => void }
@@ -608,8 +685,84 @@ export default function AnalysisStudio() {
             </div>
           </Card>
 
+          {/* ============================================ Insight report */}
+          <Card className="relative overflow-hidden">
+            <div className={cn('pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full opacity-20 blur-3xl', a.dot)} />
+            <CardHeader
+              icon={Sparkles}
+              accent="violet"
+              title="Insight report"
+              subtitle={findings.length ? `${findings.length} findings computed from the data — ranked by significance` : 'Statistical scan of the dataset'}
+              action={
+                findings.length ? (
+                  <button onClick={copyReport} className="btn-ghost h-9 px-3 py-0 text-xs">
+                    {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copied ? 'Copied' : 'Copy report'}
+                  </button>
+                ) : undefined
+              }
+            />
+            <div className="border-t border-edge/50 p-5">
+              <p className="mb-4 text-[15px] leading-relaxed text-slate-300">{insight}</p>
+              {findings.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-edge/60 bg-elevated/20 p-5 text-center text-sm text-slate-500">
+                  No statistically notable patterns surfaced — the dataset may be too small, too uniform, or lack numeric columns to correlate.
+                </div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {findings.map((f, i) => {
+                    const fa = ACCENT[f.accent]
+                    const Icon = FINDING_ICON[f.kind]
+                    return (
+                      <button
+                        key={f.id}
+                        onClick={() => focusFinding(f)}
+                        className="group flex flex-col rounded-xl border border-edge/60 bg-elevated/30 p-4 text-left transition-colors hover:border-brand-500/40 hover:bg-elevated/50"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={cn('inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-medium ring-1', fa.bg, fa.text, fa.ring)}>
+                            <Icon className="h-3 w-3" /> {FINDING_LABEL[f.kind]}
+                          </span>
+                          {f.stat && <span className="data-mono text-xs text-slate-400">{f.stat}</span>}
+                        </div>
+                        <div className="mt-2 flex items-start gap-2">
+                          <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-elevated text-[10px] font-bold text-slate-500">{i + 1}</span>
+                          <h4 className="text-sm font-semibold text-slate-100 group-hover:text-white">{f.title}</h4>
+                        </div>
+                        <p className="mt-1.5 text-xs leading-relaxed text-slate-400">{f.detail}</p>
+                        <span className="mt-2 inline-flex items-center gap-1 text-[11px] text-slate-500 opacity-0 transition-opacity group-hover:opacity-100">
+                          Visualize <ArrowRight className="h-3 w-3" />
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+
+              {suggestions.length > 0 && (
+                <div className="mt-5 border-t border-edge/50 pt-4">
+                  <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
+                    <Lightbulb className="h-3.5 w-3.5" /> Quick views
+                  </div>
+                  <div className="mt-2.5 flex flex-wrap gap-2">
+                    {suggestions.map((s) => (
+                      <button
+                        key={s.label}
+                        onClick={() => { s.apply(); document.getElementById('chart-builder')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-edge/70 bg-elevated/50 px-3.5 py-1.5 text-sm text-slate-300 transition-colors hover:border-brand-500/50 hover:text-white"
+                      >
+                        <Sparkles className="h-3.5 w-3.5 text-violet-400" />
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Card>
+
           {/* ============================================ Chart builder */}
-          <Card>
+          <Card id="chart-builder">
             <CardHeader
               icon={BarChart3}
               accent="violet"
@@ -717,39 +870,6 @@ export default function AnalysisStudio() {
             </div>
           </Card>
 
-          {/* ============================================ AI insights */}
-          <Card className="relative overflow-hidden">
-            <div className={cn('pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full opacity-20 blur-3xl', a.dot)} />
-            <CardHeader
-              icon={Sparkles}
-              accent="violet"
-              title="AI insights"
-              subtitle="Auto-generated from the parsed data — refine it with a suggested question"
-            />
-            <div className="border-t border-edge/50 p-5">
-              <p className="text-[15px] leading-relaxed text-slate-300">{insight}</p>
-
-              {suggestions.length > 0 && (
-                <div className="mt-5">
-                  <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
-                    <Lightbulb className="h-3.5 w-3.5" /> Suggested questions
-                  </div>
-                  <div className="mt-2.5 flex flex-wrap gap-2">
-                    {suggestions.map((s) => (
-                      <button
-                        key={s.label}
-                        onClick={s.apply}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-edge/70 bg-elevated/50 px-3.5 py-1.5 text-sm text-slate-300 transition-colors hover:border-brand-500/50 hover:text-white"
-                      >
-                        <Sparkles className="h-3.5 w-3.5 text-violet-400" />
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </Card>
 
           {/* ============================================ Export row */}
           <Card className="flex flex-wrap items-center justify-between gap-4 p-5">
