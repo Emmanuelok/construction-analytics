@@ -25,6 +25,7 @@ import {
   AlertTriangle,
   Users,
   LineChart,
+  Workflow,
 } from 'lucide-react'
 import { Card, CardHeader, Badge, ProgressBar, IconBadge } from '@/components/ui'
 import { useWorkspaces, workspaceProgress, STAGES, type Stage, type HypothesisStatus } from '@/store/workspaces'
@@ -32,6 +33,8 @@ import { useStudio } from '@/store/studio'
 import { useProfile } from '@/store/profile'
 import { useTeams } from '@/store/teams'
 import { recommendForProblem, suggestHypotheses, suggestTasks } from '@/lib/intelligence'
+import { analyzeCross, toCrossDatasets, type CrossFinding } from '@/lib/crossdataset'
+import { parseAny } from '@/lib/parse'
 import { copilotStatus, workspaceCopilot, type WorkspacePlan } from '@/lib/copilot'
 import { ACCENT } from '@/lib/nav'
 import { cn } from '@/lib/cn'
@@ -175,6 +178,23 @@ export default function WorkspaceDetail() {
   const stageIdx = STAGES.findIndex((s) => s.id === w.stage)
   const assembled = w.datasetIds.map((dId) => getAny(dId)).filter(Boolean)
 
+  // Cross-dataset intelligence: bridge the attached datasets via shared
+  // dimensions and surface relationships that span them. Runs on real file
+  // content (generated samples / uploaded content), recomputed when the set
+  // of attached datasets changes.
+  const crossFindings = useMemo<CrossFinding[]>(() => {
+    const inputs = assembled
+      .map((d) => {
+        const file = d!.files.find((f) => f.generate || f.content != null)
+        const text = file?.generate?.() ?? file?.content
+        return text ? { id: d!.id, name: d!.name, text, format: file?.format } : null
+      })
+      .filter(Boolean) as { id: string; name: string; text: string; format?: string }[]
+    if (inputs.length < 2) return []
+    return analyzeCross(toCrossDatasets(inputs, parseAny), { max: 5 })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [w.datasetIds.join(',')])
+
   function startEdit() {
     setTitle(w!.title)
     setProblem(w!.problem)
@@ -302,6 +322,61 @@ export default function WorkspaceDetail() {
               })}
             </div>
           </Card>
+
+          {/* Cross-dataset intelligence */}
+          {assembled.length >= 2 && (
+            <Card>
+              <CardHeader
+                icon={Workflow}
+                accent="fuchsia"
+                title="Cross-dataset intelligence"
+                subtitle="Relationships that span your attached datasets, bridged on a shared dimension"
+              />
+              <div className="border-t border-edge/50 p-5">
+                {crossFindings.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-edge/60 bg-elevated/20 p-4 text-sm text-slate-500">
+                    No cross-dataset links found yet — attach datasets that share a dimension (e.g. region, sector) and
+                    have numeric measures to correlate across them.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {crossFindings.map((f) => (
+                      <div key={f.id} className="rounded-xl border border-fuchsia-500/25 bg-fuchsia-500/[0.05] p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-1.5 text-xs font-medium text-fuchsia-300">
+                            <Workflow className="h-3.5 w-3.5" /> via {f.via}
+                          </div>
+                          <span className="data-mono text-xs text-slate-300">{f.stat}</span>
+                        </div>
+                        <h4 className="mt-2 text-sm font-semibold text-slate-100">{f.title}</h4>
+                        <p className="mt-1 text-xs leading-relaxed text-slate-400">{f.detail}</p>
+                        <div className="mt-2 flex items-center gap-3">
+                          <span className="text-[11px] text-slate-500">
+                            {f.datasetA} <span className="text-slate-600">×</span> {f.datasetB} · {f.points.length} shared values
+                          </span>
+                          <button
+                            onClick={() =>
+                              ws.addHypothesis(w.id, `${f.title}.`, {
+                                kind: 'cross-dataset',
+                                stat: f.stat,
+                                detail: f.detail,
+                                source: `${f.datasetA} × ${f.datasetB}`,
+                                columns: [f.xLabel, f.yLabel],
+                                at: new Date().toISOString(),
+                              })
+                            }
+                            className="ml-auto inline-flex items-center gap-1 rounded-lg bg-fuchsia-500/15 px-2 py-1 text-[11px] font-medium text-fuchsia-300 hover:bg-fuchsia-500/25"
+                          >
+                            <FlaskConical className="h-3.5 w-3.5" /> Pin as hypothesis
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
 
           {/* Hypotheses */}
           <Card>
