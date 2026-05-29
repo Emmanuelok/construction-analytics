@@ -128,10 +128,11 @@ export function tableToFormat(table: Table, format: 'CSV' | 'TSV' | 'JSON' | 'MD
   return [columns.join(delim), ...rows.map((r) => columns.map((c) => esc(r[c] ?? '')).join(delim))].join('\n')
 }
 
-/** Which alternate formats a source format can be converted to (besides itself). */
+/** Which alternate formats a source format can be converted to (excluding itself). */
 export function alternateFormats(format: string): ('CSV' | 'TSV' | 'JSON' | 'MD')[] {
   const f = format.toUpperCase()
-  if (['CSV', 'TSV', 'JSON', 'GEOJSON', 'XLSX'].includes(f)) return ['CSV', 'JSON', 'TSV', 'MD']
+  const all: ('CSV' | 'TSV' | 'JSON' | 'MD')[] = ['CSV', 'JSON', 'TSV', 'MD']
+  if (['CSV', 'TSV', 'JSON', 'GEOJSON', 'XLSX'].includes(f)) return all.filter((x) => x !== f)
   return []
 }
 
