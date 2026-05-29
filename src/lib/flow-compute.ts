@@ -4,6 +4,7 @@
  * ordering/propagation; this maps node kinds to actual data work. */
 
 import { parseAny, profile, type ColumnProfile, type Table } from '@/lib/parse'
+import { filterTable, groupTable, joinTables, type Agg, type FilterOp } from '@/lib/flow-transforms'
 import { analyze, type Finding } from '@/lib/insights'
 import { analyzeCross, type CrossDataset, type CrossFinding } from '@/lib/crossdataset'
 import { CATALOG, getDataset, type CatalogDataset } from '@/data/catalog'
@@ -56,6 +57,33 @@ export function computeNode(node: FlowNode, inputs: (Payload | undefined)[]): Pa
       if (!loaded) return undefined
       return { type: 'dataset', id, name: loaded.name, table: loaded.table, cols: loaded.cols }
     }
+    case 'filter': {
+      const ds = gatherDatasets(inputs)[0]
+      if (!ds) return undefined
+      const col = (node.config?.col as string) || ds.cols[0]?.name || ''
+      const op = ((node.config?.op as FilterOp) || '>')
+      const value = String(node.config?.value ?? '')
+      const table = filterTable(ds.table, col, op, value)
+      return { type: 'dataset', id: ds.id, name: `${ds.name} · filtered`, table, cols: profile(table) }
+    }
+    case 'group': {
+      const ds = gatherDatasets(inputs)[0]
+      if (!ds) return undefined
+      const by = (node.config?.by as string) || ds.cols.find((c) => c.type === 'string')?.name || ds.cols[0]?.name || ''
+      const measure = (node.config?.measure as string) || ds.cols.find((c) => c.type === 'number')?.name || ''
+      const agg = ((node.config?.agg as Agg) || 'avg')
+      const table = groupTable(ds.table, by, measure, agg)
+      return { type: 'dataset', id: ds.id, name: `${ds.name} · ${agg} by ${by}`, table, cols: profile(table) }
+    }
+    case 'join': {
+      const items = gatherDatasets(inputs)
+      if (items.length < 2) return undefined
+      const [a, b] = items
+      const keyA = (node.config?.keyA as string) || a.cols.find((c) => c.type === 'string')?.name || a.cols[0]?.name || ''
+      const keyB = (node.config?.keyB as string) || b.cols.find((c) => c.type === 'string')?.name || b.cols[0]?.name || ''
+      const table = joinTables(a.table, b.table, keyA, keyB)
+      return { type: 'dataset', id: a.id, name: `${a.name.split('·')[0].trim()} ⋈ ${b.name.split('·')[0].trim()}`, table, cols: profile(table) }
+    }
     case 'profile': {
       const ds = gatherDatasets(inputs)[0]
       if (!ds) return undefined
@@ -76,8 +104,13 @@ export function computeNode(node: FlowNode, inputs: (Payload | undefined)[]): Pa
     case 'chart': {
       const ds = gatherDatasets(inputs)[0]
       if (!ds) return undefined
-      // group the first categorical by mean of the first numeric (a real aggregate)
-      const cat = ds.cols.find((c) => c.type === 'string' && c.unique > 1 && c.unique <= 24)
+      // Prefer a low-cardinality categorical; fall back to ANY non-numeric column
+      // (handles an already-aggregated table from a Group node, whose key may have
+      // more than 24 distinct values). Then aggregate the first numeric by it.
+      const cat =
+        ds.cols.find((c) => c.type !== 'number' && c.unique > 1 && c.unique <= 24) ??
+        ds.cols.find((c) => c.type !== 'number' && c.unique > 1) ??
+        ds.cols.find((c) => c.type !== 'number')
       const numC = ds.cols.find((c) => c.type === 'number')
       if (!cat || !numC) return { type: 'chart', name: ds.name, series: [], xLabel: '' }
       const buckets = new Map<string, number[]>()
@@ -103,9 +136,11 @@ export function computeNode(node: FlowNode, inputs: (Payload | undefined)[]): Pa
 
 /* ------------------------------------------------- agentic prompt → flow ---- */
 const KIND_KEYWORDS: { kind: NodeKind; words: string[] }[] = [
+  { kind: 'filter', words: ['filter', 'where', 'only', 'exclude', 'subset', 'above', 'below', 'greater', 'less than'] },
+  { kind: 'group', words: ['group', 'aggregate', 'average by', 'sum by', 'per ', 'by sector', 'by region', 'rollup', 'summari'] },
   { kind: 'profile', words: ['profile', 'quality', 'schema', 'columns', 'completeness', 'shape'] },
-  { kind: 'crosslink', words: ['cross', 'link', 'compare', 'relate', 'across datasets', 'between', 'join', 'correlat'] },
-  { kind: 'insights', words: ['insight', 'finding', 'analyze', 'analyse', 'correlation', 'trend', 'outlier', 'segment'] },
+  { kind: 'crosslink', words: ['cross', 'link', 'relate', 'across datasets', 'between datasets', 'correlat'] },
+  { kind: 'insights', words: ['insight', 'finding', 'analyze', 'analyse', 'trend', 'outlier', 'segment'] },
   { kind: 'chart', words: ['chart', 'plot', 'visuali', 'graph', 'bar', 'breakdown'] },
 ]
 
@@ -169,17 +204,19 @@ export function buildFlowFromPrompt(prompt: string): FlowGraph {
     return { nodes, edges }
   }
 
-  // single-source pipeline: dataset -> [profile] -> [insights] -> [chart]
+  // single-source pipeline: dataset -> [filter] -> [group] -> [profile] -> [insights] -> [chart]
   const src = dsNodes[0]
   let prev = src.id
-  const ordered: NodeKind[] = (['profile', 'insights', 'chart'] as NodeKind[]).filter((k) => steps.has(k))
+  const LABELS: Partial<Record<NodeKind, string>> = { filter: 'Filter', group: 'Group', profile: 'Profile', insights: 'Insights', chart: 'Chart' }
+  const ordered: NodeKind[] = (['filter', 'group', 'profile', 'insights', 'chart'] as NodeKind[]).filter((k) => steps.has(k))
   const chain = ordered.length ? ordered : (['insights'] as NodeKind[])
   for (const kind of chain) {
-    const label = kind === 'profile' ? 'Profile' : kind === 'insights' ? 'Insights' : 'Chart'
-    const n = place(kind, label)
+    const n = place(kind, LABELS[kind] ?? kind)
     edges.push({ id: uid('e'), from: prev, to: n.id })
-    // chart reads from the dataset, not from insights, so branch it off the source
-    prev = kind === 'chart' ? prev : n.id
+    // transforms (filter/group) advance the chain; insights/profile/chart are
+    // leaf-ish readers — keep chaining through transforms, branch the rest off
+    // whatever the latest data-bearing node is.
+    if (kind === 'filter' || kind === 'group') prev = n.id
   }
   void y
   return { nodes, edges }

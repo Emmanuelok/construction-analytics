@@ -1,4 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Link } from 'react-router-dom'
 import {
   Workflow,
   Database,
@@ -14,16 +16,19 @@ import {
   Link2,
   AlertTriangle,
   Wand2,
-  CornerDownLeft,
-  Star,
+  Filter,
+  Group,
+  Combine,
   TrendingUp,
   Layers,
   ShieldAlert,
   PieChart,
+  Pin,
 } from 'lucide-react'
 import { PageHeader, Badge } from '@/components/ui'
 import { BarSeries } from '@/components/charts'
 import { useFlows } from '@/store/flows'
+import { useWorkspaces } from '@/store/workspaces'
 import { runFlow, validate, wouldCycle, type FlowNode, type NodeKind } from '@/lib/flow'
 import { analyzableCatalog, buildFlowFromPrompt, computeNode, type Payload } from '@/lib/flow-compute'
 import type { FindingKind } from '@/lib/insights'
@@ -35,13 +40,16 @@ const NODE_W = 240
 
 const NODE_META: Record<NodeKind, { label: string; icon: typeof Database; accent: Accent; blurb: string }> = {
   dataset: { label: 'Dataset', icon: Database, accent: 'emerald', blurb: 'A source dataset' },
+  filter: { label: 'Filter', icon: Filter, accent: 'amber', blurb: 'Keep rows matching a rule' },
+  group: { label: 'Group', icon: Group, accent: 'sky', blurb: 'Aggregate by a dimension' },
+  join: { label: 'Join', icon: Combine, accent: 'teal', blurb: 'Merge two tables on a key' },
   profile: { label: 'Profile', icon: Columns3, accent: 'blue', blurb: 'Types, quality, cardinality' },
   insights: { label: 'Insights', icon: Sparkles, accent: 'violet', blurb: 'Ranked statistical findings' },
   crosslink: { label: 'Cross-link', icon: GitCompare, accent: 'fuchsia', blurb: 'Relate ≥2 datasets' },
   chart: { label: 'Chart', icon: BarChart3, accent: 'cyan', blurb: 'Aggregate & visualize' },
   note: { label: 'Note', icon: StickyNote, accent: 'amber', blurb: 'A label or comment' },
 }
-const PALETTE: NodeKind[] = ['dataset', 'profile', 'insights', 'crosslink', 'chart', 'note']
+const PALETTE: NodeKind[] = ['dataset', 'filter', 'group', 'join', 'profile', 'insights', 'crosslink', 'chart', 'note']
 
 const FIND_ICON: Record<FindingKind, typeof GitCompare> = {
   correlation: GitCompare, trend: TrendingUp, segment: Layers, outlier: AlertTriangle, concentration: PieChart, quality: ShieldAlert, overview: Sparkles,
@@ -51,10 +59,13 @@ type Connecting = { from: string; x: number; y: number } | null
 
 export default function FlowStudio() {
   const { graph, addNode, updateNode, removeNode, addEdge, removeEdge, clear, setGraph } = useFlows()
+  const { workspaces, create, addHypothesis } = useWorkspaces()
   const canvasRef = useRef<HTMLDivElement>(null)
   const [results, setResults] = useState<Map<string, Payload | undefined>>(new Map())
   const [errors, setErrors] = useState<Map<string, string>>(new Map())
   const [ran, setRan] = useState(false)
+  const [pinOpen, setPinOpen] = useState(false)
+  const [pinned, setPinned] = useState<string | null>(null)
   const [drag, setDrag] = useState<{ id: string; dx: number; dy: number } | null>(null)
   const [connecting, setConnecting] = useState<Connecting>(null)
   const [prompt, setPrompt] = useState('')
@@ -69,6 +80,32 @@ export default function FlowStudio() {
     setErrors(res.errors)
     setRan(true)
   }, [graph])
+
+  /* ---- collect every finding the run produced (insights + cross-link) ---- */
+  const runFindings = useMemo(() => {
+    const out: { text: string; stat?: string; detail?: string; source: string; cols: string[] }[] = []
+    for (const p of results.values()) {
+      if (p?.type === 'insights') {
+        for (const f of p.findings) out.push({ text: f.title, stat: f.stat, detail: f.detail, source: p.name, cols: f.columns })
+      } else if (p?.type === 'cross') {
+        for (const f of p.findings) out.push({ text: f.title, stat: f.stat, detail: f.detail, source: `${f.datasetA} × ${f.datasetB}`, cols: [f.xLabel, f.yLabel] })
+      }
+    }
+    return out
+  }, [results])
+
+  function pinTo(workspaceId: string) {
+    for (const f of runFindings) {
+      addHypothesis(workspaceId, `${f.text}.`, { kind: 'flow', stat: f.stat, detail: f.detail, source: f.source, columns: f.cols, at: new Date().toISOString() })
+    }
+    setPinOpen(false)
+    setPinned(workspaceId)
+    setTimeout(() => setPinned(null), 2600)
+  }
+  function pinToNew() {
+    const id = create({ title: 'Flow Studio findings', problem: 'Findings captured from a data flow.', accent: 'fuchsia' })
+    pinTo(id)
+  }
 
   /* ---- add a node near the canvas centre ---- */
   function add(kind: NodeKind) {
@@ -135,6 +172,16 @@ export default function FlowStudio() {
   const nodeById = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph.nodes])
   const port = (n: FlowNode, side: 'in' | 'out') => ({ x: n.x + (side === 'in' ? 0 : NODE_W), y: n.y + 52 })
 
+  /* Column names a node's transform config can pick from: the cols of its first
+   * upstream node's output (available after a run). Empty before the first run. */
+  function upstreamColsFor(nodeId: string): { name: string; type: string }[] {
+    const srcId = graph.edges.find((e) => e.to === nodeId)?.from
+    if (!srcId) return []
+    const out = results.get(srcId)
+    if (out && (out.type === 'dataset' || out.type === 'profile')) return out.cols.map((c) => ({ name: c.name, type: c.type }))
+    return []
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -148,6 +195,11 @@ export default function FlowStudio() {
             <button onClick={clear} className="btn-ghost" disabled={!graph.nodes.length}>
               <Trash2 className="h-4 w-4" /> Clear
             </button>
+            {runFindings.length > 0 && (
+              <button onClick={() => setPinOpen(true)} className="btn-ghost">
+                <Pin className="h-4 w-4" /> Pin {runFindings.length} finding{runFindings.length > 1 ? 's' : ''}
+              </button>
+            )}
             <button onClick={run} className="btn-primary" disabled={!graph.nodes.length}>
               <Play className="h-4 w-4" /> Run flow
             </button>
@@ -249,6 +301,7 @@ export default function FlowStudio() {
             error={errors.get(n.id)}
             ran={ran}
             datasets={datasets}
+            upstreamCols={upstreamColsFor(n.id)}
             onDragStart={(e) => {
               const rect = canvasRef.current?.getBoundingClientRect()
               if (!rect) return
@@ -261,19 +314,61 @@ export default function FlowStudio() {
           />
         ))}
       </div>
+
+      {/* pin-to-workspace picker */}
+      {pinOpen &&
+        createPortal(
+          <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4">
+            <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={() => setPinOpen(false)} />
+            <div className="relative my-8 w-full max-w-md overflow-hidden rounded-2xl border border-edge/70 bg-surface shadow-2xl">
+              <div className="flex items-center justify-between border-b border-edge/60 px-5 py-4">
+                <div className="flex items-center gap-2">
+                  <span className="grid h-8 w-8 place-items-center rounded-xl bg-gradient-to-br from-fuchsia-500 to-brand-500 text-white"><Pin className="h-4 w-4" /></span>
+                  <h2 className="text-sm font-semibold text-slate-100">Pin {runFindings.length} finding{runFindings.length > 1 ? 's' : ''} to a workspace</h2>
+                </div>
+                <button onClick={() => setPinOpen(false)} className="rounded-lg p-1.5 text-slate-500 hover:bg-elevated hover:text-white"><X className="h-4 w-4" /></button>
+              </div>
+              <div className="max-h-72 space-y-1.5 overflow-y-auto px-5 py-4">
+                {workspaces.map((w) => (
+                  <button key={w.id} onClick={() => pinTo(w.id)} className="flex w-full items-center gap-2 rounded-lg border border-edge/60 bg-elevated/30 px-3 py-2 text-left hover:border-fuchsia-500/40">
+                    <Workflow className="h-4 w-4 shrink-0 text-fuchsia-300" />
+                    <span className="flex-1 truncate text-sm text-slate-200">{w.title}</span>
+                    <span className="text-[11px] text-slate-500">{w.stage}</span>
+                  </button>
+                ))}
+                <button onClick={pinToNew} className="flex w-full items-center gap-2 rounded-lg border border-dashed border-edge/70 px-3 py-2 text-left text-sm text-slate-300 hover:border-brand-500/40 hover:text-white">
+                  <Plus className="h-4 w-4 shrink-0 text-brand-300" /> Create a new workspace from these findings
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {/* pinned toast */}
+      {pinned &&
+        createPortal(
+          <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2">
+            <Link to={`/workspaces/${pinned}`} className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-surface px-4 py-2.5 text-sm text-slate-200 shadow-2xl hover:border-emerald-400">
+              <Pin className="h-4 w-4 text-emerald-400" /> Pinned to workspace · <span className="font-medium text-emerald-300">Open</span>
+            </Link>
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }
 
 /* ----------------------------------------------------------------- node --- */
 function NodeCard({
-  node, output, error, ran, datasets, onDragStart, onConfig, onRemove, onStartConnect, onEndConnect,
+  node, output, error, ran, datasets, upstreamCols, onDragStart, onConfig, onRemove, onStartConnect, onEndConnect,
 }: {
   node: FlowNode
   output: Payload | undefined
   error?: string
   ran: boolean
   datasets: { id: string; name: string }[]
+  upstreamCols: { name: string; type: string }[]
   onDragStart: (e: React.PointerEvent) => void
   onConfig: (patch: Partial<FlowNode>) => void
   onRemove: () => void
@@ -317,6 +412,12 @@ function NodeCard({
               placeholder="Note…"
               className="w-full bg-transparent text-xs text-slate-300 placeholder:text-slate-600 focus:outline-none"
             />
+          ) : node.kind === 'filter' ? (
+            <TransformConfig node={node} cols={upstreamCols} onConfig={onConfig} kind="filter" />
+          ) : node.kind === 'group' ? (
+            <TransformConfig node={node} cols={upstreamCols} onConfig={onConfig} kind="group" />
+          ) : node.kind === 'join' ? (
+            <TransformConfig node={node} cols={upstreamCols} onConfig={onConfig} kind="join" />
           ) : (
             <p className="text-[11px] text-slate-500">{m.blurb}</p>
           )}
@@ -351,6 +452,78 @@ function NodeCard({
           <Link2 className="h-3 w-3" />
         </button>
       )}
+    </div>
+  )
+}
+
+const cfgSel = 'rounded border border-edge/70 bg-elevated/60 px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none'
+
+function TransformConfig({
+  node, cols, onConfig, kind,
+}: {
+  node: FlowNode
+  cols: { name: string; type: string }[]
+  onConfig: (patch: Partial<FlowNode>) => void
+  kind: 'filter' | 'group' | 'join'
+}) {
+  const set = (patch: Record<string, unknown>) => onConfig({ config: { ...node.config, ...patch } })
+  const stop = (e: React.PointerEvent) => e.stopPropagation()
+  if (!cols.length) return <p className="text-[11px] text-slate-600">Connect input, then Run to configure.</p>
+  const names = cols.map((c) => c.name)
+
+  if (kind === 'filter') {
+    return (
+      <div className="flex flex-wrap items-center gap-1" onPointerDown={stop}>
+        <select className={cfgSel} value={(node.config?.col as string) ?? names[0]} onChange={(e) => set({ col: e.target.value })}>
+          {names.map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+        <select className={cfgSel} value={(node.config?.op as string) ?? '>'} onChange={(e) => set({ op: e.target.value })}>
+          {['>', '>=', '<', '<=', '=', '!=', 'contains'].map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+        <input
+          className="w-16 rounded border border-edge/70 bg-elevated/60 px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none"
+          value={(node.config?.value as string) ?? ''}
+          onChange={(e) => set({ value: e.target.value })}
+          placeholder="value"
+        />
+      </div>
+    )
+  }
+  if (kind === 'group') {
+    const cats = cols.filter((c) => c.type !== 'number').map((c) => c.name)
+    const nums = cols.filter((c) => c.type === 'number').map((c) => c.name)
+    return (
+      <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-500" onPointerDown={stop}>
+        <select className={cfgSel} value={(node.config?.agg as string) ?? 'avg'} onChange={(e) => set({ agg: e.target.value })}>
+          {['avg', 'sum', 'count', 'min', 'max'].map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+        {(node.config?.agg as string) !== 'count' && (
+          <select className={cfgSel} value={(node.config?.measure as string) ?? nums[0] ?? ''} onChange={(e) => set({ measure: e.target.value })}>
+            {nums.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        )}
+        by
+        <select className={cfgSel} value={(node.config?.by as string) ?? cats[0] ?? names[0]} onChange={(e) => set({ by: e.target.value })}>
+          {(cats.length ? cats : names).map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+      </div>
+    )
+  }
+  // join — keys come from each input; we only know the first input's cols here,
+  // so expose keyA from upstream and a free-text keyB (defaults to same name).
+  return (
+    <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-500" onPointerDown={stop}>
+      on
+      <select className={cfgSel} value={(node.config?.keyA as string) ?? names[0]} onChange={(e) => set({ keyA: e.target.value, keyB: (node.config?.keyB as string) ?? e.target.value })}>
+        {names.map((n) => <option key={n} value={n}>{n}</option>)}
+      </select>
+      =
+      <input
+        className="w-20 rounded border border-edge/70 bg-elevated/60 px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none"
+        value={(node.config?.keyB as string) ?? (node.config?.keyA as string) ?? names[0]}
+        onChange={(e) => set({ keyB: e.target.value })}
+        placeholder="key in B"
+      />
     </div>
   )
 }

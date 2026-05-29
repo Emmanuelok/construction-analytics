@@ -7,7 +7,7 @@
  * (the app wires in parse/insights/crossdataset as the compute step).
  * ========================================================================== */
 
-export type NodeKind = 'dataset' | 'profile' | 'insights' | 'crosslink' | 'chart' | 'note'
+export type NodeKind = 'dataset' | 'filter' | 'group' | 'join' | 'profile' | 'insights' | 'crosslink' | 'chart' | 'note'
 
 export type FlowNode = {
   id: string
@@ -117,6 +117,7 @@ export function validate(graph: FlowGraph): string[] {
     if (n.kind === 'dataset' && ins > 0) issues.push(`“${n.title}” is a source but has an input wired in.`)
     if (n.kind !== 'dataset' && n.kind !== 'note' && ins === 0) issues.push(`“${n.title}” has no input connected.`)
     if (n.kind === 'crosslink' && ins === 1) issues.push(`“${n.title}” needs at least two datasets to link.`)
+    if (n.kind === 'join' && ins < 2) issues.push(`“${n.title}” needs two inputs to join.`)
   }
   return issues
 }
