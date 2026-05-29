@@ -38,7 +38,13 @@ export function copilotStatus(): Promise<CopilotStatus> {
   return statusPromise
 }
 
-async function invoke<T>(mode: 'workspace' | 'ask', prompt: string, context?: string): Promise<{ ok: true; data: T; model?: string } | { ok: false; error: string }> {
+export type FlowPlan = {
+  nodes: { id: string; kind: string; title?: string; datasetId?: string }[]
+  edges: { from: string; to: string }[]
+  rationale?: string
+}
+
+async function invoke<T>(mode: 'workspace' | 'ask' | 'flow', prompt: string, context?: string): Promise<{ ok: true; data: T; model?: string } | { ok: false; error: string }> {
   try {
     const res = await fetch('/api/copilot', {
       method: 'POST',
@@ -59,4 +65,8 @@ export function workspaceCopilot(prompt: string, context: string) {
 
 export function askCopilot(question: string, context: string) {
   return invoke<AnalystAnswer>('ask', question, context)
+}
+
+export function flowCopilot(prompt: string, context: string) {
+  return invoke<FlowPlan>('flow', prompt, context)
 }

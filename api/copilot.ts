@@ -63,6 +63,40 @@ const ASK_TOOL = {
   },
 }
 
+const FLOW_TOOL = {
+  name: 'flow_plan',
+  description:
+    'Design a directed data-flow graph for the Flow Studio canvas. Use node kinds: ' +
+    'dataset (a source; set datasetId), filter, group, join, profile, insights, crosslink, chart, note. ' +
+    'Dataset nodes have no inputs; every other node must be the target of at least one edge. ' +
+    'crosslink and join need ≥2 inputs. The graph must be acyclic.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      nodes: {
+        type: 'array',
+        description: 'The nodes. Give each a unique short id (n1, n2, …).',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            kind: { type: 'string', enum: ['dataset', 'filter', 'group', 'join', 'profile', 'insights', 'crosslink', 'chart', 'note'] },
+            title: { type: 'string' },
+            datasetId: { type: 'string', description: 'For dataset nodes only — one of the provided dataset ids.' },
+          },
+          required: ['id', 'kind'],
+        },
+      },
+      edges: {
+        type: 'array',
+        items: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'] },
+      },
+      rationale: { type: 'string', description: 'One sentence on what this flow does.' },
+    },
+    required: ['nodes', 'edges'],
+  },
+}
+
 export default async function handler(req: Request): Promise<Response> {
   const key = process.env.ANTHROPIC_API_KEY
 
@@ -76,12 +110,12 @@ export default async function handler(req: Request): Promise<Response> {
   } catch {
     return json({ error: 'Invalid JSON body' }, 400)
   }
-  const mode = body.mode === 'ask' ? 'ask' : 'workspace'
+  const mode = body.mode === 'ask' ? 'ask' : body.mode === 'flow' ? 'flow' : 'workspace'
   const prompt = (body.prompt ?? '').slice(0, 6000)
   const context = (body.context ?? '').slice(0, 12000)
   if (!prompt) return json({ error: 'Missing prompt' }, 400)
 
-  const tool = mode === 'ask' ? ASK_TOOL : WORKSPACE_TOOL
+  const tool = mode === 'ask' ? ASK_TOOL : mode === 'flow' ? FLOW_TOOL : WORKSPACE_TOOL
   const client = new Anthropic({ apiKey: key })
 
   try {

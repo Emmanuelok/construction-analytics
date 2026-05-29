@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import {
@@ -24,13 +24,15 @@ import {
   ShieldAlert,
   PieChart,
   Pin,
+  Loader2,
 } from 'lucide-react'
 import { PageHeader, Badge } from '@/components/ui'
 import { BarSeries } from '@/components/charts'
 import { useFlows } from '@/store/flows'
 import { useWorkspaces } from '@/store/workspaces'
 import { runFlow, validate, wouldCycle, type FlowNode, type NodeKind } from '@/lib/flow'
-import { analyzableCatalog, buildFlowFromPrompt, computeNode, type Payload } from '@/lib/flow-compute'
+import { analyzableCatalog, buildFlowFromPrompt, computeNode, flowPlanToGraph, type Payload } from '@/lib/flow-compute'
+import { copilotStatus, flowCopilot } from '@/lib/copilot'
 import type { FindingKind } from '@/lib/insights'
 import { ACCENT, type Accent } from '@/lib/nav'
 import { cn } from '@/lib/cn'
@@ -69,9 +71,17 @@ export default function FlowStudio() {
   const [drag, setDrag] = useState<{ id: string; dx: number; dy: number } | null>(null)
   const [connecting, setConnecting] = useState<Connecting>(null)
   const [prompt, setPrompt] = useState('')
+  const [aiEnabled, setAiEnabled] = useState(false)
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiError, setAiError] = useState('')
 
   const issues = useMemo(() => validate(graph), [graph])
   const datasets = useMemo(() => analyzableCatalog(), [])
+
+  // light up the LLM planner only when the server copilot is configured
+  useEffect(() => {
+    copilotStatus().then((s) => setAiEnabled(s.enabled))
+  }, [])
 
   /* ---- run the whole graph through the real engines ---- */
   const run = useCallback(() => {
@@ -119,21 +129,42 @@ export default function FlowStudio() {
     })
   }
 
-  /* ---- agentic: build a flow graph from a prompt ---- */
-  function generate() {
-    const g = buildFlowFromPrompt(prompt || 'profile a dataset, find insights and chart it')
+  function applyGraph(g: ReturnType<typeof buildFlowFromPrompt>) {
     setGraph(g)
     setResults(new Map())
     setErrors(new Map())
     setRan(false)
     setPrompt('')
-    // auto-run after a tick so results show immediately
     setTimeout(() => {
       const res = runFlow<Payload>(g, (node, inputs) => computeNode(node, inputs))
       setResults(res.outputs)
       setErrors(res.errors)
       setRan(true)
     }, 60)
+  }
+
+  /* ---- agentic: diagram a flow from a prompt. Uses the Claude copilot when a
+   *      server key is configured; always falls back to the deterministic
+   *      planner so it works with no backend. ---- */
+  async function generate() {
+    const q = prompt.trim() || 'profile a dataset, find insights and chart it'
+    setAiError('')
+    if (aiEnabled) {
+      setAiBusy(true)
+      const context = `Available datasets (id — name):\n${datasets.map((d) => `- ${d.id} — ${d.name}`).join('\n')}`
+      const res = await flowCopilot(q, context)
+      setAiBusy(false)
+      if (res.ok && res.data?.nodes?.length) {
+        const g = flowPlanToGraph(res.data)
+        if (validate(g).length === 0 || g.nodes.length > 0) {
+          applyGraph(g)
+          return
+        }
+      }
+      // fall through to deterministic on any failure/empty
+      if (!res.ok) setAiError(res.error)
+    }
+    applyGraph(buildFlowFromPrompt(q))
   }
 
   /* ---- drag handling (pointer events on the canvas) ---- */
@@ -183,76 +214,78 @@ export default function FlowStudio() {
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        icon={Workflow}
-        accent="fuchsia"
-        eyebrow="Studio"
-        title="Flow Studio"
-        description="An open canvas to play with data. Drop nodes, wire a data flow, and run it — every node computes for real (profile, insights, cross-link, chart). Or describe a flow and let the agent diagram it."
-        actions={
-          <>
-            <button onClick={clear} className="btn-ghost" disabled={!graph.nodes.length}>
-              <Trash2 className="h-4 w-4" /> Clear
+    <div className="flex h-full flex-col">
+      {/* slim toolbar — title, agentic prompt, palette, actions in one bar */}
+      <div className="z-10 shrink-0 border-b border-edge/60 bg-base/80 px-4 py-2.5 backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-fuchsia-500/15 text-fuchsia-300 ring-1 ring-fuchsia-500/30">
+            <Workflow className="h-4 w-4" />
+          </span>
+          <span className="mr-1 text-sm font-semibold text-slate-100">Flow Studio</span>
+
+          {/* agentic prompt */}
+          <div className="flex min-w-[260px] flex-1 items-center gap-2 rounded-xl border border-edge/70 bg-elevated/40 px-2.5 py-1.5 focus-within:border-fuchsia-500/50">
+            <Wand2 className="h-4 w-4 shrink-0 text-fuchsia-400" />
+            <input
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && generate()}
+              placeholder="Describe a data flow — “profile cost benchmarks, find insights & chart them”…"
+              className="flex-1 bg-transparent text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
+            />
+            <button onClick={generate} disabled={aiBusy} className="btn-primary !px-2.5 !py-1.5 !text-xs">
+              {aiBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} Diagram it
             </button>
+          </div>
+
+          <div className="flex items-center gap-1.5">
             {runFindings.length > 0 && (
-              <button onClick={() => setPinOpen(true)} className="btn-ghost">
-                <Pin className="h-4 w-4" /> Pin {runFindings.length} finding{runFindings.length > 1 ? 's' : ''}
+              <button onClick={() => setPinOpen(true)} className="btn-ghost !px-2.5 !py-1.5 !text-xs">
+                <Pin className="h-3.5 w-3.5" /> Pin {runFindings.length}
               </button>
             )}
-            <button onClick={run} className="btn-primary" disabled={!graph.nodes.length}>
-              <Play className="h-4 w-4" /> Run flow
+            <button onClick={clear} className="btn-ghost !px-2.5 !py-1.5 !text-xs" disabled={!graph.nodes.length}>
+              <Trash2 className="h-3.5 w-3.5" /> Clear
             </button>
-          </>
-        }
-      />
+            <button onClick={run} className="btn-primary !px-3 !py-1.5 !text-xs" disabled={!graph.nodes.length}>
+              <Play className="h-3.5 w-3.5" /> Run flow
+            </button>
+          </div>
+        </div>
 
-      {/* agentic prompt bar */}
-      <div className="flex items-center gap-2 rounded-2xl border border-edge/70 bg-elevated/40 p-2 focus-within:border-fuchsia-500/50">
-        <Wand2 className="ml-2 h-4 w-4 shrink-0 text-fuchsia-400" />
-        <input
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && generate()}
-          placeholder="Describe a data flow — e.g. “profile cost benchmarks, find insights and chart them”, or “cross-link cost, carbon & supplier across regions”"
-          className="flex-1 bg-transparent px-1 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
-        />
-        <button onClick={generate} className="btn-primary !px-3 !py-2">
-          <Sparkles className="h-4 w-4" /> Diagram it
-        </button>
+        {/* palette row */}
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-slate-600">Add</span>
+          {PALETTE.map((k) => {
+            const m = NODE_META[k]
+            const a = ACCENT[m.accent]
+            return (
+              <button
+                key={k}
+                onClick={() => add(k)}
+                title={m.blurb}
+                className={cn('inline-flex items-center gap-1.5 rounded-lg border border-edge/70 bg-elevated/40 px-2 py-1 text-[11px] font-medium transition-colors hover:border-fuchsia-500/40', a.text)}
+              >
+                <m.icon className="h-3 w-3" /> {m.label}
+              </button>
+            )
+          })}
+          {aiError && <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-rose-300"><AlertTriangle className="h-3 w-3" /> {aiError}</span>}
+          {issues.length > 0 && (
+            <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-amber-300" title={issues.join('\n')}>
+              <AlertTriangle className="h-3 w-3" /> {issues.length} issue{issues.length > 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* palette */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Add node</span>
-        {PALETTE.map((k) => {
-          const m = NODE_META[k]
-          const a = ACCENT[m.accent]
-          return (
-            <button
-              key={k}
-              onClick={() => add(k)}
-              title={m.blurb}
-              className={cn('inline-flex items-center gap-1.5 rounded-lg border border-edge/70 bg-elevated/40 px-2.5 py-1.5 text-xs font-medium transition-colors hover:border-fuchsia-500/40', a.text)}
-            >
-              <m.icon className="h-3.5 w-3.5" /> {m.label}
-            </button>
-          )
-        })}
-        {issues.length > 0 && (
-          <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-amber-300" title={issues.join('\n')}>
-            <AlertTriangle className="h-3.5 w-3.5" /> {issues.length} issue{issues.length > 1 ? 's' : ''}
-          </span>
-        )}
-      </div>
-
-      {/* canvas */}
+      {/* canvas — fills all remaining viewport height */}
       <div
         ref={canvasRef}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        className="relative h-[640px] w-full overflow-hidden rounded-2xl border border-edge/70 bg-base/60"
-        style={{ backgroundImage: 'radial-gradient(circle, rgba(148,163,184,0.12) 1px, transparent 1px)', backgroundSize: '22px 22px' }}
+        className="relative min-h-0 flex-1 overflow-hidden bg-base/60"
+        style={{ backgroundImage: 'radial-gradient(circle, rgba(148,163,184,0.12) 1px, transparent 1px)', backgroundSize: '24px 24px' }}
       >
         {graph.nodes.length === 0 && (
           <div className="absolute inset-0 grid place-items-center text-center">

@@ -8,7 +8,7 @@ import { filterTable, groupTable, joinTables, type Agg, type FilterOp } from '@/
 import { analyze, type Finding } from '@/lib/insights'
 import { analyzeCross, type CrossDataset, type CrossFinding } from '@/lib/crossdataset'
 import { CATALOG, getDataset, type CatalogDataset } from '@/data/catalog'
-import { uid, type FlowGraph, type FlowNode, type NodeKind } from '@/lib/flow'
+import { topoOrder, uid, wouldCycle, type FlowGraph, type FlowNode, type NodeKind } from '@/lib/flow'
 
 /* What flows down an edge: a tagged payload so a node can react to its input. */
 export type Payload =
@@ -220,4 +220,73 @@ export function buildFlowFromPrompt(prompt: string): FlowGraph {
   }
   void y
   return { nodes, edges }
+}
+
+/* ------------------------------------------- LLM flow plan → laid-out graph */
+const VALID_KINDS = new Set<NodeKind>(['dataset', 'filter', 'group', 'join', 'profile', 'insights', 'crosslink', 'chart', 'note'])
+const NODE_TITLE: Record<NodeKind, string> = {
+  dataset: 'Dataset', filter: 'Filter', group: 'Group', join: 'Join',
+  profile: 'Profile', insights: 'Insights', crosslink: 'Cross-link', chart: 'Chart', note: 'Note',
+}
+
+/** Convert an LLM-authored plan (ids + kinds + edges) into a runnable, laid-out
+ *  FlowGraph: validates kinds, resolves dataset ids (fuzzy-matched to the
+ *  catalog), drops edges that would create cycles, and assigns x/y by depth so
+ *  the diagram reads left→right. Defensive — bad model output can't break it. */
+export function flowPlanToGraph(plan: {
+  nodes: { id: string; kind: string; title?: string; datasetId?: string }[]
+  edges: { from: string; to: string }[]
+}): FlowGraph {
+  const pool = analyzableCatalog()
+  const resolveDataset = (hint?: string): string => {
+    if (!hint) return pool[0]?.id ?? ''
+    const h = hint.toLowerCase()
+    return (pool.find((d) => d.id === hint) ?? pool.find((d) => d.name.toLowerCase().includes(h) || h.includes(d.id)))?.id ?? pool[0]?.id ?? ''
+  }
+
+  const idMap = new Map<string, string>()
+  const nodes: FlowNode[] = []
+  for (const pn of plan.nodes ?? []) {
+    const kind = pn.kind as NodeKind
+    if (!VALID_KINDS.has(kind)) continue
+    const id = uid('n')
+    idMap.set(pn.id, id)
+    nodes.push({
+      id,
+      kind,
+      title: pn.title || NODE_TITLE[kind],
+      config: kind === 'dataset' ? { datasetId: resolveDataset(pn.datasetId || pn.title) } : undefined,
+      x: 0,
+      y: 0,
+    })
+  }
+  if (!nodes.length) return buildFlowFromPrompt('')
+
+  const edges: FlowGraph['edges'] = []
+  let g: FlowGraph = { nodes, edges }
+  for (const pe of plan.edges ?? []) {
+    const from = idMap.get(pe.from)
+    const to = idMap.get(pe.to)
+    if (!from || !to || from === to) continue
+    if (edges.some((e) => e.from === from && e.to === to)) continue
+    if (wouldCycle(g, from, to)) continue
+    edges.push({ id: uid('e'), from, to })
+    g = { nodes, edges }
+  }
+
+  const order = topoOrder(g).order
+  const depth = new Map<string, number>()
+  for (const id of order) {
+    const ins = edges.filter((e) => e.to === id).map((e) => e.from)
+    depth.set(id, ins.length ? Math.max(...ins.map((s) => (depth.get(s) ?? 0) + 1)) : 0)
+  }
+  const rowAt = new Map<number, number>()
+  for (const n of nodes) {
+    const d = depth.get(n.id) ?? 0
+    const row = rowAt.get(d) ?? 0
+    rowAt.set(d, row + 1)
+    n.x = 60 + d * 300
+    n.y = 70 + row * 190
+  }
+  return g
 }
