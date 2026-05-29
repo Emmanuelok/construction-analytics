@@ -108,7 +108,7 @@ export function profileVector(p: UserProfile): Map<string, number> {
   return v
 }
 
-function datasetTokens(d: CatalogDataset): string[] {
+export function datasetTokens(d: CatalogDataset): string[] {
   const cat = d.category.toLowerCase()
   const catWords = cat.split(/[^a-z0-9]+/).filter((w) => w.length > 2)
   return [cat, d.modality.toLowerCase(), ...catWords, ...d.tags.map((t) => t.toLowerCase())]
@@ -337,6 +337,7 @@ export function interpret(
       out.push({ id: `rec-${r.dataset.id}`, title: r.dataset.name, subtitle: r.reasons[0], group: 'Recommended', accent: r.dataset.accent, datasetId: r.dataset.id }),
     )
     out.push({ id: 'a-data', title: 'Browse the Data Center', group: 'Actions', accent: 'emerald', to: '/data' })
+    out.push({ id: 'a-ws', title: 'Start a workspace', subtitle: 'Frame a problem → ship', group: 'Actions', accent: 'violet', to: '/workspaces' })
     out.push({ id: 'a-analyze', title: 'Open Analysis Studio', group: 'Actions', accent: 'violet', to: '/analyze' })
     out.push({ id: 'a-sell', title: 'Sell your data', group: 'Actions', accent: 'lime', to: '/sell' })
     out.push({ id: 'a-profile', title: 'Edit your profile & interests', group: 'Actions', accent: 'cyan', to: '/?profile=1' })
@@ -386,4 +387,76 @@ export function interpret(
   if (!out.length) out.push({ id: 'ask-fallback', title: `Ask AEC: “${query.trim()}”`, subtitle: 'Natural-language analytics', group: 'Answers', accent: 'violet', to: `/ask?q=${encodeURIComponent(query.trim())}` })
 
   return out
+}
+
+/* ============================================ problem-driven workspace copilot */
+const STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'for', 'to', 'of', 'in', 'on', 'our', 'we', 'with', 'by', 'at', 'is', 'are', 'be',
+  'that', 'this', 'it', 'how', 'can', 'do', 'does', 'need', 'want', 'using', 'use', 'data', 'dataset', 'datasets',
+  'across', 'from', 'into', 'more', 'less', 'project', 'projects', 'build', 'building', 'buildings', 'help', 'find', 'should',
+])
+
+export function tokenizeProblem(text: string): string[] {
+  const toks = text
+    .toLowerCase()
+    .split(/[^a-z0-9µ²]+/i)
+    .map((w) => w.trim())
+    .filter((w) => w.length > 3 && !STOPWORDS.has(w))
+  return Array.from(new Set(toks))
+}
+
+/** Rank datasets by relevance to a free-text problem + sectors, with reasons. */
+export function recommendForProblem(problem: string, sectors: string[], all: CatalogDataset[], limit = 6): Recommendation[] {
+  const ptoks = tokenizeProblem(problem)
+  const secToks = sectors.map((s) => s.toLowerCase())
+  const scored = all.map((d) => {
+    const hay = `${d.name} ${d.provider} ${d.category} ${d.modality} ${d.tags.join(' ')} ${d.description}`.toLowerCase()
+    const matched: string[] = []
+    let s = 0
+    for (const t of ptoks) if (hay.includes(t)) { s += 1; matched.push(t) }
+    let secMatch = ''
+    for (const sec of secToks) if (hay.includes(sec)) { s += 0.8; secMatch = sec }
+    s += ((d.quality / 100) * 0.6 + (d.rating / 5) * 0.4) * 0.8
+    const reasons: string[] = []
+    if (matched.length) reasons.push(`Relevant to ${matched.slice(0, 3).map((m) => `“${m}”`).join(', ')}`)
+    if (secMatch) reasons.push(`Covers ${sectors.find((x) => x.toLowerCase() === secMatch) ?? secMatch}`)
+    if (d.quality >= 95 && reasons.length < 2) reasons.push(`Top quality · ${d.quality}%`)
+    if (!reasons.length) reasons.push(`${d.category} · ${d.modality}`)
+    return { dataset: d, score: s, reasons: reasons.slice(0, 2) }
+  })
+  return scored.filter((r) => r.score > 0.4).sort((a, b) => b.score - a.score).slice(0, limit)
+}
+
+const HYPOTHESIS_BANK: { kw: string[]; items: string[] }[] = [
+  { kw: ['carbon', 'embodied', 'co2', 'net-zero', 'esg', 'sustainab'], items: ['Switching to lower-carbon concrete mixes cuts A1–A3 embodied carbon by ≥15%.', 'Structural frame + substructure drive >50% of embodied carbon on this typology.', 'EAF structural steel closes most of the net-zero gap on in-design projects.'] },
+  { kw: ['cost', 'budget', 'overrun', 'estimat', 'benchmark', 'price'], items: ['MEP density explains most of the cost-per-m² variance across sectors.', 'PPP/EPCM delivery shows systematically higher cost variance.', 'Design change orders correlate with >60% of forecast overruns.'] },
+  { kw: ['schedule', 'delay', 'critical', 'time', 'slip'], items: ['MEP rough-in is the dominant critical-path constraint.', 'Late material deliveries account for most slip beyond 30 days.', 'Float erosion concentrates in envelope and fit-out trades.'] },
+  { kw: ['supplier', 'procure', 'bid', 'vendor', 'lead'], items: ['Dual-sourcing glazing materially reduces façade lead-time risk.', 'On-time delivery rate predicts schedule slip better than price.'] },
+  { kw: ['defect', 'quality', 'safety', 'ncr', 'rework'], items: ['Concrete and envelope trades generate most high-severity defects.', 'CV defect detection reaches usable precision above 0.85 confidence.'] },
+  { kw: ['model', 'train', 'machine', 'llm', 'nlp', 'vision'], items: ['A multi-modal corpus (RFI pairs + classified IFC + defect imagery) lifts domain-model accuracy.', 'Anonymized, license-clean data suffices to fine-tune a useful construction model.'] },
+]
+
+export function suggestHypotheses(problem: string): string[] {
+  const p = problem.toLowerCase()
+  const out: string[] = []
+  for (const b of HYPOTHESIS_BANK) if (b.kw.some((k) => p.includes(k))) out.push(...b.items)
+  if (!out.length) out.push('The available data is sufficient to answer the core question.', 'A measurable baseline can be established from benchmark datasets.', 'The biggest lever sits in one or two dominant drivers.')
+  return Array.from(new Set(out)).slice(0, 4)
+}
+
+export function suggestTasks(stage: string): string[] {
+  switch (stage) {
+    case 'frame':
+      return ['Write a one-line problem statement', 'Define the target metric & baseline', 'List stakeholders & constraints']
+    case 'assemble':
+      return ['Attach 2–3 relevant datasets', 'Check licenses & coverage', 'Note the data gaps to fill']
+    case 'analyze':
+      return ['Profile each dataset in Analysis Studio', 'Test the top hypothesis', 'Quantify the dominant driver']
+    case 'decide':
+      return ['Validate or reject each hypothesis', 'Record the decision & rationale', 'Estimate impact on the target metric']
+    case 'produce':
+      return ['Draft the output (report / model / takeoff)', 'Review with stakeholders', 'Ship & log the artifact']
+    default:
+      return ['Define the next concrete step']
+  }
 }

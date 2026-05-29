@@ -16,11 +16,14 @@ import {
   Gauge,
   Layers,
   Heart,
+  FolderKanban,
+  Plus,
 } from 'lucide-react'
-import { Card, PageHeader, StatTile, Badge, RingProgress } from '@/components/ui'
+import { Card, StatTile, Badge, RingProgress, ProgressBar } from '@/components/ui'
 import { useStudio } from '@/store/studio'
 import { useProfile } from '@/store/profile'
 import { useAuth } from '@/store/auth'
+import { useWorkspaces, workspaceProgress, STAGES } from '@/store/workspaces'
 import { ACCENT, NAV } from '@/lib/nav'
 import { recommend, insightsFor, greeting, type Recommendation } from '@/lib/intelligence'
 import type { CatalogDataset } from '@/data/catalog'
@@ -102,6 +105,7 @@ export default function ForYou() {
   const { user } = useAuth()
   const { profile, signals } = useProfile()
   const { allDatasets, library, listings, downloads, getAny } = useStudio()
+  const { workspaces } = useWorkspaces()
 
   const ownedIds = useMemo(() => new Set([...library.map((l) => l.datasetId), ...listings.map((l) => l.id)]), [library, listings])
   const recs = useMemo(() => recommend(allDatasets, profile, signals, { excludeIds: ownedIds, limit: 6 }), [allDatasets, profile, signals, ownedIds])
@@ -212,6 +216,52 @@ export default function ForYou() {
           })}
         </div>
       )}
+
+      {/* ------------------------------------------------------ your workspaces */}
+      <div>
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <FolderKanban className="h-4 w-4 text-violet-300" />
+            <h2 className="text-[15px] font-semibold text-slate-100">Your workspaces</h2>
+          </div>
+          <Link to="/workspaces" className="text-sm text-slate-400 hover:text-slate-200">
+            All workspaces <ArrowRight className="inline h-3.5 w-3.5" />
+          </Link>
+        </div>
+        {workspaces.length > 0 ? (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {workspaces.slice(0, 3).map((w) => {
+              const p = workspaceProgress(w)
+              return (
+                <Link key={w.id} to={`/workspaces/${w.id}`}>
+                  <Card className="group flex h-full flex-col p-5" hover>
+                    <div className="flex items-center justify-between">
+                      <Badge variant="neutral" dot>{STAGES.find((s) => s.id === w.stage)?.label}</Badge>
+                      <span className="data-mono text-xs text-slate-500">{p}%</span>
+                    </div>
+                    <h3 className="mt-2 line-clamp-2 text-sm font-semibold text-slate-100 group-hover:text-white">{w.title}</h3>
+                    <p className="mt-1 line-clamp-2 flex-1 text-xs leading-relaxed text-slate-400">{w.problem || 'No problem statement yet.'}</p>
+                    <div className="mt-3"><ProgressBar value={p} accent={w.accent} /></div>
+                  </Card>
+                </Link>
+              )
+            })}
+          </div>
+        ) : (
+          <Card className="flex flex-col items-start gap-3 p-6 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span className="grid h-10 w-10 place-items-center rounded-xl bg-violet-500/10 ring-1 ring-violet-500/30">
+                <FolderKanban className="h-5 w-5 text-violet-300" />
+              </span>
+              <div>
+                <h3 className="text-sm font-semibold text-slate-100">Frame your first problem</h3>
+                <p className="mt-0.5 text-sm text-slate-400">Turn a goal into a workspace — the copilot assembles data, hypotheses & next steps.</p>
+              </div>
+            </div>
+            <Link to="/workspaces" className="btn-primary shrink-0"><Plus className="h-4 w-4" /> New workspace</Link>
+          </Card>
+        )}
+      </div>
 
       {/* ------------------------------------------------- recommended for you */}
       <div>

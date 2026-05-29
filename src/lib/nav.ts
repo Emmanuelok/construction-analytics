@@ -1,6 +1,7 @@
 import {
   Home,
   LayoutDashboard,
+  FolderKanban,
   Gauge,
   Sparkles,
   Database,
@@ -50,6 +51,7 @@ export const NAV: NavItem[] = [
   { path: '/overview', label: 'Platform Overview', blurb: 'The unified studio for the built environment', icon: LayoutDashboard, accent: 'sky', group: 'Studio' },
   { path: '/data', label: 'Data Center', blurb: 'Browse, preview & download AEC datasets', icon: Store, accent: 'emerald', group: 'Studio' },
   { path: '/analyze', label: 'Analysis Studio', blurb: 'Bring data, profile it, chart & ask AI', icon: Microscope, accent: 'violet', group: 'Studio', tag: 'AI' },
+  { path: '/workspaces', label: 'Workspaces', blurb: 'Frame a problem → assemble, analyze, decide & ship', icon: FolderKanban, accent: 'violet', group: 'Studio', tag: 'NEW' },
   { path: '/sell', label: 'Seller Studio', blurb: 'Upload, auto-tag, price & publish data', icon: UploadCloud, accent: 'lime', group: 'Studio' },
   { path: '/library', label: 'My Library', blurb: 'Cart, licenses & downloads', icon: Library, accent: 'cyan', group: 'Studio' },
   { path: '/ask', label: 'Ask AEC', blurb: 'Natural-language analytics over everything', icon: Sparkles, accent: 'violet', group: 'Studio', tag: 'AI' },

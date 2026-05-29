@@ -5,6 +5,7 @@ import { router } from './router'
 import { StudioProvider } from './store/studio'
 import { AuthProvider } from './store/auth'
 import { ProfileProvider } from './store/profile'
+import { WorkspacesProvider } from './store/workspaces'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -12,7 +13,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <AuthProvider>
       <ProfileProvider>
         <StudioProvider>
-          <RouterProvider router={router} />
+          <WorkspacesProvider>
+            <RouterProvider router={router} />
+          </WorkspacesProvider>
         </StudioProvider>
       </ProfileProvider>
     </AuthProvider>
