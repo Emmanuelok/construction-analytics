@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -20,11 +20,16 @@ import {
   RotateCcw,
   ArrowRight,
   MessageSquarePlus,
+  Wand2,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react'
 import { Card, CardHeader, Badge, ProgressBar, IconBadge } from '@/components/ui'
 import { useWorkspaces, workspaceProgress, STAGES, type Stage, type HypothesisStatus } from '@/store/workspaces'
 import { useStudio } from '@/store/studio'
+import { useProfile } from '@/store/profile'
 import { recommendForProblem, suggestHypotheses, suggestTasks } from '@/lib/intelligence'
+import { copilotStatus, workspaceCopilot, type WorkspacePlan } from '@/lib/copilot'
 import { ACCENT } from '@/lib/nav'
 import { cn } from '@/lib/cn'
 

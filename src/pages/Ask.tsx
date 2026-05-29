@@ -12,8 +12,8 @@ import {
   Code2,
   Table2,
   CircleDot,
+  Wand2,
 } from 'lucide-react'
-import { Wand2, AlertTriangle } from 'lucide-react'
 import { Card, PageHeader, Badge } from '@/components/ui'
 import { BarSeries, AreaTrend } from '@/components/charts'
 import { PROJECTS, SUPPLIERS } from '@/data/platform'
