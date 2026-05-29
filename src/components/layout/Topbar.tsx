@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { Bell, ChevronRight, Globe, Menu, Search, Sparkles, LogOut, Library, UploadCloud, ChevronDown, LogIn } from 'lucide-react'
 import { NAV } from '@/lib/nav'
 import { useAuth } from '@/store/auth'
@@ -14,8 +14,8 @@ function initials(user: { name?: string; email: string }) {
 
 export function Topbar({ onMenu }: { onMenu: () => void }) {
   const { pathname } = useLocation()
-  const navigate = useNavigate()
   const current = NAV.find((n) => n.path === pathname) ?? NAV[0]
+  const openPalette = () => window.dispatchEvent(new CustomEvent('aec:command'))
   const { user, signOut, mode } = useAuth()
   const [authOpen, setAuthOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -45,7 +45,7 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
 
       <div className="ml-auto flex items-center gap-2">
         <button
-          onClick={() => navigate('/ask')}
+          onClick={openPalette}
           className="hidden items-center gap-2 rounded-xl border border-edge/70 bg-elevated/50 px-3 py-2 text-sm text-slate-400 transition-colors hover:border-brand-500/40 hover:text-slate-200 md:flex"
         >
           <Search className="h-4 w-4" />
@@ -59,7 +59,7 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
         </button>
 
         <button
-          onClick={() => navigate('/ask')}
+          onClick={openPalette}
           className="grid h-9 w-9 place-items-center rounded-xl border border-edge/70 bg-elevated/50 text-violet-400 hover:border-violet-500/40 md:hidden"
         >
           <Sparkles className="h-4 w-4" />

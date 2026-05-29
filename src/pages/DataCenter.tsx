@@ -14,9 +14,12 @@ import {
   ArrowRight,
   Gauge,
   Download,
+  Sparkles,
 } from 'lucide-react'
 import { Card, PageHeader, StatTile, Badge, RingProgress } from '@/components/ui'
 import { useStudio } from '@/store/studio'
+import { useProfile } from '@/store/profile'
+import { recommend } from '@/lib/intelligence'
 import { CATEGORIES, MODALITIES, LICENSES, type CatalogDataset, type License } from '@/data/catalog'
 import { ACCENT } from '@/lib/nav'
 import { cn } from '@/lib/cn'
@@ -119,7 +122,8 @@ function DatasetCard({ d, isOwn }: { d: CatalogDataset; isOwn?: boolean }) {
 type Sort = 'popular' | 'quality' | 'newest' | 'price-low'
 
 export default function DataCenter() {
-  const { allDatasets, listings, cart } = useStudio()
+  const { allDatasets, listings, library, cart } = useStudio()
+  const { profile, signals } = useProfile()
   const [q, setQ] = useState('')
   const [cat, setCat] = useState('All')
   const [modality, setModality] = useState('All')
@@ -127,6 +131,11 @@ export default function DataCenter() {
   const [sort, setSort] = useState<Sort>('popular')
 
   const listingIds = useMemo(() => new Set(listings.map((l) => l.id)), [listings])
+  const ownedIds = useMemo(() => new Set([...library.map((l) => l.datasetId), ...listings.map((l) => l.id)]), [library, listings])
+  const recs = useMemo(
+    () => (profile.onboarded ? recommend(allDatasets, profile, signals, { excludeIds: ownedIds, limit: 3 }) : []),
+    [allDatasets, profile, signals, ownedIds],
+  )
 
   const filtered = useMemo(() => {
     let r = allDatasets.filter((d) => {
@@ -176,6 +185,22 @@ export default function DataCenter() {
         <StatTile label="Avg quality score" value={`${avgQuality}%`} icon={Gauge} accent="cyan" />
         <StatTile label="Open / free datasets" value={String(freeCount)} icon={BadgeCheck} accent="teal" sub="download with no license" />
       </div>
+
+      {/* Recommended for you */}
+      {recs.length > 0 && (
+        <div>
+          <div className="mb-4 flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-brand-300" />
+            <h2 className="text-[15px] font-semibold text-slate-100">Recommended for you</h2>
+            <Badge variant="brand">personalized</Badge>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {recs.map((r) => (
+              <DatasetCard key={r.dataset.id} d={r.dataset} isOwn={listingIds.has(r.dataset.id)} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <Card className="p-4">

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -16,13 +16,16 @@ import {
   Calendar,
   HardDrive,
   Server,
+  Sparkles,
 } from 'lucide-react'
 import { Card, CardHeader, Badge, RingProgress, KeyValue, IconBadge } from '@/components/ui'
 import { useStudio } from '@/store/studio'
 import { useAuth } from '@/store/auth'
+import { useProfile } from '@/store/profile'
 import type { CatalogDataset, DatasetFile, License } from '@/data/catalog'
 import { parseAny, profile } from '@/lib/parse'
 import { downloadDatasetFile } from '@/lib/download'
+import { similarTo } from '@/lib/intelligence'
 import { ACCENT } from '@/lib/nav'
 import { cn } from '@/lib/cn'
 import { formatCurrency, formatNumber } from '@/lib/format'
@@ -50,10 +53,18 @@ function priceLabel(price: number | null) {
 
 export default function DatasetDetail() {
   const { id = '' } = useParams()
-  const { getAny, owns, inCart, addToCart, license, recordDownload } = useStudio()
+  const { getAny, owns, inCart, addToCart, license, recordDownload, allDatasets } = useStudio()
   const { user } = useAuth()
+  const { recordView } = useProfile()
   const [dlError, setDlError] = useState<string | null>(null)
   const d: CatalogDataset | undefined = getAny(id)
+  const similar = useMemo(() => (d ? similarTo(d, allDatasets, 4) : []), [d, allDatasets])
+
+  // Learn from what the user opens (powers personalization across the studio).
+  useEffect(() => {
+    if (d) recordView({ id: d.id, category: d.category, tags: d.tags })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d?.id])
 
   const preview = useMemo(() => {
     if (!d) return null
@@ -286,6 +297,33 @@ export default function DatasetDetail() {
           </Card>
         </div>
       </div>
+
+      {similar.length > 0 && (
+        <div>
+          <div className="mb-4 flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-brand-300" />
+            <h2 className="text-[15px] font-semibold text-slate-100">Similar datasets</h2>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {similar.map((s) => {
+              const sa = ACCENT[s.accent]
+              return (
+                <Link key={s.id} to={`/data/${s.id}`}>
+                  <Card className="flex h-full items-start gap-3 p-4" hover>
+                    <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl text-xs font-bold', sa.bg, sa.text)}>
+                      {s.modality.slice(0, 3)}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-slate-200">{s.name}</div>
+                      <div className="mt-0.5 truncate text-xs text-slate-500">{s.category} · {priceLabel(s.price)}</div>
+                    </div>
+                  </Card>
+                </Link>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

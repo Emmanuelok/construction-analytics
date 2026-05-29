@@ -1,6 +1,7 @@
 import { lazy } from 'react'
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
+import ForYou from '@/pages/ForYou'
 import Overview from '@/pages/Overview'
 import NotFound from '@/pages/NotFound'
 
@@ -37,7 +38,8 @@ export const router = createBrowserRouter(
       path: '/',
       element: <AppShell />,
       children: [
-        { index: true, element: <Overview /> },
+        { index: true, element: <ForYou /> },
+        { path: 'overview', element: <Overview /> },
         // Pillars
         { path: 'data', element: <DataCenter /> },
         { path: 'data/:id', element: <DatasetDetail /> },

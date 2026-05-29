@@ -3,6 +3,9 @@ import { Outlet, ScrollRestoration, useLocation } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
+import { CommandPalette } from '@/components/CommandPalette'
+import { Onboarding } from '@/components/Onboarding'
+import { useProfile } from '@/store/profile'
 
 function PageFallback() {
   return (
@@ -17,12 +20,29 @@ function PageFallback() {
 
 export function AppShell() {
   const [open, setOpen] = useState(false)
+  const [onbOpen, setOnbOpen] = useState(false)
   const { pathname } = useLocation()
+  const { profile } = useProfile()
 
   // Close the mobile drawer whenever the route changes.
   useEffect(() => {
     setOpen(false)
   }, [pathname])
+
+  // First-visit onboarding (once per session) + open on demand via event.
+  useEffect(() => {
+    if (!profile.onboarded && !sessionStorage.getItem('aec-onb-seen')) {
+      sessionStorage.setItem('aec-onb-seen', '1')
+      const t = setTimeout(() => setOnbOpen(true), 600)
+      return () => clearTimeout(t)
+    }
+  }, [profile.onboarded])
+
+  useEffect(() => {
+    const onOnb = () => setOnbOpen(true)
+    window.addEventListener('aec:onboarding', onOnb)
+    return () => window.removeEventListener('aec:onboarding', onOnb)
+  }, [])
 
   return (
     <div className="min-h-screen">
@@ -49,6 +69,9 @@ export function AppShell() {
           </div>
         </footer>
       </div>
+
+      <CommandPalette />
+      <Onboarding open={onbOpen} onClose={() => setOnbOpen(false)} />
       <ScrollRestoration />
     </div>
   )

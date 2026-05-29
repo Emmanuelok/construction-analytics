@@ -1,4 +1,5 @@
 import {
+  Home,
   LayoutDashboard,
   Gauge,
   Sparkles,
@@ -45,7 +46,8 @@ export type NavItem = {
 
 export const NAV: NavItem[] = [
   // Studio — the three functional pillars + entry points
-  { path: '/', label: 'Overview', blurb: 'The unified studio for the built environment', icon: LayoutDashboard, accent: 'blue', group: 'Studio' },
+  { path: '/', label: 'For You', blurb: 'Your personalized home — picks, insights & shortcuts', icon: Home, accent: 'blue', group: 'Studio', tag: 'NEW' },
+  { path: '/overview', label: 'Platform Overview', blurb: 'The unified studio for the built environment', icon: LayoutDashboard, accent: 'sky', group: 'Studio' },
   { path: '/data', label: 'Data Center', blurb: 'Browse, preview & download AEC datasets', icon: Store, accent: 'emerald', group: 'Studio' },
   { path: '/analyze', label: 'Analysis Studio', blurb: 'Bring data, profile it, chart & ask AI', icon: Microscope, accent: 'violet', group: 'Studio', tag: 'AI' },
   { path: '/sell', label: 'Seller Studio', blurb: 'Upload, auto-tag, price & publish data', icon: UploadCloud, accent: 'lime', group: 'Studio' },
