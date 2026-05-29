@@ -10,7 +10,11 @@ import Anthropic from '@anthropic-ai/sdk'
  * to the always-on deterministic engine. Structured output via forced tool use;
  * the stable system prompt is prompt-cached. */
 
-const MODEL = process.env.COPILOT_MODEL || 'claude-sonnet-4-6'
+// Default to the most capable model; override with COPILOT_MODEL. The model ID
+// is passed through to the API as a string, so newer models work without an SDK
+// bump. Structured output uses forced tool use (reliable on this SDK and the
+// right fit for rendering fixed UI shapes).
+const MODEL = process.env.COPILOT_MODEL || 'claude-opus-4-8'
 
 const SYSTEM = `You are the Copilot for the AEC Data & Intelligence Studio — a unified data marketplace, lakehouse and analytics platform for the built environment (architecture, engineering, construction & operations).
 
