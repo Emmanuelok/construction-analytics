@@ -12,6 +12,8 @@ import { computeAsset, comfortStatus, comfortIndex, type AssetInput } from './tw
 import { dimensionScores, computeProject, scorePortfolio, type ProjectInput } from './portfolio.ts'
 import { parseDocument } from './docparse.ts'
 import { computeReadiness, type MLDataset } from './mldata.ts'
+import { answerQuestion } from './query.ts'
+import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
 let fail = 0
@@ -178,6 +180,45 @@ section('mldata')
   ok('perfect dataset readiness 100', perfect.readiness === 100, perfect.readiness)
   ok('perfect dataset ready to train', perfect.readyToTrain === true)
   ok('bad split → warning', computeReadiness({ ...base, trainPct: 70 }).warnings.some((w) => w.code === 'split'))
+}
+
+// ── query (Ask natural-language analytics) ───────────────────────────────────
+section('query (Ask NL)')
+{
+  const qProjects = [
+    { name: 'Alpha', sector: 'Commercial', value: 800_000_000, gfa: 100_000, costVariance: 11.5, scheduleVariance: 96, risk: 83, safety: 82, quality: 79, carbon: 820, progress: 70, rfis: 2000, clashes: 100 },
+    { name: 'Bravo', sector: 'Healthcare', value: 400_000_000, gfa: 80_000, costVariance: 7.8, scheduleVariance: 42, risk: 74, safety: 87, quality: 84, carbon: 690, progress: 58, rfis: 1600, clashes: 64 },
+    { name: 'Cedar', sector: 'Residential', value: 200_000_000, gfa: 60_000, costVariance: -1.2, scheduleVariance: -3, risk: 19, safety: 96, quality: 94, carbon: 395, progress: 100, rfis: 400, clashes: 6 },
+    { name: 'Delta', sector: 'Commercial', value: 300_000_000, gfa: 50_000, costVariance: 2.0, scheduleVariance: 5, risk: 40, safety: 90, quality: 88, carbon: 500, progress: 52, rfis: 700, clashes: 28 },
+  ].map((p) => p as unknown as QProject)
+  const qSuppliers = [
+    { name: 'NordSteel', leadTime: 42, onTime: 96, quality: 95, priceIndex: 103, score: 94 },
+    { name: 'Pioneer', leadTime: 140, onTime: 82, quality: 91, priceIndex: 106, score: 85 },
+    { name: 'Orient', leadTime: 96, onTime: 61, quality: 80, priceIndex: 88, score: 67 },
+  ].map((s) => s as unknown as QSupplier)
+  const D = { projects: qProjects, suppliers: qSuppliers }
+
+  const a1 = answerQuestion('which projects exceeded budget?', D)
+  ok('over-budget: 3 of 4, leader Alpha', a1.matched && /3 of 4/.test(a1.answer) && /Alpha/.test(a1.answer), a1.answer)
+  const a2 = answerQuestion('which supplier has the longest lead time?', D)
+  ok('longest lead → Pioneer 140 days', /Pioneer/.test(a2.answer) && /140 days/.test(a2.answer), a2.answer)
+  const a3 = answerQuestion('average cost variance across the portfolio', D)
+  ok('avg cost variance ≈ +5%', /average cost variance/i.test(a3.answer) && /\+5%/.test(a3.answer), a3.answer)
+  const a4 = answerQuestion('compare embodied carbon by sector', D)
+  ok('carbon by sector → 3 sectors + chart', a4.matched && a4.chart?.data.length === 3, JSON.stringify(a4.chart?.data))
+  const a5 = answerQuestion('how many projects are high-risk?', D)
+  ok('high-risk count = 2 of 4', /2 of 4/.test(a5.answer), a5.answer)
+  const a6 = answerQuestion('which project has the highest schedule slip?', D)
+  ok('highest slip → Alpha +96 days', /Alpha/.test(a6.answer) && /\+96 days/.test(a6.answer), a6.answer)
+  const a7 = answerQuestion('what is the biggest project by value?', D)
+  ok('biggest value → Alpha $800M', /Alpha/.test(a7.answer) && /\$800M/.test(a7.answer), a7.answer)
+  const a8 = answerQuestion('lowest carbon project', D)
+  ok('lowest carbon → Cedar', /Cedar/.test(a8.answer), a8.answer)
+  const a9 = answerQuestion('tell me a joke about cats', D)
+  ok('unrecognized → matched:false + guidance', a9.matched === false && /couldn.t map/.test(a9.answer), a9.answer)
+  const a10 = answerQuestion('compare cost per m² across sectors', D)
+  ok('cost per m² by sector', a10.matched && /Cost intensity/.test(a10.answer) && a10.chart?.unit === 'money', a10.answer)
+  ok('every matched result carries sql + domains', [a1, a2, a3, a4, a5, a6, a7, a8].every((r) => r.sql.length > 0 && r.domains.length > 0))
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)

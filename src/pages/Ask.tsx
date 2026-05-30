@@ -17,8 +17,9 @@ import {
 import { Card, PageHeader, Badge } from '@/components/ui'
 import { BarSeries, AreaTrend } from '@/components/charts'
 import { PROJECTS, SUPPLIERS } from '@/data/platform'
-import { formatCurrency } from '@/lib/format'
+import { formatCurrency, formatNumber } from '@/lib/format'
 import { copilotStatus, askCopilot, type AnalystAnswer } from '@/lib/copilot'
+import { answerQuestion, type QueryResult, type Unit } from '@/lib/query'
 import { cn } from '@/lib/cn'
 import type { Accent } from '@/lib/nav'
 
@@ -230,19 +231,9 @@ LIMIT 5;`,
   }
 }
 
-/** Route a free-text question to the closest canned topic (deterministic fallback). */
-function routeToTopic(text: string): string {
-  const q = text.toLowerCase()
-  const map: Record<string, string[]> = {
-    budget: ['budget', 'overrun', 'cost variance', 'over budget'],
-    suppliers: ['supplier', 'lead time', 'vendor', 'procure'],
-    carbon: ['carbon', 'net zero', 'embodied', 'esg', 'emission'],
-    'cost-m2': ['cost per', 'm2', 'm²', 'unit cost', 'intensity'],
-    risk: ['risk', 'delay', 'schedule', 'slip', 'late'],
-  }
-  for (const [id, kws] of Object.entries(map)) if (kws.some((k) => q.includes(k))) return id
-  return 'budget'
-}
+/** Format a computed value for the deterministic query engine's chart axis. */
+const qFmt = (unit: Unit) => (v: number): string =>
+  unit === 'pct' ? `${v}%` : unit === 'days' ? `${v}d` : unit === 'money' ? formatCurrency(v, { compact: true }) : unit === 'score' ? `${v}/100` : formatNumber(v)
 
 export default function Ask() {
   const [input, setInput] = useState('')
@@ -255,6 +246,8 @@ export default function Ask() {
   const [aiAnswer, setAiAnswer] = useState<AnalystAnswer | null>(null)
   const [aiError, setAiError] = useState<string | null>(null)
   const [askedText, setAskedText] = useState('')
+  // Deterministic NL query result (used when no model key is configured).
+  const [qResult, setQResult] = useState<QueryResult | null>(null)
 
   useEffect(() => {
     copilotStatus().then((s) => setAiEnabled(s.enabled))
@@ -263,10 +256,12 @@ export default function Ask() {
   const answer = useMemo(() => buildAnswer(activeId), [activeId])
   const activeQ = QUESTIONS.find((q) => q.id === activeId) ?? QUESTIONS[0]
   const showAi = aiBusy || !!aiAnswer || !!aiError
+  const showQuery = !!qResult && !showAi
 
   function run(id: string, text?: string) {
     setAiAnswer(null)
     setAiError(null)
+    setQResult(null)
     setActiveId(id)
     if (text) setInput(text)
     setLoading(true)
@@ -277,6 +272,7 @@ export default function Ask() {
     if (!q) return
     setAskedText(q)
     if (aiEnabled) {
+      setQResult(null)
       setAiBusy(true)
       setAiError(null)
       setAiAnswer(null)
@@ -285,7 +281,9 @@ export default function Ask() {
       if (res.ok) setAiAnswer(res.data)
       else setAiError(res.error)
     } else {
-      run(routeToTopic(q), q)
+      // Deterministic engine: compute a real answer over the live data.
+      setLoading(false)
+      setQResult(answerQuestion(q, { projects: PROJECTS, suppliers: SUPPLIERS }))
     }
   }
 
@@ -355,8 +353,8 @@ export default function Ask() {
         <div className="space-y-4 lg:col-span-2">
           <Card className="p-6">
             <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
-              {showAi ? <Wand2 className="h-4 w-4 text-violet-400" /> : <activeQ.icon className="h-4 w-4 text-violet-400" />}
-              {showAi ? askedText : activeQ.q}
+              {showAi || showQuery ? <Wand2 className="h-4 w-4 text-violet-400" /> : <activeQ.icon className="h-4 w-4 text-violet-400" />}
+              {showAi || showQuery ? askedText : activeQ.q}
             </div>
             <div className="mt-4 min-h-[80px] whitespace-pre-line text-sm leading-relaxed text-slate-300">
               {aiBusy ? (
@@ -367,6 +365,8 @@ export default function Ask() {
                 <div className="flex items-center gap-2 text-rose-300"><AlertTriangle className="h-4 w-4" /> {aiError}</div>
               ) : aiAnswer ? (
                 aiAnswer.answer
+              ) : showQuery ? (
+                <p className={qResult!.matched ? 'text-slate-200' : 'text-slate-400'}>{qResult!.answer}</p>
               ) : loading ? (
                 <div className="flex items-center gap-2 text-slate-500">
                   <Loader2 className="h-4 w-4 animate-spin text-violet-400" /> Reasoning over the lakehouse…
@@ -377,7 +377,24 @@ export default function Ask() {
             </div>
           </Card>
 
-          {!showAi && !loading && (
+          {showQuery && qResult!.chart && (
+            <Card className="overflow-hidden">
+              <div className="flex items-center gap-2 border-b border-edge/50 px-5 py-3 text-sm font-medium text-slate-300">
+                <Table2 className="h-4 w-4 text-violet-400" /> {qResult!.chart.label}
+              </div>
+              <div className="px-3 pb-4 pt-4">
+                <BarSeries
+                  data={qResult!.chart.data}
+                  xKey="name"
+                  layout="vertical"
+                  height={260}
+                  valueFormatter={qFmt(qResult!.chart.unit)}
+                  series={[{ key: 'value', name: qResult!.chart.label, accent: qResult!.chart.accent as Accent }]}
+                />
+              </div>
+            </Card>
+          )}
+          {!showQuery && !showAi && !loading && (
             <Card className="overflow-hidden">
               <div className="flex items-center gap-2 border-b border-edge/50 px-5 py-3 text-sm font-medium text-slate-300">
                 <Table2 className="h-4 w-4 text-violet-400" /> Generated visualization
@@ -408,7 +425,7 @@ export default function Ask() {
               <Code2 className="h-4 w-4 text-cyan-400" /> Query plan
             </div>
             <pre className="overflow-x-auto px-5 py-4 text-[12px] leading-relaxed text-cyan-200/90">
-              <code className="font-mono">{aiAnswer?.sql ?? answer.sql}</code>
+              <code className="font-mono">{aiAnswer?.sql ?? (showQuery ? qResult!.sql : answer.sql)}</code>
             </pre>
           </Card>
 
@@ -417,7 +434,7 @@ export default function Ask() {
               <Database className="h-4 w-4 text-emerald-400" /> Data domains queried
             </div>
             <div className="mt-3 space-y-2">
-              {(aiAnswer?.domains ?? answer.sources).map((s) => (
+              {(aiAnswer?.domains ?? (showQuery ? qResult!.domains : answer.sources)).map((s) => (
                 <div key={s} className="flex items-center gap-2 text-sm text-slate-400">
                   <CircleDot className="h-3.5 w-3.5 text-emerald-500/70" /> {s}
                 </div>
