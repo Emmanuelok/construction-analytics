@@ -2,326 +2,234 @@ import { useMemo, useState } from 'react'
 import {
   CalendarClock,
   Sparkles,
-  TrendingUp,
-  Timer,
   Wallet,
-  Activity,
   Gauge,
   AlertTriangle,
-  Brain,
-  Route,
+  Timer,
+  TrendingUp,
+  RotateCcw,
+  Plus,
+  Trash2,
   Banknote,
-  ArrowUpRight,
-  ArrowDownRight,
 } from 'lucide-react'
-import {
-  Card,
-  CardHeader,
-  Badge,
-  StatTile,
-  ProgressBar,
-  PageHeader,
-  Tabs,
-  FeatureRow,
-} from '@/components/ui'
-import { AreaTrend, LineTrend, BarSeries } from '@/components/charts'
-import { PROJECTS, MONTHS } from '@/data/platform'
-import { ACCENT } from '@/lib/nav'
+import { Card, CardHeader, Badge, StatTile, PageHeader } from '@/components/ui'
+import { BarSeries, ScatterViz } from '@/components/charts'
+import { PROJECTS } from '@/data/platform'
+import { computeEvm, portfolioEvm, evmNarrative, formatMoney, type Evm } from '@/lib/evm'
 import { cn } from '@/lib/cn'
-import { formatCurrency, formatNumber, formatDelta } from '@/lib/format'
+import { formatNumber } from '@/lib/format'
 
-const ACCENT_R = 'rose' as const
+/* An editable row in the controls workbench — the fields that drive EVM. */
+type Row = { id: string; name: string; bac: number; progress: number; costVar: number; slip: number }
 
-/* ------------------------------------------------------------- mock series */
-// Cumulative cost forecast ($M) across the program — baseline, actual to date, AI forecast.
-const COST_FORECAST = MONTHS.map((month, i) => {
-  const baseline = 380 + i * 96
-  const actual = i <= 7 ? Math.round(baseline * (1 + 0.012 * i) + Math.sin(i) * 18) : null
-  const aiForecast = Math.round(baseline * (1 + 0.018 * i) + i * 6)
-  return { month, baseline, actual, aiForecast }
-})
+const seed = (): Row[] =>
+  PROJECTS.map((p) => ({ id: p.id, name: p.name, bac: p.value, progress: p.progress, costVar: p.costVariance, slip: p.scheduleVariance }))
 
-// S-curve: planned value, earned value, actual cost ($M). Last 3 months are AI-projected.
-const S_CURVE = MONTHS.map((month, i) => {
-  const planned = Math.round(420 + i * 102 + Math.pow(i, 1.5) * 4)
-  const earned = i <= 7 ? Math.round(planned * (0.9 - i * 0.004)) : Math.round(planned * 0.88)
-  const actualCost = i <= 7 ? Math.round(earned * 1.04 + i * 3) : Math.round(planned * 0.94)
-  return { month, planned, earned, actualCost }
-})
-
-const DELAY_DRIVERS = [
-  { driver: 'Procurement lead times', share: 31, trend: +4, accent: 'rose' as const, note: 'Long-lead MEP & vertical transport' },
-  { driver: 'Design changes & RFIs', share: 24, trend: +2, accent: 'amber' as const, note: 'Late-stage scope evolution' },
-  { driver: 'Labor availability', share: 18, trend: -3, accent: 'violet' as const, note: 'Skilled-trade shortfalls' },
-  { driver: 'Weather & site access', share: 15, trend: +6, accent: 'sky' as const, note: 'Seasonal exposure on superstructure' },
-  { driver: 'Permitting & approvals', share: 12, trend: -1, accent: 'teal' as const, note: 'Authority review cycles' },
-]
-
-const CAPABILITIES = [
-  { icon: Banknote, title: 'Cost prediction', body: 'Estimate final cost from quantities, market indices and pooled actuals — within ±3.4% MAPE.', accent: 'rose' as const },
-  { icon: Brain, title: 'Overrun forecasting', body: 'Probabilistic forecast-at-completion with P50 / P80 bands calibrated on 38k completed projects.', accent: 'amber' as const },
-  { icon: Timer, title: 'Delay prediction', body: 'Surface slippage risk per activity 6–12 weeks ahead from progress velocity and lead-time signals.', accent: 'violet' as const },
-  { icon: Route, title: 'Critical-path analytics', body: 'Detect near-critical chains, float erosion and the activities most likely to drive completion.', accent: 'sky' as const },
-]
-
-/* --------------------------------------------------------------- EVM model */
-type EvmRow = {
-  id: string
-  name: string
-  cpi: number
-  spi: number
-  cv: number // %
-  sv: number // days
-  forecast: 'On track' | 'Watch' | 'At risk'
-}
-
-function evmVariant(f: EvmRow['forecast']) {
-  return f === 'On track' ? 'success' : f === 'Watch' ? 'warn' : 'danger'
+const HEALTH: Record<Evm['health'], { label: string; variant: 'success' | 'warn' | 'danger' }> = {
+  'on-track': { label: 'On track', variant: 'success' },
+  watch: { label: 'Watch', variant: 'warn' },
+  'at-risk': { label: 'At risk', variant: 'danger' },
 }
 
 export default function CostSchedule() {
-  const [tab, setTab] = useState('forecast')
+  const [rows, setRows] = useState<Row[]>(seed)
+  const [edited, setEdited] = useState(false)
 
-  const portfolioBudget = useMemo(() => PROJECTS.reduce((s, p) => s + p.value, 0), [])
-  const forecastAtCompletion = Math.round(portfolioBudget * 1.058)
-  const overrunPct = ((forecastAtCompletion / portfolioBudget - 1) * 100)
-  const avgSlip = useMemo(
-    () => PROJECTS.reduce((s, p) => s + p.scheduleVariance, 0) / PROJECTS.length,
-    [],
+  const set = (id: string, patch: Partial<Row>) => {
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)))
+    setEdited(true)
+  }
+  const addRow = () => {
+    setRows((rs) => [...rs, { id: `PRJ-${Math.floor(1000 + Math.random() * 9000)}`, name: 'New project', bac: 100_000_000, progress: 0, costVar: 0, slip: 0 }])
+    setEdited(true)
+  }
+  const removeRow = (id: string) => { setRows((rs) => rs.filter((r) => r.id !== id)); setEdited(true) }
+  const reset = () => { setRows(seed()); setEdited(false) }
+
+  // EVM per project + portfolio — recomputed live from the editable rows.
+  const evms = useMemo(
+    () => rows.map((r) => ({ row: r, evm: computeEvm({ bac: r.bac, progressPct: r.progress, costVariancePct: r.costVar, scheduleSlipDays: r.slip, plannedDurationDays: 1000 }) })),
+    [rows],
+  )
+  const portfolio = useMemo(
+    () => portfolioEvm(rows.map((r) => ({ bac: r.bac, progressPct: r.progress, costVariancePct: r.costVar, scheduleSlipDays: r.slip, plannedDurationDays: 1000 }))),
+    [rows],
   )
 
-  // Predicted overrun by project (cost variance %), sorted worst-first.
-  const overrunByProject = useMemo(
-    () =>
-      [...PROJECTS]
-        .sort((a, b) => b.costVariance - a.costVariance)
-        .map((p) => ({ name: p.name.replace(/ .*/, ''), overrun: p.costVariance })),
-    [],
-  )
+  const atRisk = evms.filter((e) => e.evm.health === 'at-risk')
+  const worst = [...evms].sort((a, b) => a.evm.vac - b.evm.vac)[0]
 
-  // Per-project EVM derived from project signals.
-  const evmRows = useMemo<EvmRow[]>(
-    () =>
-      PROJECTS.filter((p) => p.phase === 'Construction' || p.phase === 'Procurement')
-        .slice(0, 7)
-        .map((p) => {
-          const cpi = Math.max(0.78, Math.min(1.08, 1 - p.costVariance / 100))
-          const spi = Math.max(0.74, Math.min(1.06, 1 - p.scheduleVariance / 320))
-          const forecast: EvmRow['forecast'] =
-            p.risk >= 72 ? 'At risk' : p.risk >= 48 ? 'Watch' : 'On track'
-          return { id: p.id, name: p.name, cpi: +cpi.toFixed(2), spi: +spi.toFixed(2), cv: p.costVariance, sv: p.scheduleVariance, forecast }
-        }),
-    [],
-  )
-
-  const tabs = [
-    { id: 'forecast', label: 'Cost forecast', icon: TrendingUp },
-    { id: 'scurve', label: 'Earned value S-curve', icon: Activity },
-  ]
+  const cpiSpiData = evms.map((e) => ({ x: e.evm.spi, y: e.evm.cpi, name: e.row.name }))
+  const eacData = [...evms]
+    .sort((a, b) => b.evm.eac - a.evm.eac)
+    .slice(0, 8)
+    .map((e) => ({ name: e.row.name.length > 16 ? e.row.name.slice(0, 15) + '…' : e.row.name, BAC: Math.round(e.row.bac / 1e6), EAC: Math.round(e.evm.eac / 1e6) }))
 
   return (
     <div className="space-y-8">
       <PageHeader
         icon={CalendarClock}
-        eyebrow="Intelligence Engines"
-        title="Cost & Schedule Intelligence"
-        description="Forecast overruns, delays and earned value by calibrating predictive models on pooled historical actuals — because ~90% of large projects overrun, by ~28% on average. Get ahead of the curve, not behind it."
-        accent={ACCENT_R}
+        accent="rose"
+        eyebrow="Intelligence"
+        title="Cost & Schedule"
+        description="A live Earned Value workbench. Edit any project's budget, progress, cost variance or schedule slip — CPI, SPI, EAC and the portfolio forecast recompute instantly. Real project-controls math, not a static dashboard."
         actions={
           <>
-            <Badge variant="success" dot>
-              Forecast: 92% conf.
+            {edited && (
+              <button onClick={reset} className="btn-ghost">
+                <RotateCcw className="h-4 w-4" /> Reset
+              </button>
+            )}
+            <Badge variant={HEALTH[portfolio.health].variant} dot>
+              Portfolio {HEALTH[portfolio.health].label}
             </Badge>
-            <button className="btn-ghost">
-              <Sparkles className="h-4 w-4" /> Run scenario
-            </button>
           </>
         }
       />
 
-      {/* ===================================================== KPI row */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-6">
-        <StatTile label="Portfolio budget" value={formatCurrency(portfolioBudget)} icon={Wallet} accent="rose" sub="10 active projects" />
-        <StatTile
-          label="Forecast at completion"
-          value={formatCurrency(forecastAtCompletion)}
-          delta={formatDelta(overrunPct)}
-          deltaPositive={false}
-          icon={TrendingUp}
-          accent="amber"
-          sub="P50 estimate"
-        />
-        <StatTile label="Predicted overrun" value={`${overrunPct.toFixed(1)}%`} delta="vs 28% peer avg" deltaPositive icon={AlertTriangle} accent="rose" sub="Below benchmark" />
-        <StatTile label="Avg schedule slip" value={`${Math.round(avgSlip)}d`} delta="+11d QoQ" deltaPositive={false} icon={Timer} accent="violet" sub="Late = positive" />
-        <StatTile label="Portfolio CPI" value="0.96" delta="cost efficiency" deltaPositive={false} icon={Gauge} accent="rose" sub="Earned / actual cost" />
-        <StatTile label="Portfolio SPI" value="0.91" delta="schedule efficiency" deltaPositive={false} icon={Activity} accent="amber" sub="Earned / planned" />
+      {/* portfolio EVM KPIs — recompute as you edit */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        <StatTile label="Budget (BAC)" value={formatMoney(portfolio.bac)} icon={Wallet} accent="blue" sub={`${rows.length} projects`} />
+        <StatTile label="Forecast (EAC)" value={formatMoney(portfolio.eac)} icon={Banknote} accent={portfolio.vac < 0 ? 'rose' : 'emerald'} sub={`VAC ${formatMoney(portfolio.vac)}`} />
+        <StatTile label="Cost index (CPI)" value={portfolio.cpi.toFixed(2)} icon={Gauge} accent={portfolio.cpi >= 1 ? 'emerald' : 'rose'} sub={portfolio.cpi >= 1 ? 'under budget' : 'over budget'} />
+        <StatTile label="Schedule index (SPI)" value={portfolio.spi.toFixed(2)} icon={Timer} accent={portfolio.spi >= 1 ? 'emerald' : 'amber'} sub={portfolio.spi >= 1 ? 'ahead' : 'behind'} />
+        <StatTile label="At-risk projects" value={String(atRisk.length)} icon={AlertTriangle} accent="rose" sub="CPI or SPI < 0.9" />
       </div>
 
-      {/* ===================================================== Forecast / S-curve */}
+      {/* editable EVM table */}
       <Card>
         <CardHeader
-          title="Program cost & earned-value trajectory"
-          subtitle="Cumulative $M — baseline plan vs. actuals vs. AI forecast, with budget ceiling"
-          icon={TrendingUp}
-          accent={ACCENT_R}
-          action={<Tabs tabs={tabs} active={tab} onChange={setTab} />}
+          icon={CalendarClock}
+          accent="rose"
+          title="Project controls — editable"
+          subtitle="Click any budget, % complete, cost variance % or slip to edit; metrics update live"
+          action={
+            <button onClick={addRow} className="btn-ghost h-9 px-3 py-0 text-xs">
+              <Plus className="h-3.5 w-3.5" /> Add project
+            </button>
+          }
         />
-        <div className="px-3 pb-4">
-          {tab === 'forecast' ? (
-            <AreaTrend
-              data={COST_FORECAST}
-              xKey="month"
-              height={300}
-              valueFormatter={(v) => `$${formatNumber(v)}M`}
-              referenceY={{ y: 1480, label: 'Budget ceiling' }}
-              series={[
-                { key: 'baseline', name: 'Baseline plan', accent: 'sky' },
-                { key: 'actual', name: 'Actual to date', accent: 'rose' },
-                { key: 'aiForecast', name: 'AI forecast', accent: 'amber' },
-              ]}
-            />
-          ) : (
-            <LineTrend
-              data={S_CURVE}
-              xKey="month"
-              height={300}
-              valueFormatter={(v) => `$${formatNumber(v)}M`}
-              dashedKeys={['planned']}
-              series={[
-                { key: 'planned', name: 'Planned value (PV)', accent: 'sky' },
-                { key: 'earned', name: 'Earned value (EV)', accent: 'emerald' },
-                { key: 'actualCost', name: 'Actual cost (AC)', accent: 'rose' },
-              ]}
-            />
-          )}
-        </div>
-      </Card>
-
-      {/* ===================================================== Overrun + drivers */}
-      <div className="grid gap-6 lg:grid-cols-5">
-        <Card className="lg:col-span-3">
-          <CardHeader
-            title="Predicted cost overrun by project"
-            subtitle="Forecast variance to budget (%) — benchmark line at 28% industry average"
-            icon={AlertTriangle}
-            accent={ACCENT_R}
-          />
-          <div className="px-3 pb-4">
-            <BarSeries
-              data={overrunByProject}
-              xKey="name"
-              layout="vertical"
-              height={300}
-              valueFormatter={(v) => `${v > 0 ? '+' : ''}${v}%`}
-              series={[{ key: 'overrun', name: 'Forecast overrun', accent: 'rose' }]}
-            />
-            <p className="px-3 pt-2 text-xs text-slate-500">
-              Negative bars indicate projects forecast to land under budget. All active projects sit well below the 28%
-              peer benchmark.
-            </p>
-          </div>
-        </Card>
-
-        <Card className="lg:col-span-2">
-          <CardHeader title="Schedule delay drivers" subtitle="Attributed contribution to slippage" icon={Timer} accent="amber" />
-          <div className="space-y-4 px-5 pb-5">
-            {DELAY_DRIVERS.map((d) => {
-              const up = d.trend > 0
-              return (
-                <div key={d.driver}>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-medium text-slate-200">{d.driver}</span>
-                    <span className="flex items-center gap-2">
-                      <span
-                        className={cn(
-                          'inline-flex items-center gap-0.5 text-xs font-semibold',
-                          up ? 'text-rose-400' : 'text-emerald-400',
-                        )}
-                      >
-                        {up ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                        {Math.abs(d.trend)}pp
-                      </span>
-                      <span className="w-9 text-right text-sm font-semibold text-slate-100 data-mono">{d.share}%</span>
-                    </span>
-                  </div>
-                  <div className="mt-2">
-                    <ProgressBar value={d.share} accent={d.accent} height="sm" />
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">{d.note}</p>
-                </div>
-              )
-            })}
-          </div>
-        </Card>
-      </div>
-
-      {/* ===================================================== EVM table */}
-      <Card>
-        <CardHeader
-          title="Earned-value performance by project"
-          subtitle="CPI / SPI, cost & schedule variance and AI forecast outlook"
-          icon={Gauge}
-          accent={ACCENT_R}
-          action={<Badge variant="neutral">{evmRows.length} active</Badge>}
-        />
-        <div className="overflow-x-auto px-2 pb-2">
-          <table className="w-full min-w-[720px] text-sm">
+        <div className="overflow-x-auto border-t border-edge/50">
+          <table className="w-full min-w-[900px] text-left text-sm">
             <thead>
-              <tr className="border-b border-edge/60 text-left text-xs uppercase tracking-wider text-slate-500">
-                <th className="px-3 py-2.5 font-medium">Project</th>
+              <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
+                <th className="px-4 py-2.5 font-medium">Project</th>
+                <th className="px-3 py-2.5 text-right font-medium">Budget (BAC)</th>
+                <th className="px-3 py-2.5 text-right font-medium">% Complete</th>
+                <th className="px-3 py-2.5 text-right font-medium">Cost var %</th>
+                <th className="px-3 py-2.5 text-right font-medium">Slip (d)</th>
                 <th className="px-3 py-2.5 text-right font-medium">CPI</th>
                 <th className="px-3 py-2.5 text-right font-medium">SPI</th>
-                <th className="px-3 py-2.5 text-right font-medium">Cost var.</th>
-                <th className="px-3 py-2.5 text-right font-medium">Sched. var.</th>
-                <th className="px-3 py-2.5 text-right font-medium">Outlook</th>
+                <th className="px-3 py-2.5 text-right font-medium">EAC</th>
+                <th className="px-3 py-2.5 text-right font-medium">VAC</th>
+                <th className="px-3 py-2.5 text-center font-medium">Health</th>
+                <th className="px-2 py-2.5" />
               </tr>
             </thead>
-            <tbody>
-              {evmRows.map((r) => (
-                <tr key={r.id} className="border-b border-edge/40 transition-colors hover:bg-elevated/40">
-                  <td className="px-3 py-3">
-                    <div className="font-medium text-slate-100">{r.name}</div>
-                    <div className="text-xs text-slate-500 data-mono">{r.id}</div>
-                  </td>
-                  <td className={cn('px-3 py-3 text-right font-semibold data-mono', r.cpi >= 1 ? 'text-emerald-400' : r.cpi >= 0.95 ? 'text-amber-400' : 'text-rose-400')}>
-                    {r.cpi.toFixed(2)}
-                  </td>
-                  <td className={cn('px-3 py-3 text-right font-semibold data-mono', r.spi >= 1 ? 'text-emerald-400' : r.spi >= 0.92 ? 'text-amber-400' : 'text-rose-400')}>
-                    {r.spi.toFixed(2)}
-                  </td>
-                  <td className={cn('px-3 py-3 text-right data-mono', r.cv > 5 ? 'text-rose-300' : r.cv > 0 ? 'text-amber-300' : 'text-emerald-300')}>
-                    {formatDelta(r.cv)}
-                  </td>
-                  <td className={cn('px-3 py-3 text-right data-mono', r.sv > 30 ? 'text-rose-300' : r.sv > 0 ? 'text-amber-300' : 'text-emerald-300')}>
-                    {r.sv > 0 ? `+${r.sv}d` : `${r.sv}d`}
-                  </td>
-                  <td className="px-3 py-3 text-right">
-                    <Badge variant={evmVariant(r.forecast)} dot>
-                      {r.forecast}
-                    </Badge>
-                  </td>
-                </tr>
-              ))}
+            <tbody className="divide-y divide-edge/40">
+              {evms.map(({ row, evm }) => {
+                const h = HEALTH[evm.health]
+                return (
+                  <tr key={row.id} className="hover:bg-elevated/30">
+                    <td className="px-4 py-2">
+                      <input value={row.name} onChange={(e) => set(row.id, { name: e.target.value })} className="w-40 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-rose-500/40" />
+                      <div className="text-[10px] text-slate-600">{row.id}</div>
+                    </td>
+                    <NumCell value={row.bac} onChange={(v) => set(row.id, { bac: v })} fmt={(v) => formatMoney(v)} step={1e6} />
+                    <NumCell value={row.progress} onChange={(v) => set(row.id, { progress: Math.max(0, Math.min(100, v)) })} fmt={(v) => `${v}%`} />
+                    <NumCell value={row.costVar} onChange={(v) => set(row.id, { costVar: v })} fmt={(v) => `${v > 0 ? '+' : ''}${v}%`} />
+                    <NumCell value={row.slip} onChange={(v) => set(row.id, { slip: v })} fmt={(v) => `${v}`} />
+                    <td className={cn('px-3 py-2 text-right data-mono', evm.cpi >= 1 ? 'text-emerald-300' : 'text-rose-300')}>{evm.cpi.toFixed(2)}</td>
+                    <td className={cn('px-3 py-2 text-right data-mono', evm.spi >= 1 ? 'text-emerald-300' : 'text-amber-300')}>{evm.spi.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right data-mono text-slate-300">{formatMoney(evm.eac)}</td>
+                    <td className={cn('px-3 py-2 text-right data-mono', evm.vac < 0 ? 'text-rose-300' : 'text-emerald-300')}>{formatMoney(evm.vac)}</td>
+                    <td className="px-3 py-2 text-center"><Badge variant={h.variant} dot>{h.label}</Badge></td>
+                    <td className="px-2 py-2 text-right">
+                      <button onClick={() => removeRow(row.id)} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
       </Card>
 
-      {/* ===================================================== AI capabilities */}
-      <Card className="p-6">
-        <div className="mb-5 flex items-center gap-3">
-          <Sparkles className={cn('h-4 w-4', ACCENT[ACCENT_R].text)} />
-          <h3 className="text-[15px] font-semibold text-slate-100">AI forecasting capabilities</h3>
-          <span className="text-sm text-slate-500">— calibrated on pooled, anonymized actuals</span>
-        </div>
-        <div className="grid gap-6 sm:grid-cols-2">
-          {CAPABILITIES.map((c) => (
-            <FeatureRow key={c.title} icon={c.icon} title={c.title} accent={c.accent}>
-              {c.body}
-            </FeatureRow>
-          ))}
+      {/* charts driven by the live EVM */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader icon={Gauge} accent="rose" title="CPI vs SPI" subtitle="Each project — top-right quadrant is healthy (both ≥ 1)" />
+          <div className="border-t border-edge/50 p-5">
+            <ScatterViz data={cpiSpiData} xKey="x" yKey="y" xName="SPI" yName="CPI" height={300} accent="rose" />
+            <p className="mt-2 text-xs text-slate-500">Points below or left of (1, 1) are over budget or behind schedule.</p>
+          </div>
+        </Card>
+        <Card>
+          <CardHeader icon={TrendingUp} accent="rose" title="Budget vs forecast at completion" subtitle="BAC vs EAC ($M) — the gap is the forecast overrun" />
+          <div className="border-t border-edge/50 p-5">
+            <BarSeries
+              data={eacData}
+              xKey="name"
+              layout="vertical"
+              height={300}
+              series={[{ key: 'BAC', name: 'Budget', accent: 'blue' }, { key: 'EAC', name: 'Forecast', accent: 'rose' }]}
+              valueFormatter={(v) => `$${formatNumber(v)}M`}
+            />
+          </div>
+        </Card>
+      </div>
+
+      {/* live insight */}
+      <Card className="relative overflow-hidden">
+        <div className="pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full bg-rose-500/20 opacity-20 blur-3xl" />
+        <CardHeader icon={Sparkles} accent="rose" title="Controls read-out" subtitle="Computed from your current numbers" />
+        <div className="space-y-2.5 border-t border-edge/50 p-5">
+          <p className="text-[15px] leading-relaxed text-slate-300">
+            Across {rows.length} projects, the portfolio CPI is{' '}
+            <span className={cn('font-semibold', portfolio.cpi >= 1 ? 'text-emerald-300' : 'text-rose-300')}>{portfolio.cpi.toFixed(2)}</span> and SPI{' '}
+            <span className={cn('font-semibold', portfolio.spi >= 1 ? 'text-emerald-300' : 'text-amber-300')}>{portfolio.spi.toFixed(2)}</span>, forecasting{' '}
+            <span className="font-semibold text-slate-100">{formatMoney(portfolio.eac)}</span> at completion against a{' '}
+            <span className="font-semibold text-slate-100">{formatMoney(portfolio.bac)}</span> budget
+            {portfolio.vac < 0 ? <> — a <span className="text-rose-300">{formatMoney(Math.abs(portfolio.vac))} overrun</span>.</> : portfolio.vac > 0 ? <> — a <span className="text-emerald-300">{formatMoney(portfolio.vac)} saving</span>.</> : '.'}
+          </p>
+          {worst && worst.evm.vac < 0 && (
+            <p className="text-sm leading-relaxed text-slate-400">{evmNarrative(worst.row.name, worst.evm)}</p>
+          )}
+          {atRisk.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {atRisk.map((e) => (
+                <span key={e.row.id} className="inline-flex items-center gap-1 rounded-md bg-rose-500/10 px-2 py-0.5 text-[11px] text-rose-300">
+                  <AlertTriangle className="h-3 w-3" /> {e.row.name}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </Card>
     </div>
+  )
+}
+
+/* An inline-editable numeric cell that shows a formatted value, edits the raw number. */
+function NumCell({ value, onChange, fmt, step = 1 }: { value: number; onChange: (v: number) => void; fmt: (v: number) => string; step?: number }) {
+  const [editing, setEditing] = useState(false)
+  return (
+    <td className="px-3 py-2 text-right">
+      {editing ? (
+        <input
+          autoFocus
+          type="number"
+          step={step}
+          defaultValue={value}
+          onBlur={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) onChange(n); setEditing(false) }}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditing(false) }}
+          className="w-24 rounded border border-rose-500/50 bg-elevated px-1 py-0.5 text-right text-sm text-slate-100 focus:outline-none"
+        />
+      ) : (
+        <button onClick={() => setEditing(true)} className="data-mono text-slate-300 hover:text-white hover:underline" title="Click to edit">
+          {fmt(value)}
+        </button>
+      )}
+    </td>
   )
 }
