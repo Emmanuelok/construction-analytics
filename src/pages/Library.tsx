@@ -29,7 +29,7 @@ function priceLabel(price: number | null) {
 }
 
 export default function Library() {
-  const { cart, library, downloads, cartTotal, getAny, removeFromCart, checkout } = useStudio()
+  const { cart, library, downloads, cartTotal, getAny, removeFromCart, checkout, refresh } = useStudio()
   const { user } = useAuth()
   const [params, setParams] = useSearchParams()
   const [tab, setTab] = useState('cart')
@@ -44,7 +44,11 @@ export default function Library() {
     const status = params.get('checkout')
     if (!status) return
     if (status === 'success') {
-      checkout() // idempotent local/cloud grant; the webhook also grants server-side
+      // With Stripe live, entitlements are granted server-side by the webhook —
+      // never client-side. Reflect them by refreshing from the backend. Only in
+      // demo mode (no Stripe) is the instant local grant the legitimate path.
+      if (isStripeEnabled) refresh()
+      else checkout()
       setDone(true)
       setTab('licensed')
     } else if (status === 'cancelled') {

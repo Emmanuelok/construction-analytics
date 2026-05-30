@@ -14,16 +14,26 @@ export default async function handler(req: Request): Promise<Response> {
   const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!supaUrl || !supaKey) return json({ error: 'Storage is not configured on the server.' }, 501)
 
-  let body: { datasetId?: string; storagePath?: string; fileName?: string; userId?: string }
+  let body: { datasetId?: string; storagePath?: string; fileName?: string }
   try {
     body = (await req.json()) as typeof body
   } catch {
     return json({ error: 'Invalid JSON body' }, 400)
   }
-  const { datasetId, storagePath, fileName, userId } = body
+  const { datasetId, storagePath, fileName } = body
   if (!datasetId || !storagePath) return json({ error: 'Missing datasetId or storagePath' }, 400)
 
   const supabase = createClient(supaUrl, supaKey)
+
+  // Identity is derived from the caller's access token — never trusted from the
+  // request body. A bearer token is required for any non-free file.
+  let userId: string | undefined
+  const authz = req.headers.get('authorization') ?? ''
+  const token = /^bearer\s+/i.test(authz) ? authz.replace(/^bearer\s+/i, '').trim() : undefined
+  if (token) {
+    const { data: auth } = await supabase.auth.getUser(token)
+    userId = auth.user?.id
+  }
 
   let allowed = false
   const { data: fileRow } = await supabase

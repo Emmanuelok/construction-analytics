@@ -10,10 +10,11 @@ type State = {
   cart: string[]
   library: LibraryItem[]
   downloads: DownloadLog[]
-  listings: CatalogDataset[]
+  listings: CatalogDataset[] // the signed-in seller's own datasets
+  marketplace: CatalogDataset[] // datasets published by other sellers (browse only)
 }
 
-const initial: State = { cart: [], library: [], downloads: [], listings: [] }
+const initial: State = { cart: [], library: [], downloads: [], listings: [], marketplace: [] }
 const KEY = 'aec-studio-v1'
 
 function load(): State {
@@ -72,9 +73,11 @@ type StudioValue = {
   library: LibraryItem[]
   downloads: DownloadLog[]
   listings: CatalogDataset[]
+  marketplace: CatalogDataset[]
   cartTotal: number
   allDatasets: CatalogDataset[]
   getAny: (id: string) => CatalogDataset | undefined
+  refresh: () => void
   inCart: (id: string) => boolean
   owns: (id: string) => boolean
   addToCart: (id: string) => void
@@ -100,7 +103,7 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     try {
       const raw = localStorage.getItem(storageKey)
-      dispatch({ type: 'hydrate', state: raw ? JSON.parse(raw) : { library: [], downloads: [], listings: [] } })
+      dispatch({ type: 'hydrate', state: raw ? JSON.parse(raw) : { library: [], downloads: [], listings: [], marketplace: [] } })
     } catch {
       /* ignore */
     }
@@ -121,20 +124,34 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
   }, [state, storageKey])
 
   const value = useMemo<StudioValue>(() => {
-    const getAny = (id: string) => state.listings.find((l) => l.id === id) ?? getDataset(id)
+    const getAny = (id: string) =>
+      state.listings.find((l) => l.id === id) ?? state.marketplace.find((l) => l.id === id) ?? getDataset(id)
     const toItem = (id: string): LibraryItem => {
       const d = getAny(id)
       return { datasetId: id, tier: d?.license ?? 'Commercial', price: d?.price ?? 0, licensedAt: new Date().toISOString() }
     }
     const owns = (id: string) => state.library.some((l) => l.datasetId === id)
+    // Browse surfaces see own listings + other sellers' published datasets + the
+    // static catalog, de-duplicated by id (own wins, then marketplace, then seed).
+    const allDatasets: CatalogDataset[] = []
+    const seen = new Set<string>()
+    for (const d of [...state.listings, ...state.marketplace, ...CATALOG]) {
+      if (seen.has(d.id)) continue
+      seen.add(d.id)
+      allDatasets.push(d)
+    }
     return {
       cart: state.cart,
       library: state.library,
       downloads: state.downloads,
       listings: state.listings,
+      marketplace: state.marketplace,
       cartTotal: state.cart.reduce((sum, id) => sum + (getAny(id)?.price ?? 0), 0),
-      allDatasets: [...state.listings, ...CATALOG],
+      allDatasets,
       getAny,
+      refresh: () => {
+        if (cloud && user) loadCloud(user.id).then((snap) => snap && dispatch({ type: 'hydrate', state: snap })).catch(() => {})
+      },
       inCart: (id) => state.cart.includes(id),
       owns,
       addToCart: (id) => dispatch({ type: 'add', id }),

@@ -95,17 +95,28 @@ function datasetToRow(d: CatalogDataset, owner: string) {
   }
 }
 
-export type CloudSnapshot = { listings: CatalogDataset[]; library: LibraryItem[]; downloads: DownloadLog[] }
+export type CloudSnapshot = { listings: CatalogDataset[]; marketplace: CatalogDataset[]; library: LibraryItem[]; downloads: DownloadLog[] }
 
-/** Load this user's own listings + licensed library + recent downloads. */
+/** Load this user's own listings, the marketplace (datasets published by other
+ *  sellers), their licensed library and recent downloads. The seller view uses
+ *  `listings` (own only); the marketplace/browse surfaces use both. */
 export async function loadCloud(userId: string): Promise<CloudSnapshot | null> {
   if (!supabase) return null
-  const { data: ds } = await supabase.from('datasets').select('*').eq('owner', userId)
-  const ids = (ds ?? []).map((d) => d.id)
+  const sb = supabase
+  // Own datasets (published or draft) + datasets published by other sellers.
+  const [{ data: own }, { data: pub }] = await Promise.all([
+    sb.from('datasets').select('*').eq('owner', userId),
+    sb.from('datasets').select('*').eq('published', true).neq('owner', userId).limit(200),
+  ])
+  const ownRows = (own ?? []) as DatasetRow[]
+  const pubRows = (pub ?? []) as DatasetRow[]
+  const ids = [...ownRows, ...pubRows].map((d) => d.id)
   const { data: files } = ids.length
-    ? await supabase.from('dataset_files').select('dataset_id,name,format,size,rows,free,storage_path').in('dataset_id', ids)
+    ? await sb.from('dataset_files').select('dataset_id,name,format,size,rows,free,storage_path').in('dataset_id', ids)
     : { data: [] as FileRow[] }
-  const listings = (ds ?? []).map((d) => rowToDataset(d as DatasetRow, (files ?? []).filter((f) => f.dataset_id === d.id)))
+  const filesFor = (id: string) => (files ?? []).filter((f) => f.dataset_id === id)
+  const listings = ownRows.map((d) => rowToDataset(d, filesFor(d.id)))
+  const marketplace = pubRows.map((d) => rowToDataset(d, filesFor(d.id)))
 
   const { data: lic } = await supabase.from('licenses').select('*').eq('user_id', userId)
   const library: LibraryItem[] = (lic ?? []).map((l) => ({
@@ -123,7 +134,7 @@ export async function loadCloud(userId: string): Promise<CloudSnapshot | null> {
     .limit(100)
   const downloads: DownloadLog[] = (dl ?? []).map((x) => ({ datasetId: x.dataset_id ?? '', fileName: x.file_name ?? '', at: x.created_at }))
 
-  return { listings, library, downloads }
+  return { listings, marketplace, library, downloads }
 }
 
 /** Upsert a published listing (metadata + file metadata, not file bytes). */
@@ -154,7 +165,10 @@ export async function pushListing(d: CatalogDataset, userId: string): Promise<vo
   await sb.from('dataset_files').insert(rows)
 }
 
-/** Ask the license-checked /api/download endpoint for a short-lived signed URL. */
+/** Ask the license-checked /api/download endpoint for a short-lived signed URL.
+ *  Identity is proven by the caller's Supabase access token (Authorization
+ *  header) — the server derives the user from it, never from a client-supplied
+ *  id. `userId` is accepted for call-site compatibility but is not sent. */
 export async function signedDownloadUrl(input: {
   datasetId: string
   storagePath: string
@@ -162,10 +176,16 @@ export async function signedDownloadUrl(input: {
   userId?: string
 }): Promise<string | null> {
   try {
+    const headers: Record<string, string> = { 'content-type': 'application/json' }
+    if (supabase) {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (token) headers.authorization = `Bearer ${token}`
+    }
     const res = await fetch('/api/download', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(input),
+      headers,
+      body: JSON.stringify({ datasetId: input.datasetId, storagePath: input.storagePath, fileName: input.fileName }),
     })
     if (!res.ok) return null
     const data = (await res.json().catch(() => ({}))) as { url?: string }
