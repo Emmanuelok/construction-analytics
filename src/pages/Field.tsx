@@ -4,507 +4,246 @@ import {
   Users,
   Gauge,
   ShieldCheck,
-  ClipboardX,
-  Truck,
   Activity,
-  Hammer,
   AlertTriangle,
-  CalendarDays,
-  Sun,
-  Cloud,
-  CloudRain,
-  Wind,
-  ListChecks,
-  PieChart,
   TrendingUp,
-  UserCog,
-  GitBranch,
-  Radar,
+  RotateCcw,
+  Plus,
+  Trash2,
+  Sparkles,
+  HeartPulse,
 } from 'lucide-react'
+import { PageHeader, Card, CardHeader, StatTile, Badge, ProgressBar } from '@/components/ui'
+import { BarSeries, ScatterViz } from '@/components/charts'
 import {
-  PageHeader,
-  Card,
-  CardHeader,
-  StatTile,
-  Badge,
-  ProgressBar,
-  SectionHeading,
-  Tabs,
-  FeatureRow,
-  IconBadge,
-} from '@/components/ui'
-import { LineTrend, BarSeries, AreaTrend, Donut } from '@/components/charts'
-import { ACCENT, type Accent } from '@/lib/nav'
+  computeSite,
+  portfolio as computePortfolio,
+  fieldNarrative,
+  type SiteInput,
+  type SiteStatus,
+} from '@/lib/field-metrics'
 import { cn } from '@/lib/cn'
-import { formatNumber, formatPercent } from '@/lib/format'
+import { formatNumber } from '@/lib/format'
 
 const ACCENT_NAME = 'amber' as const
 
-/* --------------------------------------------------- productivity (10 days) */
-type ProdRow = { day: string; planned: number; actual: number }
-const PRODUCTIVITY: ProdRow[] = [
-  { day: 'May 12', planned: 320, actual: 308 },
-  { day: 'May 13', planned: 320, actual: 331 },
-  { day: 'May 14', planned: 340, actual: 297 },
-  { day: 'May 15', planned: 340, actual: 312 },
-  { day: 'May 16', planned: 360, actual: 286 },
-  { day: 'May 19', planned: 360, actual: 349 },
-  { day: 'May 20', planned: 380, actual: 372 },
-  { day: 'May 21', planned: 380, actual: 318 },
-  { day: 'May 22', planned: 400, actual: 391 },
-  { day: 'May 23', planned: 400, actual: 364 },
+/* Editable per-site field record — the inputs that drive every metric. */
+const seed = (): SiteInput[] => [
+  { id: 'PRJ-1042', name: 'Meridian Tower', workersPlanned: 340, workersActual: 312, outputPlanned: 400, outputActual: 364, hoursWorked: 420_000, recordables: 4, nearMisses: 60 },
+  { id: 'PRJ-0512', name: 'Lumen Airport T4', workersPlanned: 520, workersActual: 488, outputPlanned: 600, outputActual: 540, hoursWorked: 680_000, recordables: 9, nearMisses: 88 },
+  { id: 'PRJ-1135', name: 'Northgate Hospital', workersPlanned: 240, workersActual: 226, outputPlanned: 300, outputActual: 261, hoursWorked: 360_000, recordables: 7, nearMisses: 41 },
+  { id: 'PRJ-1290', name: 'Riverside Transit Hub', workersPlanned: 300, workersActual: 318, outputPlanned: 380, outputActual: 372, hoursWorked: 540_000, recordables: 11, nearMisses: 52 },
+  { id: 'PRJ-1201', name: 'Solano Logistics Park', workersPlanned: 180, workersActual: 174, outputPlanned: 220, outputActual: 208, hoursWorked: 240_000, recordables: 2, nearMisses: 28 },
+  { id: 'PRJ-0987', name: 'Harbour Point Mixed-Use', workersPlanned: 210, workersActual: 198, outputPlanned: 260, outputActual: 246, hoursWorked: 300_000, recordables: 3, nearMisses: 33 },
 ]
 
-/* ------------------------------------------------------- manpower by trade */
-type TradeRow = { trade: string; planned: number; actual: number }
-const MANPOWER: TradeRow[] = [
-  { trade: 'Concrete', planned: 210, actual: 188 },
-  { trade: 'Steel', planned: 145, actual: 152 },
-  { trade: 'MEP', planned: 320, actual: 274 },
-  { trade: 'Electrical', planned: 180, actual: 166 },
-  { trade: 'Finishing', planned: 240, actual: 231 },
-  { trade: 'Earthworks', planned: 90, actual: 84 },
-]
-const workersOnSite = MANPOWER.reduce((s, t) => s + t.actual, 0)
-const workersPlanned = MANPOWER.reduce((s, t) => s + t.planned, 0)
-
-/* ------------------------------------------------- safety incidents (months) */
-type SafetyRow = { month: string; incidents: number; nearMiss: number }
-const SAFETY: SafetyRow[] = [
-  { month: 'Dec', incidents: 3, nearMiss: 14 },
-  { month: 'Jan', incidents: 2, nearMiss: 19 },
-  { month: 'Feb', incidents: 4, nearMiss: 22 },
-  { month: 'Mar', incidents: 1, nearMiss: 28 },
-  { month: 'Apr', incidents: 2, nearMiss: 31 },
-  { month: 'May', incidents: 1, nearMiss: 37 },
-]
-
-type Risk = 'High' | 'Medium' | 'Low'
-const RISK_BADGE: Record<Risk, 'danger' | 'warn' | 'success'> = {
-  High: 'danger',
-  Medium: 'warn',
-  Low: 'success',
+const STATUS: Record<SiteStatus, { label: string; variant: 'success' | 'warn' | 'danger' }> = {
+  'on-track': { label: 'On track', variant: 'success' },
+  watch: { label: 'Watch', variant: 'warn' },
+  'at-risk': { label: 'At risk', variant: 'danger' },
 }
-type Observation = { id: string; site: string; hazard: string; trade: string; risk: Risk }
-const OBSERVATIONS: Observation[] = [
-  { id: 'OBS-4471', site: 'Meridian Tower · L24', hazard: 'Unprotected leading edge at slab perimeter', trade: 'Concrete', risk: 'High' },
-  { id: 'OBS-4468', site: 'Lumen Airport T4 · Pier B', hazard: 'Mobile crane operating near live overhead lines', trade: 'Steel', risk: 'High' },
-  { id: 'OBS-4462', site: 'Northgate Hospital · Ward C', hazard: 'Housekeeping — cabling trip hazard in riser', trade: 'Electrical', risk: 'Medium' },
-  { id: 'OBS-4455', site: 'Solano Logistics · Bay 3', hazard: 'Operative without cut-resistant gloves on rebar', trade: 'Concrete', risk: 'Medium' },
-  { id: 'OBS-4449', site: 'Harbour Point · Podium', hazard: 'Fire extinguisher obstructed by material storage', trade: 'Finishing', risk: 'Low' },
-]
 
-/* ------------------------------------------------------- quality / defects */
-const DEFECTS: { name: string; value: number; accent: Accent }[] = [
-  { name: 'Workmanship', value: 142, accent: 'amber' },
-  { name: 'Materials', value: 68, accent: 'rose' },
-  { name: 'Documentation', value: 51, accent: 'sky' },
-  { name: 'Design', value: 39, accent: 'violet' },
-  { name: 'Installation', value: 87, accent: 'emerald' },
-]
-const totalDefects = DEFECTS.reduce((s, d) => s + d.value, 0)
-const punchTotal = 1840
-const punchClosed = 1327
-const punchPct = (punchClosed / punchTotal) * 100
-
-/* ----------------------------------------------------------- daily reports */
-type Weather = 'Clear' | 'Cloudy' | 'Rain' | 'Windy'
-const WEATHER_ICON: Record<Weather, typeof Sun> = {
-  Clear: Sun,
-  Cloudy: Cloud,
-  Rain: CloudRain,
-  Windy: Wind,
-}
-type DailyLog = {
-  date: string
-  site: string
-  weather: Weather
-  manpower: number
-  completed: string
-  blocker: string | null
-}
-const DAILY_LOGS: DailyLog[] = [
-  {
-    date: 'May 23',
-    site: 'Meridian Tower',
-    weather: 'Clear',
-    manpower: 312,
-    completed: 'L23 deck pour complete (640 m³); core jump-form advanced to L25.',
-    blocker: 'MEP riser inserts late from supplier — 1 day float consumed.',
-  },
-  {
-    date: 'May 23',
-    site: 'Lumen Airport T4',
-    weather: 'Windy',
-    manpower: 488,
-    completed: 'Roof truss lift 7 of 12 set; baggage hall slab rebar 70% fixed.',
-    blocker: 'High winds halted crane lifts 11:00–14:00 (45 km/h gusts).',
-  },
-  {
-    date: 'May 22',
-    site: 'Northgate Hospital',
-    weather: 'Rain',
-    manpower: 226,
-    completed: 'Ward C blockwork to 2.4 m; mechanical plant room ductwork started.',
-    blocker: 'Inspection hold on fire-stopping pending RFI-1188 response.',
-  },
-  {
-    date: 'May 22',
-    site: 'Solano Logistics Park',
-    weather: 'Cloudy',
-    manpower: 174,
-    completed: 'Tilt-up panel erection bays 1–4; dock leveler pits formed.',
-    blocker: null,
-  },
-  {
-    date: 'May 21',
-    site: 'Harbour Point Mixed-Use',
-    weather: 'Clear',
-    manpower: 198,
-    completed: 'Podium post-tension stressing zone 2; façade unitized panels to L6.',
-    blocker: 'Two finishing crews stood down — access conflict with MEP.',
-  },
-]
-
-const PROD_TABS = [
-  { id: 'rate', label: 'Production rate', icon: TrendingUp },
-  { id: 'manpower', label: 'Manpower', icon: Users },
-]
-
-const CAPABILITIES = [
-  { icon: Activity, title: 'Productivity analytics', accent: 'amber' as const, body: 'Earned vs installed quantities per crew, trade and zone — surfaces underperformance before it hits the critical path.' },
-  { icon: UserCog, title: 'Workforce planning', accent: 'sky' as const, body: 'Forecasts manpower curves against the look-ahead and flags trade-stacking and access conflicts.' },
-  { icon: GitBranch, title: 'Delay root-cause analysis', accent: 'violet' as const, body: 'Correlates daily logs, weather, RFIs and blockers to attribute lost time to actual drivers.' },
-  { icon: Radar, title: 'Safety risk prediction', accent: 'rose' as const, body: 'Scores high-risk activities from observation patterns, headcount density and task mix.' },
-]
+const prodTone = (v: number) => (v >= 95 ? 'good' : v >= 85 ? 'warn' : 'bad')
+const trirTone = (v: number) => (v <= 2.5 ? 'good' : v <= 4 ? 'warn' : 'bad')
+const safetyAccent = (v: number) => (v >= 70 ? 'emerald' : v >= 55 ? 'amber' : 'rose')
 
 export default function Field() {
-  const [view, setView] = useState<string>('rate')
+  const [rows, setRows] = useState<SiteInput[]>(seed)
+  const [edited, setEdited] = useState(false)
 
-  const prodIndex = useMemo(() => {
-    const p = PRODUCTIVITY.reduce((s, r) => s + r.planned, 0)
-    const a = PRODUCTIVITY.reduce((s, r) => s + r.actual, 0)
-    return (a / p) * 100
-  }, [])
+  const set = (id: string, patch: Partial<SiteInput>) => {
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)))
+    setEdited(true)
+  }
+  const addRow = () => {
+    setRows((rs) => [...rs, { id: `PRJ-${Math.floor(1000 + Math.random() * 9000)}`, name: 'New site', workersPlanned: 100, workersActual: 95, outputPlanned: 120, outputActual: 110, hoursWorked: 120_000, recordables: 1, nearMisses: 10 }])
+    setEdited(true)
+  }
+  const removeRow = (id: string) => { setRows((rs) => rs.filter((r) => r.id !== id)); setEdited(true) }
+  const reset = () => { setRows(seed()); setEdited(false) }
+
+  const sites = useMemo(() => rows.map(computeSite), [rows])
+  const p = useMemo(() => computePortfolio(rows), [rows])
+
+  // charts driven by the live metrics
+  const outputData = sites.map((s) => ({ name: s.name.length > 16 ? s.name.slice(0, 15) + '…' : s.name, Planned: s.outputPlanned, Actual: s.outputActual }))
+  const frontier = sites.map((s) => ({ x: s.productivity, y: s.safetyScore, name: s.name }))
+  const worst = [...sites].filter((s) => s.status === 'at-risk').sort((a, b) => a.safetyScore - b.safetyScore)
 
   return (
     <div className="space-y-8">
       <PageHeader
         icon={HardHat}
-        eyebrow="Intelligence Engines"
+        eyebrow="Intelligence"
         title="Construction Analytics"
-        description="Capture real-time field execution data — daily reports, manpower, equipment, productivity, safety and quality — and turn it into a queryable record of how the build is actually progressing on the ground."
         accent={ACCENT_NAME}
+        description="A live field-execution workbench. Edit any site's manpower, installed output, hours worked or incident counts — staffing, productivity factor, the OSHA-standard TRIR and safety score recompute instantly. Real on-site math, not a static dashboard."
         actions={
           <>
-            <Badge variant="warn" dot>
-              12 active sites
+            {edited && (
+              <button onClick={reset} className="btn-ghost">
+                <RotateCcw className="h-4 w-4" /> Reset
+              </button>
+            )}
+            <Badge variant={STATUS[p.atRisk > 0 ? 'at-risk' : p.productivity >= 92 ? 'on-track' : 'watch'].variant} dot>
+              {p.sites} active sites
             </Badge>
-            <button className="btn-ghost">
-              <ClipboardX className="h-4 w-4" /> Daily report
-            </button>
           </>
         }
       />
 
-      {/* ===================================================== KPI row */}
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <StatTile
-          label="Workers on site"
-          value={formatNumber(workersOnSite)}
-          delta="3.1%"
-          deltaPositive
-          icon={Users}
-          accent="amber"
-          sub={`vs ${formatNumber(workersPlanned)} planned today`}
-        />
-        <StatTile
-          label="Productivity index"
-          value={formatPercent(prodIndex)}
-          delta="2.4 pts"
-          deltaPositive={false}
-          icon={Gauge}
-          accent="sky"
-          sub="Actual output vs plan"
-        />
-        <StatTile
-          label="Safety score"
-          value="92"
-          delta="3 pts"
-          deltaPositive
-          icon={ShieldCheck}
-          accent="emerald"
-          sub="0–100 composite, 12 sites"
-        />
-        <StatTile
-          label="Open NCRs"
-          value="47"
-          delta="11"
-          deltaPositive
-          icon={ClipboardX}
-          accent="rose"
-          sub="Non-conformance reports"
-        />
-        <StatTile
-          label="Equipment utilization"
-          value="78%"
-          delta="1.6 pts"
-          deltaPositive
-          icon={Truck}
-          accent="violet"
-          sub="Plant hours vs available"
-        />
-      </section>
+      {/* portfolio KPIs — recompute as you edit */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        <StatTile label="Workers on site" value={formatNumber(p.workersActual)} icon={Users} accent="amber" sub={`${p.staffing}% of ${formatNumber(p.workersPlanned)} planned`} />
+        <StatTile label="Productivity index" value={`${p.productivity}%`} icon={Gauge} accent={p.productivity >= 95 ? 'emerald' : p.productivity >= 85 ? 'amber' : 'rose'} sub="Installed output vs plan" />
+        <StatTile label="Portfolio TRIR" value={p.trir.toFixed(2)} icon={HeartPulse} accent={p.trir <= 2.5 ? 'emerald' : p.trir <= 4 ? 'amber' : 'rose'} sub="Recordables × 200k ÷ hours" />
+        <StatTile label="Safety score" value={String(p.safetyScore)} icon={ShieldCheck} accent={safetyAccent(p.safetyScore)} sub="0–100 from blended TRIR" />
+        <StatTile label="At-risk sites" value={String(p.atRisk)} icon={AlertTriangle} accent="rose" sub="Low productivity or safety" />
+      </div>
 
-      {/* ===================================================== Productivity + manpower */}
-      <section className="space-y-4">
-        <SectionHeading
-          eyebrow="Field execution"
-          title="Productivity & resourcing"
-          description="Planned vs actual production and the trade headcount delivering it."
-          action={<Tabs tabs={PROD_TABS} active={view} onChange={setView} />}
-        />
-        <Card>
-          {view === 'rate' ? (
-            <>
-              <CardHeader
-                title="Production rate — planned vs actual"
-                subtitle="Installed units per day, trailing 10 working days"
-                icon={TrendingUp}
-                accent="amber"
-                action={<Badge variant="warn">{formatPercent(prodIndex)} of plan</Badge>}
-              />
-              <div className="px-3 pb-5">
-                <LineTrend
-                  data={PRODUCTIVITY}
-                  xKey="day"
-                  series={[
-                    { key: 'planned', name: 'Planned', accent: 'sky' },
-                    { key: 'actual', name: 'Actual', accent: 'amber' },
-                  ]}
-                  dashedKeys={['planned']}
-                  valueFormatter={(v) => `${formatNumber(v)} u`}
-                  height={300}
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              <CardHeader
-                title="Manpower by trade"
-                subtitle="Headcount on site today vs planned allocation"
-                icon={Users}
-                accent="amber"
-                action={<Badge variant="neutral">{formatNumber(workersOnSite)} total</Badge>}
-              />
-              <div className="px-3 pb-5">
-                <BarSeries
-                  data={MANPOWER}
-                  xKey="trade"
-                  series={[
-                    { key: 'planned', name: 'Planned', accent: 'sky' },
-                    { key: 'actual', name: 'Actual', accent: 'amber' },
-                  ]}
-                  valueFormatter={(v) => formatNumber(v)}
-                  height={300}
-                />
-              </div>
-            </>
-          )}
-        </Card>
-      </section>
-
-      {/* ===================================================== Safety */}
-      <section className="grid gap-5 lg:grid-cols-5">
-        <Card className="lg:col-span-3">
-          <CardHeader
-            title="Safety performance"
-            subtitle="Recordable incidents vs near-misses logged (6 months)"
-            icon={ShieldCheck}
-            accent="emerald"
-            action={<Badge variant="success" dot>Trending safe</Badge>}
-          />
-          <div className="px-3 pb-3">
-            <AreaTrend
-              data={SAFETY}
-              xKey="month"
-              series={[
-                { key: 'nearMiss', name: 'Near-misses', accent: 'amber' },
-                { key: 'incidents', name: 'Recordable incidents', accent: 'rose' },
-              ]}
-              height={240}
-            />
-          </div>
-          <div className="grid grid-cols-3 gap-px border-t border-edge/60 bg-edge/40">
-            {[
-              { label: 'TRIR', value: '0.82', accent: 'emerald' as const },
-              { label: 'Days since LTI', value: '146', accent: 'amber' as const },
-              { label: 'Observations', value: '1,512', accent: 'sky' as const },
-            ].map((k) => (
-              <div key={k.label} className="bg-panel/80 p-4">
-                <div className={cn('text-xl font-bold text-slate-50 data-mono')}>{k.value}</div>
-                <div className="mt-1 text-xs text-slate-500">{k.label}</div>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <Card className="lg:col-span-2">
-          <CardHeader title="Recent observations" subtitle="Logged hazards by risk level" icon={AlertTriangle} accent="rose" />
-          <div className="divide-y divide-edge/40 px-5 pb-4">
-            {OBSERVATIONS.map((o) => (
-              <div key={o.id} className="flex items-start justify-between gap-3 py-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium leading-snug text-slate-200">{o.hazard}</p>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    {o.site} · {o.trade} · <span className="data-mono">{o.id}</span>
-                  </p>
-                </div>
-                <Badge variant={RISK_BADGE[o.risk]}>{o.risk}</Badge>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </section>
-
-      {/* ===================================================== Quality */}
-      <section className="grid gap-5 lg:grid-cols-5">
-        <Card className="lg:col-span-2">
-          <CardHeader title="Defect & NCR categories" subtitle={`${formatNumber(totalDefects)} open quality issues`} icon={PieChart} accent="amber" />
-          <div className="px-5 pb-2">
-            <Donut data={DEFECTS} valueFormatter={(v) => formatNumber(v)} />
-          </div>
-          <div className="space-y-1 px-5 pb-5">
-            {DEFECTS.map((d) => (
-              <div key={d.name} className="flex items-center gap-2.5 text-sm">
-                <span className={cn('h-2 w-2 shrink-0 rounded-full', ACCENT[d.accent].dot)} />
-                <span className="truncate text-slate-300">{d.name}</span>
-                <span className="ml-auto shrink-0 text-slate-400 data-mono">{formatNumber(d.value)}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <Card className="lg:col-span-3">
-          <CardHeader
-            title="Punch-list closeout"
-            subtitle="Open vs closed items across active handover zones"
-            icon={ListChecks}
-            accent="emerald"
-            action={<Badge variant="success">{formatPercent(punchPct)} closed</Badge>}
-          />
-          <div className="space-y-5 px-5 pb-5">
-            <div>
-              <div className="mb-2 flex items-center justify-between text-sm">
-                <span className="text-slate-400">Overall closeout</span>
-                <span className="text-slate-300 data-mono">
-                  {formatNumber(punchClosed)} / {formatNumber(punchTotal)}
-                </span>
-              </div>
-              <ProgressBar value={punchPct} accent="emerald" height="md" showValue />
-            </div>
-            {[
-              { zone: 'Cedar Park Residences — L1–L4', open: 38, closed: 462, accent: 'emerald' as const },
-              { zone: 'Greenfield Civic Center — Atrium', open: 12, closed: 318, accent: 'amber' as const },
-              { zone: 'Harbour Point — Retail Podium', open: 191, closed: 287, accent: 'sky' as const },
-              { zone: 'Meridian Tower — Sky Lobby', open: 272, closed: 260, accent: 'rose' as const },
-            ].map((z) => {
-              const pct = (z.closed / (z.open + z.closed)) * 100
-              return (
-                <div key={z.zone}>
-                  <div className="mb-1.5 flex items-center justify-between text-sm">
-                    <span className="truncate text-slate-300">{z.zone}</span>
-                    <span className="ml-3 shrink-0 text-xs text-slate-500 data-mono">{z.open} open</span>
-                  </div>
-                  <ProgressBar value={pct} accent={z.accent} height="sm" />
-                </div>
-              )
-            })}
-          </div>
-        </Card>
-      </section>
-
-      {/* ===================================================== Daily report feed */}
-      <section className="space-y-4">
-        <SectionHeading
-          eyebrow="Field log"
-          title="Daily report feed"
-          description="Site-level daily logs with weather, manpower, work completed and blockers."
+      {/* editable per-site table */}
+      <Card>
+        <CardHeader
+          icon={Activity}
+          accent={ACCENT_NAME}
+          title="Site execution — editable"
+          subtitle="Click any planned/actual, hours or incident figure to edit; staffing, productivity, TRIR and safety recompute live"
           action={
-            <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
-              <CalendarDays className="h-3.5 w-3.5" /> Auto-synced from 12 sites
-            </span>
+            <button onClick={addRow} className="btn-ghost h-9 px-3 py-0 text-xs">
+              <Plus className="h-3.5 w-3.5" /> Add site
+            </button>
           }
         />
-        <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] text-sm">
-              <thead>
-                <tr className="border-b border-edge/60 text-left text-xs uppercase tracking-wider text-slate-500">
-                  <th className="px-5 py-3 font-medium">Date</th>
-                  <th className="px-3 py-3 font-medium">Site</th>
-                  <th className="px-3 py-3 font-medium">Weather</th>
-                  <th className="px-3 py-3 text-right font-medium">Manpower</th>
-                  <th className="px-5 py-3 font-medium">Work completed · blockers</th>
-                </tr>
-              </thead>
-              <tbody>
-                {DAILY_LOGS.map((log, i) => {
-                  const WIcon = WEATHER_ICON[log.weather]
-                  return (
-                    <tr key={i} className="border-b border-edge/40 align-top transition-colors last:border-0 hover:bg-elevated/40">
-                      <td className="whitespace-nowrap px-5 py-3.5 text-slate-300 data-mono">{log.date}</td>
-                      <td className="whitespace-nowrap px-3 py-3.5 font-medium text-slate-100">{log.site}</td>
-                      <td className="px-3 py-3.5">
-                        <span className="inline-flex items-center gap-1.5 text-slate-300">
-                          <WIcon className="h-4 w-4 text-amber-400" /> {log.weather}
-                        </span>
-                      </td>
-                      <td className="px-3 py-3.5 text-right text-slate-200 data-mono">{formatNumber(log.manpower)}</td>
-                      <td className="px-5 py-3.5">
-                        <p className="text-slate-300">{log.completed}</p>
-                        {log.blocker ? (
-                          <p className="mt-1 inline-flex items-start gap-1.5 text-xs text-rose-300">
-                            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" /> {log.blocker}
-                          </p>
-                        ) : (
-                          <p className="mt-1 text-xs text-emerald-400">No blockers reported</p>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+        <div className="overflow-x-auto border-t border-edge/50">
+          <table className="w-full min-w-[1040px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
+                <th className="px-4 py-2.5 font-medium">Site</th>
+                <th className="px-3 py-2.5 text-right font-medium">Workers (act/plan)</th>
+                <th className="px-3 py-2.5 text-right font-medium">Output (act/plan)</th>
+                <th className="px-3 py-2.5 text-right font-medium">Man-hours</th>
+                <th className="px-3 py-2.5 text-right font-medium">Rec.</th>
+                <th className="px-3 py-2.5 text-right font-medium">Near-miss</th>
+                <th className="px-3 py-2.5 text-right font-medium">Staffing</th>
+                <th className="px-3 py-2.5 font-medium">Productivity</th>
+                <th className="px-3 py-2.5 text-right font-medium">TRIR</th>
+                <th className="px-3 py-2.5 text-center font-medium">Status</th>
+                <th className="px-2 py-2.5" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-edge/40">
+              {sites.map((s) => {
+                const st = STATUS[s.status]
+                return (
+                  <tr key={s.id} className="hover:bg-elevated/30">
+                    <td className="px-4 py-2">
+                      <input value={s.name} onChange={(e) => set(s.id, { name: e.target.value })} className="w-44 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-amber-500/40" />
+                      <div className="text-[10px] text-slate-600">{s.id}</div>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="inline-flex items-center gap-1 data-mono">
+                        <InlineNum value={s.workersActual} onChange={(v) => set(s.id, { workersActual: Math.max(0, v) })} tone={s.workersActual >= s.workersPlanned ? 'good' : 'warn'} />
+                        <span className="text-slate-600">/</span>
+                        <InlineNum value={s.workersPlanned} onChange={(v) => set(s.id, { workersPlanned: Math.max(0, v) })} />
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="inline-flex items-center gap-1 data-mono">
+                        <InlineNum value={s.outputActual} onChange={(v) => set(s.id, { outputActual: Math.max(0, v) })} tone={s.outputActual >= s.outputPlanned ? 'good' : 'warn'} />
+                        <span className="text-slate-600">/</span>
+                        <InlineNum value={s.outputPlanned} onChange={(v) => set(s.id, { outputPlanned: Math.max(0, v) })} />
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <InlineNum value={s.hoursWorked} onChange={(v) => set(s.id, { hoursWorked: Math.max(0, v) })} fmt={(v) => formatNumber(v, { compact: true })} />
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <InlineNum value={s.recordables} onChange={(v) => set(s.id, { recordables: Math.max(0, v) })} tone={s.recordables > 5 ? 'bad' : undefined} />
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <InlineNum value={s.nearMisses} onChange={(v) => set(s.id, { nearMisses: Math.max(0, v) })} />
+                    </td>
+                    <td className={cn('px-3 py-2 text-right data-mono', s.staffing >= 95 ? 'text-emerald-300' : s.staffing >= 85 ? 'text-amber-300' : 'text-rose-300')}>{s.staffing}%</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-2.5">
+                        <ProgressBar value={s.productivity} accent={s.productivity >= 95 ? 'emerald' : s.productivity >= 85 ? 'amber' : 'rose'} height="sm" className="w-16" />
+                        <span className="w-10 text-sm font-semibold text-slate-100 data-mono">{s.productivity}%</span>
+                      </div>
+                    </td>
+                    <td className={cn('px-3 py-2 text-right data-mono', s.trir <= 2.5 ? 'text-emerald-300' : s.trir <= 4 ? 'text-amber-300' : 'text-rose-300')}>{s.trir.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-center"><Badge variant={st.variant} dot>{st.label}</Badge></td>
+                    <td className="px-2 py-2 text-right">
+                      <button onClick={() => removeRow(s.id)} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* charts driven by the live metrics */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader icon={ShieldCheck} accent={ACCENT_NAME} title="Productivity vs safety" subtitle="Each site — top-right (productive + safe) is healthy" />
+          <div className="border-t border-edge/50 p-5">
+            <ScatterViz data={frontier} xKey="x" yKey="y" xName="Productivity %" yName="Safety score" height={300} accent="amber" />
+            <p className="mt-2 text-xs text-slate-500">Sites in the lower-left are both behind plan and carrying elevated incident rates — prioritize them.</p>
           </div>
         </Card>
-      </section>
-
-      {/* ===================================================== AI capabilities */}
-      <section className="space-y-4">
-        <SectionHeading
-          eyebrow="Powered by AEC intelligence"
-          title="What this engine automates"
-          description="Field data becomes predictive once it is standardized against the lakehouse."
-        />
-        <div className="grid gap-4 sm:grid-cols-2">
-          {CAPABILITIES.map((c) => (
-            <Card key={c.title} className="p-5" hover>
-              <FeatureRow icon={c.icon} title={c.title} accent={c.accent}>
-                {c.body}
-              </FeatureRow>
-            </Card>
-          ))}
-        </div>
-      </section>
-
-      <div className="flex items-center gap-3 rounded-2xl border border-edge/60 bg-gradient-to-r from-amber-500/10 via-surface/40 to-transparent p-5">
-        <IconBadge icon={Hammer} accent="amber" />
-        <p className="text-sm text-slate-300">
-          Every daily log, inspection and timesheet is standardized into the shared field schema — making 12 live sites
-          comparable, benchmarkable and ready for productivity and safety models.
-        </p>
+        <Card>
+          <CardHeader icon={TrendingUp} accent={ACCENT_NAME} title="Output — planned vs actual" subtitle="Installed quantities per site" />
+          <div className="border-t border-edge/50 p-5">
+            <BarSeries
+              data={outputData}
+              xKey="name"
+              layout="vertical"
+              height={300}
+              series={[{ key: 'Planned', name: 'Planned', accent: 'sky' }, { key: 'Actual', name: 'Actual', accent: 'amber' }]}
+              valueFormatter={(v) => formatNumber(v)}
+            />
+          </div>
+        </Card>
       </div>
+
+      {/* live read-out */}
+      <Card className="relative overflow-hidden">
+        <div className="pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full bg-amber-500/20 opacity-20 blur-3xl" />
+        <CardHeader icon={Sparkles} accent={ACCENT_NAME} title="Field read-out" subtitle="Computed from your current site data" />
+        <div className="space-y-2.5 border-t border-edge/50 p-5">
+          <p className="text-[15px] leading-relaxed text-slate-300">{fieldNarrative(p)}</p>
+          {worst.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {worst.map((s) => (
+                <span key={s.id} className="inline-flex items-center gap-1 rounded-md bg-rose-500/10 px-2 py-0.5 text-[11px] text-rose-300">
+                  <AlertTriangle className="h-3 w-3" /> {s.name} · {s.productivity}% · TRIR {s.trir.toFixed(2)}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </Card>
     </div>
+  )
+}
+
+/* A compact inline-editable number — shows formatted value, edits the raw number. */
+function InlineNum({ value, onChange, fmt, tone }: { value: number; onChange: (v: number) => void; fmt?: (v: number) => string; tone?: 'good' | 'warn' | 'bad' }) {
+  const [editing, setEditing] = useState(false)
+  const toneClass = tone === 'good' ? 'text-emerald-300' : tone === 'warn' ? 'text-amber-300' : tone === 'bad' ? 'text-rose-300' : 'text-slate-300'
+  return editing ? (
+    <input
+      autoFocus
+      type="number"
+      defaultValue={value}
+      onBlur={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) onChange(n); setEditing(false) }}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditing(false) }}
+      className="w-20 rounded border border-amber-500/50 bg-elevated px-1 py-0.5 text-right text-sm text-slate-100 focus:outline-none"
+    />
+  ) : (
+    <button onClick={() => setEditing(true)} className={cn('data-mono hover:text-white hover:underline', toneClass)} title="Click to edit">
+      {fmt ? fmt(value) : formatNumber(value)}
+    </button>
   )
 }
