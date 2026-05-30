@@ -1,414 +1,300 @@
+import { useMemo, useState } from 'react'
 import {
   ScanEye,
-  Image as ImageIcon,
-  MapPinned,
   CheckCircle2,
-  ScanSearch,
-  Boxes,
-  Upload,
+  AlertTriangle,
+  Gauge,
+  ShieldCheck,
+  CircleDollarSign,
+  RotateCcw,
+  Plus,
+  Trash2,
+  Sparkles,
+  BadgeCheck,
   TrendingUp,
-  Grid3x3,
-  Layers,
-  Ruler,
-  Plane,
-  View,
-  Radar,
-  GitCompareArrows,
-  Eye,
+  SlidersHorizontal,
 } from 'lucide-react'
+import { PageHeader, Card, CardHeader, StatTile, Badge, ProgressBar } from '@/components/ui'
+import { BarSeries } from '@/components/charts'
 import {
-  PageHeader,
-  Card,
-  CardHeader,
-  StatTile,
-  Badge,
-  SectionHeading,
-  FeatureRow,
-  IconBadge,
-} from '@/components/ui'
-import { AreaTrend, BarSeries } from '@/components/charts'
-import { ACCENT, type Accent } from '@/lib/nav'
+  scoreZone,
+  summarize,
+  verifyNarrative,
+  formatMoney,
+  type ZoneInput,
+  type ZoneStatus,
+} from '@/lib/verify'
 import { cn } from '@/lib/cn'
-import { formatNumber, formatPercent, formatBytes } from '@/lib/format'
+import { formatNumber, formatCurrency } from '@/lib/format'
 
 const ACCENT_NAME = 'cyan' as const
 
-/* --------------------------------------- progress verification (weeks) */
-type ProgRow = { week: string; planned: number; claimed: number; verified: number }
-const PROGRESS: ProgRow[] = [
-  { week: 'W1', planned: 8, claimed: 9, verified: 7 },
-  { week: 'W2', planned: 16, claimed: 18, verified: 14 },
-  { week: 'W3', planned: 24, claimed: 27, verified: 21 },
-  { week: 'W4', planned: 33, claimed: 36, verified: 29 },
-  { week: 'W5', planned: 42, claimed: 47, verified: 38 },
-  { week: 'W6', planned: 51, claimed: 58, verified: 46 },
-  { week: 'W7', planned: 60, claimed: 67, verified: 53 },
-  { week: 'W8', planned: 68, claimed: 76, verified: 61 },
+/* Per-zone work packages — planned vs contractor-claimed vs CV-verified. */
+const seed = (): ZoneInput[] => [
+  { id: 'z1', zone: 'L20–24 Structure', unit: 'm³', plannedQty: 2400, claimedQty: 2280, verifiedQty: 2150, rate: 165, confidence: 0.94 },
+  { id: 'z2', zone: 'Façade Bays 1–8', unit: 'm²', plannedQty: 9500, claimedQty: 8800, verifiedQty: 7600, rate: 920, confidence: 0.88 },
+  { id: 'z3', zone: 'MEP Risers 1–6', unit: 'lm', plannedQty: 18000, claimedQty: 15500, verifiedQty: 12800, rate: 70, confidence: 0.79 },
+  { id: 'z4', zone: 'Core Walls L10–18', unit: 'm³', plannedQty: 1600, claimedQty: 1600, verifiedQty: 1560, rate: 165, confidence: 0.95 },
+  { id: 'z5', zone: 'Podium Slab', unit: 'm²', plannedQty: 4200, claimedQty: 4000, verifiedQty: 3950, rate: 78, confidence: 0.92 },
+  { id: 'z6', zone: 'Roof Plant Deck', unit: 'm²', plannedQty: 1200, claimedQty: 1100, verifiedQty: 700, rate: 110, confidence: 0.70 },
 ]
-const claimGap = PROGRESS[PROGRESS.length - 1].claimed - PROGRESS[PROGRESS.length - 1].verified
 
-/* --------------------------------------- coverage heatmap (6 cols x 8 rows) */
-// recency 0 = none captured, 1 = stale, 2 = aging, 3 = recent, 4 = today
-const HEAT_COLS = 6
-const HEAT_ROWS = 8
-const HEAT: number[] = [
-  4, 4, 3, 3, 2, 1,
-  4, 4, 4, 3, 2, 2,
-  3, 4, 4, 4, 3, 2,
-  3, 3, 4, 4, 4, 3,
-  2, 3, 3, 4, 4, 3,
-  2, 2, 3, 3, 4, 4,
-  1, 2, 2, 3, 4, 4,
-  0, 1, 2, 3, 3, 4,
-]
-const HEAT_TONE: Record<number, string> = {
-  0: 'bg-elevated/60 ring-edge/50',
-  1: 'bg-cyan-500/15 ring-cyan-500/20',
-  2: 'bg-cyan-500/30 ring-cyan-500/30',
-  3: 'bg-cyan-500/55 ring-cyan-400/40',
-  4: 'bg-cyan-400/90 ring-cyan-300/60',
+const STATUS_META: Record<ZoneStatus, { label: string; variant: 'success' | 'warn' | 'danger' }> = {
+  verified: { label: 'Verified', variant: 'success' },
+  review: { label: 'Review', variant: 'warn' },
+  'over-claimed': { label: 'Over-claimed', variant: 'danger' },
 }
-const HEAT_LEGEND = [
-  { tone: 0, label: 'No capture' },
-  { tone: 1, label: '14d+' },
-  { tone: 2, label: '7–14d' },
-  { tone: 3, label: '< 7d' },
-  { tone: 4, label: 'Today' },
-]
-const coveredCells = HEAT.filter((c) => c > 0).length
-const coveragePct = (coveredCells / HEAT.length) * 100
 
-/* --------------------------------------- computer vision detections */
-type DetectRow = { label: string; count: number }
-const DETECTIONS: DetectRow[] = [
-  { label: 'PPE compliance', count: 4820 },
-  { label: 'Installed equipment', count: 1264 },
-  { label: 'Exposed rebar', count: 372 },
-  { label: 'Water ingress', count: 88 },
-  { label: 'Scaffolding', count: 1510 },
-  { label: 'Debris / housekeeping', count: 642 },
-]
-
-/* --------------------------------------- as-built vs BIM deviations */
-type DevStatus = 'Within tol.' | 'Review' | 'Out of tol.'
-const DEV_BADGE: Record<DevStatus, 'success' | 'warn' | 'danger'> = {
-  'Within tol.': 'success',
-  Review: 'warn',
-  'Out of tol.': 'danger',
-}
-type Deviation = { location: string; element: string; deviation: number; tolerance: number; status: DevStatus }
-const DEVIATIONS: Deviation[] = [
-  { location: 'L24 · Grid C4', element: 'Column face position', deviation: 9, tolerance: 10, status: 'Within tol.' },
-  { location: 'L18 · Core wall', element: 'Slab edge setout', deviation: 14, tolerance: 12, status: 'Review' },
-  { location: 'Pier B · Grid 7', element: 'Embed plate elevation', deviation: 23, tolerance: 15, status: 'Out of tol.' },
-  { location: 'L12 · Riser 3', element: 'MEP sleeve centreline', deviation: 31, tolerance: 20, status: 'Out of tol.' },
-  { location: 'Podium · Grid B2', element: 'PT duct cover', deviation: 7, tolerance: 10, status: 'Within tol.' },
-  { location: 'L09 · Façade bay 4', element: 'Bracket plumb', deviation: 11, tolerance: 12, status: 'Review' },
-]
-
-/* --------------------------------------- capture timeline */
-type CapType = 'Drone' | '360' | 'LiDAR'
-const CAP_META: Record<CapType, { icon: typeof Plane; accent: Accent }> = {
-  Drone: { icon: Plane, accent: 'cyan' },
-  '360': { icon: View, accent: 'violet' },
-  LiDAR: { icon: ScanSearch, accent: 'sky' },
-}
-type Capture = { id: string; type: CapType; area: string; date: string; bytes: number; processed: boolean }
-const CAPTURES: Capture[] = [
-  { id: 'CAP-9821', type: 'Drone', area: 'Meridian Tower — full envelope', date: 'May 23 · 07:40', bytes: 12_400_000_000, processed: true },
-  { id: 'CAP-9818', type: 'LiDAR', area: 'Lumen T4 — baggage hall', date: 'May 22 · 16:10', bytes: 48_200_000_000, processed: true },
-  { id: 'CAP-9814', type: '360', area: 'Northgate — Ward C fit-out', date: 'May 22 · 11:25', bytes: 3_100_000_000, processed: true },
-  { id: 'CAP-9809', type: 'Drone', area: 'Solano Logistics — roof & yard', date: 'May 21 · 08:05', bytes: 9_800_000_000, processed: false },
-  { id: 'CAP-9803', type: 'LiDAR', area: 'Harbour Point — podium core', date: 'May 20 · 14:50', bytes: 31_600_000_000, processed: true },
-  { id: 'CAP-9799', type: '360', area: 'Cedar Park — L1–L4 walkthrough', date: 'May 20 · 09:15', bytes: 2_400_000_000, processed: false },
-]
-
-const CAPABILITIES = [
-  { icon: Eye, title: 'Computer vision', accent: 'cyan' as const, body: '14 trained models segment site imagery — detecting elements, conditions, PPE and hazards frame by frame.' },
-  { icon: TrendingUp, title: 'Progress verification', accent: 'sky' as const, body: 'Measures installed work against the model and schedule so claimed progress can be objectively confirmed.' },
-  { icon: GitCompareArrows, title: 'As-built comparison', accent: 'violet' as const, body: 'Registers point clouds to BIM and computes element-level deviation against tolerance automatically.' },
-  { icon: Radar, title: 'Defect detection', accent: 'rose' as const, body: 'Flags cracking, water ingress, exposed rebar and finish defects from photos before they are buried.' },
-]
+const short = (s: string) => (s.length > 16 ? s.slice(0, 15) + '…' : s)
 
 export default function RealityCapture() {
+  const [rows, setRows] = useState<ZoneInput[]>(seed)
+  const [tolerancePct, setTolerancePct] = useState(3)
+  const [minConfidence, setMinConfidence] = useState(0.8)
+  const [edited, setEdited] = useState(false)
+
+  const touch = () => setEdited(true)
+  const set = (id: string, patch: Partial<ZoneInput>) => { setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r))); touch() }
+  const verify = (id: string, claimed: number) => set(id, { verifiedQty: claimed, confidence: 0.95 })
+  const addRow = () => { setRows((rs) => [...rs, { id: `z-${Math.floor(1000 + Math.random() * 9000)}`, zone: 'New zone', unit: 'm²', plannedQty: 1000, claimedQty: 800, verifiedQty: 600, rate: 100, confidence: 0.85 }]); touch() }
+  const removeRow = (id: string) => { setRows((rs) => rs.filter((r) => r.id !== id)); touch() }
+  const reset = () => { setRows(seed()); setTolerancePct(3); setMinConfidence(0.8); setEdited(false) }
+
+  const thresholds = { tolerancePct, minConfidence }
+  const zones = useMemo(() => rows.map((z) => scoreZone(z, thresholds)), [rows, tolerancePct, minConfidence])
+  const s = useMemo(() => summarize(rows, thresholds), [rows, tolerancePct, minConfidence])
+
+  const compareData = zones.map((z) => ({ name: short(z.zone), Claimed: z.claimedPct, Verified: z.verifiedPct }))
+  const gapData = zones.map((z) => ({ name: short(z.zone), gap: Math.round(z.claimGapValue) }))
+  const flagged = zones.filter((z) => z.status !== 'verified')
+
   return (
     <div className="space-y-8">
       <PageHeader
         icon={ScanEye}
-        eyebrow="Intelligence Engines"
-        title="Reality Capture & Computer Vision"
-        description="Turn site photos, drone maps, laser scans and 360° walks into analyzable, queryable progress data — connected to the model, schedule and cost so capture stops being a data graveyard and becomes a living layer."
+        eyebrow="Intelligence"
+        title="Reality Capture & Verification"
         accent={ACCENT_NAME}
+        description="A live progress-verification workbench. Edit planned, claimed and CV-verified quantities per zone — plus capture confidence — and watch verified completion, the claim gap, the value at risk and a confidence-weighted verification score recompute. The gap between claimed and verified is where payment risk hides."
         actions={
           <>
-            <Badge variant="cyan" dot>
-              CV models: 14
+            {edited && (
+              <button onClick={reset} className="btn-ghost">
+                <RotateCcw className="h-4 w-4" /> Reset
+              </button>
+            )}
+            <Badge variant={s.valueAtRisk > 0 ? 'warn' : 'success'} dot>
+              {formatMoney(s.valueAtRisk)} at risk
             </Badge>
-            <button className="btn-ghost">
-              <Upload className="h-4 w-4" /> Upload capture
-            </button>
           </>
         }
       />
 
-      {/* ===================================================== KPI row */}
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <StatTile
-          label="Captures processed"
-          value={formatNumber(8740)}
-          delta="12.6%"
-          deltaPositive
-          icon={ImageIcon}
-          accent="cyan"
-          sub="Photos, drone & 360° this month"
-        />
-        <StatTile
-          label="Site coverage"
-          value={formatPercent(coveragePct)}
-          delta="4.2 pts"
-          deltaPositive
-          icon={MapPinned}
-          accent="sky"
-          sub={`${coveredCells} of ${HEAT.length} zones captured`}
-        />
-        <StatTile
-          label="Progress verified"
-          value="61%"
-          delta="vs 76% claimed"
-          deltaPositive={false}
-          icon={CheckCircle2}
-          accent="amber"
-          sub="CV-verified vs reported"
-        />
-        <StatTile
-          label="Defects detected"
-          value={formatNumber(372)}
-          delta="58"
-          deltaPositive
-          icon={ScanSearch}
-          accent="rose"
-          sub="Flagged by CV, last 30d"
-        />
-        <StatTile
-          label="Point clouds registered"
-          value={formatNumber(184)}
-          delta="9.1%"
-          deltaPositive
-          icon={Boxes}
-          accent="violet"
-          sub="Aligned to BIM coordinate"
-        />
-      </section>
+      {/* KPIs — recompute as capture verifies work */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        <StatTile label="Verified completion" value={`${s.verifiedPct}%`} icon={CheckCircle2} accent={s.verifiedPct >= 90 ? 'emerald' : 'cyan'} sub="CV-verified, value-weighted" />
+        <StatTile label="Claimed completion" value={`${s.claimedPct}%`} icon={TrendingUp} accent="amber" sub={`${Math.round((s.claimedPct - s.verifiedPct) * 10) / 10}pt claim gap`} />
+        <StatTile label="Value at risk" value={formatMoney(s.valueAtRisk)} icon={CircleDollarSign} accent={s.valueAtRisk > 0 ? 'rose' : 'emerald'} sub="Claimed but unverified" />
+        <StatTile label="Verification score" value={s.avgVerification.toFixed(1)} icon={Gauge} accent={s.avgVerification >= 80 ? 'emerald' : 'amber'} sub="Confidence-weighted, 0–100" />
+        <StatTile label="Flagged zones" value={`${s.overClaimed + s.review}`} icon={AlertTriangle} accent="rose" sub={`${s.overClaimed} over-claimed · ${s.review} review`} />
+      </div>
 
-      {/* ===================================================== Progress verification */}
-      <section className="space-y-4">
-        <SectionHeading
-          eyebrow="Trust, but verify"
-          title="Progress verification"
-          description="Planned vs claimed vs computer-vision-verified completion — the gap between claimed and verified is where payment risk hides."
+      {/* verification thresholds */}
+      <Card>
+        <CardHeader icon={SlidersHorizontal} accent={ACCENT_NAME} title="Verification policy" subtitle="Set how far claimed work may run ahead of verified, and the capture confidence you require to trust a zone" />
+        <div className="grid max-w-2xl grid-cols-1 gap-5 border-t border-edge/50 p-5 sm:grid-cols-2">
+          <Param label="Claim tolerance" unit="% of planned" value={tolerancePct} step={0.5} onChange={(v) => { setTolerancePct(Math.max(0, v)); touch() }} />
+          <Param label="Min capture confidence" unit="0–1" value={minConfidence} step={0.05} onChange={(v) => { setMinConfidence(Math.max(0, Math.min(1, v))); touch() }} />
+        </div>
+      </Card>
+
+      {/* editable zone table */}
+      <Card>
+        <CardHeader
+          icon={BadgeCheck}
+          accent={ACCENT_NAME}
+          title="Progress verification — editable"
+          subtitle="Click any quantity, rate or confidence to edit, or Verify a zone as capture confirms it. Completion, claim gap and score recompute live."
+          action={
+            <button onClick={addRow} className="btn-ghost h-9 px-3 py-0 text-xs">
+              <Plus className="h-3.5 w-3.5" /> Add zone
+            </button>
+          }
         />
+        <div className="overflow-x-auto border-t border-edge/50">
+          <table className="w-full min-w-[1100px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
+                <th className="px-4 py-2.5 font-medium">Zone</th>
+                <th className="px-3 py-2.5 text-right font-medium">Planned</th>
+                <th className="px-3 py-2.5 text-right font-medium">Claimed</th>
+                <th className="px-3 py-2.5 text-right font-medium">Verified</th>
+                <th className="px-3 py-2.5 text-right font-medium">Rate</th>
+                <th className="px-3 py-2.5 text-right font-medium">Conf.</th>
+                <th className="px-3 py-2.5 text-right font-medium">Claim gap</th>
+                <th className="px-3 py-2.5 font-medium">Verification</th>
+                <th className="px-3 py-2.5 text-center font-medium">Status</th>
+                <th className="px-2 py-2.5" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-edge/40">
+              {zones.map((z) => {
+                const st = STATUS_META[z.status]
+                return (
+                  <tr key={z.id} className="hover:bg-elevated/30">
+                    <td className="px-4 py-2">
+                      <input value={z.zone} onChange={(e) => set(z.id, { zone: e.target.value })} className="w-40 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-cyan-500/40" />
+                      <input value={z.unit} onChange={(e) => set(z.id, { unit: e.target.value })} className="block w-16 rounded bg-transparent text-[11px] text-slate-500 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-cyan-500/30" />
+                    </td>
+                    <NumCell value={z.plannedQty} onChange={(v) => set(z.id, { plannedQty: Math.max(0, v) })} />
+                    <NumCell value={z.claimedQty} onChange={(v) => set(z.id, { claimedQty: Math.max(0, v) })} tone="warn" />
+                    <NumCell value={z.verifiedQty} onChange={(v) => set(z.id, { verifiedQty: Math.max(0, v) })} tone="good" />
+                    <NumCell value={z.rate} onChange={(v) => set(z.id, { rate: Math.max(0, v) })} fmt={(v) => `$${formatNumber(v)}`} />
+                    <ConfCell value={z.confidence} onChange={(v) => set(z.id, { confidence: v })} />
+                    <td className={cn('px-3 py-2 text-right data-mono', z.claimGapValue > 0 ? 'text-rose-300' : 'text-emerald-300')}>
+                      {z.claimGapValue !== 0 ? formatMoney(z.claimGapValue) : '—'}
+                      <span className="ml-1 text-[10px] text-slate-500">{z.claimGapPct > 0 ? `+${z.claimGapPct}%` : `${z.claimGapPct}%`}</span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-2.5">
+                        <ProgressBar value={z.verificationScore} accent={z.verificationScore >= 80 ? 'emerald' : z.verificationScore >= 60 ? 'amber' : 'rose'} height="sm" className="w-16" />
+                        <span className="w-8 text-sm font-semibold text-slate-100 data-mono">{z.verificationScore}</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-center"><Badge variant={st.variant} dot>{st.label}</Badge></td>
+                    <td className="px-2 py-2">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {z.claimGapQty > 0 && (
+                          <button onClick={() => verify(z.id, z.claimedQty)} title="Mark verified up to claim" className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-emerald-300 ring-1 ring-inset ring-emerald-500/30 hover:bg-emerald-500/15">
+                            <CheckCircle2 className="h-3 w-3" /> Verify
+                          </button>
+                        )}
+                        <button onClick={() => removeRow(z.id)} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* charts driven by the live model */}
+      <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader
-            title="Planned vs claimed vs CV-verified progress"
-            subtitle="Cumulative % complete, trailing 8 weeks"
-            icon={TrendingUp}
-            accent="cyan"
-            action={<Badge variant="warn">{claimGap} pt claim gap</Badge>}
-          />
-          <div className="px-3 pb-5">
-            <AreaTrend
-              data={PROGRESS}
-              xKey="week"
-              series={[
-                { key: 'planned', name: 'Planned', accent: 'sky' },
-                { key: 'claimed', name: 'Claimed', accent: 'amber' },
-                { key: 'verified', name: 'CV-verified', accent: 'cyan' },
-              ]}
-              valueFormatter={(v) => `${v}%`}
+          <CardHeader icon={TrendingUp} accent={ACCENT_NAME} title="Claimed vs verified completion" subtitle="Per zone (%) — the gap is unverified claim" />
+          <div className="border-t border-edge/50 p-5">
+            <BarSeries
+              data={compareData}
+              xKey="name"
+              layout="vertical"
               height={300}
+              series={[{ key: 'Claimed', name: 'Claimed', accent: 'amber' }, { key: 'Verified', name: 'CV-verified', accent: 'cyan' }]}
+              valueFormatter={(v) => `${v}%`}
             />
           </div>
         </Card>
-      </section>
+        <Card>
+          <CardHeader icon={CircleDollarSign} accent="rose" title="Value at risk by zone" subtitle="Claimed-but-unverified value — where payment risk concentrates" />
+          <div className="border-t border-edge/50 p-5">
+            <BarSeries
+              data={gapData}
+              xKey="name"
+              layout="vertical"
+              height={300}
+              series={[{ key: 'gap', name: 'Claim gap value', accent: 'rose' }]}
+              valueFormatter={(v) => formatCurrency(v)}
+            />
+          </div>
+        </Card>
+      </div>
 
-      {/* ===================================================== Coverage + detections */}
-      <section className="grid gap-5 lg:grid-cols-5">
-        <Card className="lg:col-span-2">
-          <CardHeader
-            title="Site coverage heatmap"
-            subtitle="Capture recency by zone across the site grid"
-            icon={Grid3x3}
-            accent="cyan"
-          />
-          <div className="px-5 pb-5">
-            <div
-              className="grid gap-1.5"
-              style={{ gridTemplateColumns: `repeat(${HEAT_COLS}, minmax(0, 1fr))` }}
-            >
-              {HEAT.map((tone, i) => {
-                const row = Math.floor(i / HEAT_COLS) + 1
-                const col = (i % HEAT_COLS) + 1
-                return (
-                  <div
-                    key={i}
-                    title={`Zone ${String.fromCharCode(64 + col)}${row}`}
-                    className={cn('aspect-square rounded-md ring-1 transition-transform hover:scale-105', HEAT_TONE[tone])}
-                  />
-                )
-              })}
-            </div>
-            <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-              {HEAT_LEGEND.map((l) => (
-                <span key={l.tone} className="inline-flex items-center gap-1.5 text-xs text-slate-400">
-                  <span className={cn('h-3 w-3 rounded ring-1', HEAT_TONE[l.tone])} />
-                  {l.label}
+      {/* live read-out */}
+      <Card className="relative overflow-hidden">
+        <div className="pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full bg-cyan-500/20 opacity-20 blur-3xl" />
+        <CardHeader icon={Sparkles} accent={ACCENT_NAME} title="Verification read-out" subtitle="Computed from your current capture" />
+        <div className="space-y-2.5 border-t border-edge/50 p-5">
+          <p className="text-[15px] leading-relaxed text-slate-300">{verifyNarrative(s)}</p>
+          {flagged.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {flagged.map((z) => (
+                <span key={z.id} className={cn('inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px]', z.status === 'over-claimed' ? 'bg-rose-500/10 text-rose-300' : 'bg-amber-500/10 text-amber-300')}>
+                  {z.status === 'over-claimed' ? <AlertTriangle className="h-3 w-3" /> : <ShieldCheck className="h-3 w-3" />} {z.zone} · {STATUS_META[z.status].label}
                 </span>
               ))}
             </div>
-            <p className="mt-3 text-xs text-slate-500">
-              {HEAT_ROWS} levels × {HEAT_COLS} zones · {formatPercent(coveragePct)} captured in the current cycle.
-            </p>
-          </div>
-        </Card>
-
-        <Card className="lg:col-span-3">
-          <CardHeader
-            title="Computer vision detections"
-            subtitle="Objects & conditions classified across processed captures"
-            icon={ScanSearch}
-            accent="cyan"
-            action={<Badge variant="cyan">avg conf. 0.91</Badge>}
-          />
-          <div className="px-3 pb-3">
-            <BarSeries
-              data={DETECTIONS}
-              xKey="label"
-              series={[{ key: 'count', name: 'Detections', accent: 'cyan' }]}
-              layout="vertical"
-              valueFormatter={(v) => formatNumber(v)}
-              height={300}
-            />
-          </div>
-          <p className="px-5 pb-5 text-xs text-slate-500">
-            Counts above a 0.75 confidence threshold; low-confidence detections are queued for human review before
-            they enter the lakehouse.
-          </p>
-        </Card>
-      </section>
-
-      {/* ===================================================== As-built deviations */}
-      <section className="space-y-4">
-        <SectionHeading
-          eyebrow="As-built vs BIM"
-          title="Detected deviations"
-          description="Point-cloud-to-model comparison surfaces where the build diverges from design beyond tolerance."
-          action={
-            <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
-              <Ruler className="h-3.5 w-3.5" /> Millimetre comparison
-            </span>
-          }
-        />
-        <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-sm">
-              <thead>
-                <tr className="border-b border-edge/60 text-left text-xs uppercase tracking-wider text-slate-500">
-                  <th className="px-5 py-3 font-medium">Location</th>
-                  <th className="px-3 py-3 font-medium">Element</th>
-                  <th className="px-3 py-3 text-right font-medium">Deviation</th>
-                  <th className="px-3 py-3 text-right font-medium">Tolerance</th>
-                  <th className="px-5 py-3 text-right font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {DEVIATIONS.map((d, i) => (
-                  <tr key={i} className="border-b border-edge/40 transition-colors last:border-0 hover:bg-elevated/40">
-                    <td className="px-5 py-3.5 font-medium text-slate-100 data-mono">{d.location}</td>
-                    <td className="px-3 py-3.5 text-slate-300">{d.element}</td>
-                    <td
-                      className={cn(
-                        'px-3 py-3.5 text-right font-semibold data-mono',
-                        d.deviation > d.tolerance ? 'text-rose-400' : 'text-slate-300',
-                      )}
-                    >
-                      {d.deviation} mm
-                    </td>
-                    <td className="px-3 py-3.5 text-right text-slate-500 data-mono">±{d.tolerance} mm</td>
-                    <td className="px-5 py-3.5 text-right">
-                      <Badge variant={DEV_BADGE[d.status]}>{d.status}</Badge>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      </section>
-
-      {/* ===================================================== Capture timeline */}
-      <section className="space-y-4">
-        <SectionHeading
-          eyebrow="Ingest log"
-          title="Capture timeline"
-          description="Recent drone, 360° and LiDAR captures and their processing status."
-        />
-        <Card className="overflow-hidden">
-          <div className="divide-y divide-edge/40">
-            {CAPTURES.map((c) => {
-              const meta = CAP_META[c.type]
-              return (
-                <div key={c.id} className="flex items-center gap-4 px-5 py-3.5 transition-colors hover:bg-elevated/40">
-                  <IconBadge icon={meta.icon} accent={meta.accent} size="sm" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate font-medium text-slate-100">{c.area}</span>
-                      <Badge variant="neutral">{c.type}</Badge>
-                    </div>
-                    <p className="mt-0.5 text-xs text-slate-500">
-                      <span className="data-mono">{c.id}</span> · {c.date} · {formatBytes(c.bytes)}
-                    </p>
-                  </div>
-                  {c.processed ? (
-                    <Badge variant="success" dot>
-                      Processed
-                    </Badge>
-                  ) : (
-                    <Badge variant="warn" dot>
-                      Processing
-                    </Badge>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </Card>
-      </section>
-
-      {/* ===================================================== AI capabilities */}
-      <section className="space-y-4">
-        <SectionHeading
-          eyebrow="Powered by AEC intelligence"
-          title="What this engine automates"
-          description="Captures connect to the model, schedule and cost so they remain queryable long after the drone lands."
-        />
-        <div className="grid gap-4 sm:grid-cols-2">
-          {CAPABILITIES.map((c) => (
-            <Card key={c.title} className="p-5" hover>
-              <FeatureRow icon={c.icon} title={c.title} accent={c.accent}>
-                {c.body}
-              </FeatureRow>
-            </Card>
-          ))}
+          )}
         </div>
-      </section>
-
-      <div className="flex items-center gap-3 rounded-2xl border border-edge/60 bg-gradient-to-r from-cyan-500/10 via-surface/40 to-transparent p-5">
-        <IconBadge icon={Layers} accent="cyan" />
-        <p className="text-sm text-slate-300">
-          Instead of terabytes of unsearchable imagery, every capture becomes a timestamped, georeferenced layer linked
-          to BIM elements and schedule activities — a queryable record of reality, not a data graveyard.
-        </p>
-      </div>
+      </Card>
     </div>
+  )
+}
+
+/* A labelled, controlled numeric parameter input. */
+function Param({ label, unit, value, onChange, step = 1 }: { label: string; unit: string; value: number; onChange: (v: number) => void; step?: number }) {
+  return (
+    <label className="block">
+      <div className="mb-1.5 flex items-baseline justify-between">
+        <span className="text-sm font-medium text-slate-200">{label}</span>
+        <span className="text-[11px] text-slate-500">{unit}</span>
+      </div>
+      <input
+        type="number"
+        step={step}
+        value={value}
+        onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) onChange(n) }}
+        className="w-full rounded-lg border border-edge/60 bg-elevated/40 px-3 py-1.5 text-sm text-slate-100 data-mono focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
+      />
+    </label>
+  )
+}
+
+/* Inline-editable numeric cell. */
+function NumCell({ value, onChange, fmt, tone }: { value: number; onChange: (v: number) => void; fmt?: (v: number) => string; tone?: 'good' | 'warn' }) {
+  const [editing, setEditing] = useState(false)
+  const toneClass = tone === 'good' ? 'text-emerald-300' : tone === 'warn' ? 'text-amber-300' : 'text-slate-300'
+  return (
+    <td className="px-3 py-2 text-right">
+      {editing ? (
+        <input
+          autoFocus
+          type="number"
+          defaultValue={value}
+          onBlur={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) onChange(n); setEditing(false) }}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditing(false) }}
+          className="w-20 rounded border border-cyan-500/50 bg-elevated px-1 py-0.5 text-right text-sm text-slate-100 focus:outline-none"
+        />
+      ) : (
+        <button onClick={() => setEditing(true)} className={cn('data-mono hover:text-white hover:underline', toneClass)} title="Click to edit">
+          {fmt ? fmt(value) : formatNumber(value)}
+        </button>
+      )}
+    </td>
+  )
+}
+
+/* Confidence cell — displays a %, edits the underlying 0–1 value. */
+function ConfCell({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const [editing, setEditing] = useState(false)
+  const tone = value >= 0.85 ? 'text-emerald-300' : value >= 0.75 ? 'text-amber-300' : 'text-rose-300'
+  return (
+    <td className="px-3 py-2 text-right">
+      {editing ? (
+        <input
+          autoFocus
+          type="number"
+          step={1}
+          defaultValue={Math.round(value * 100)}
+          onBlur={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) onChange(Math.max(0, Math.min(1, n / 100))); setEditing(false) }}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditing(false) }}
+          className="w-16 rounded border border-cyan-500/50 bg-elevated px-1 py-0.5 text-right text-sm text-slate-100 focus:outline-none"
+        />
+      ) : (
+        <button onClick={() => setEditing(true)} className={cn('data-mono hover:text-white hover:underline', tone)} title="Click to edit (capture confidence %)">
+          {Math.round(value * 100)}%
+        </button>
+      )}
+    </td>
   )
 }
