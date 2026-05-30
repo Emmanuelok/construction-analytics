@@ -1,158 +1,114 @@
 import { useMemo, useState } from 'react'
 import {
   ShieldCheck,
-  FileLock2,
   Database,
   Gauge,
   EyeOff,
   KeyRound,
-  ScrollText,
-  FileSignature,
-  Radar as RadarIcon,
-  Grid3x3,
+  AlertTriangle,
+  CheckCircle2,
   Lock,
-  Workflow,
-  ArrowRight,
+  RotateCcw,
+  Plus,
+  Trash2,
   Sparkles,
-  Coins,
-  GitBranch,
-  Cpu,
-  UserCheck,
-  Server,
-  Filter,
-  Layers,
-  Boxes,
+  SlidersHorizontal,
+  Radar as RadarIcon,
 } from 'lucide-react'
-import {
-  PageHeader,
-  Card,
-  CardHeader,
-  StatTile,
-  Badge,
-  SectionHeading,
-  FeatureRow,
-  IconBadge,
-  Tabs,
-} from '@/components/ui'
-import { RadarViz } from '@/components/charts'
+import { PageHeader, Card, CardHeader, StatTile, Badge, ProgressBar } from '@/components/ui'
+import { RadarViz, ScatterViz } from '@/components/charts'
 import { DATASETS } from '@/data/platform'
-import { ACCENT, type Accent } from '@/lib/nav'
+import {
+  scoreDatasets,
+  summarize,
+  dimensionAverages,
+  normalizeWeights,
+  governanceNarrative,
+  DEFAULT_QUALITY_WEIGHTS,
+  type DatasetGov,
+  type QualityWeights,
+  type Sensitivity,
+  type Anonymization,
+  type Grade,
+} from '@/lib/governance'
 import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
 
 const ACCENT_NAME = 'teal' as const
 
-/* ----------------------------------------------------------- derived metrics */
-const avgQuality = DATASETS.reduce((s, d) => s + d.quality, 0) / DATASETS.length
-const anonymizedPct = (DATASETS.filter((d) => d.anonymized).length / DATASETS.length) * 100
+const SENS_ORDER: Sensitivity[] = ['Public', 'Internal', 'Confidential', 'Restricted']
+const ANON_ORDER: Anonymization[] = ['None', 'Masking', 'k-Anonymity', 'Differential']
 
-/* ------------------------------------------------- data-quality dimensions */
-type QualityRow = { metric: string; score: number; target: number }
-const QUALITY_DIMENSIONS: QualityRow[] = [
-  { metric: 'Completeness', score: 94, target: 98 },
-  { metric: 'Accuracy', score: 91, target: 96 },
-  { metric: 'Consistency', score: 88, target: 95 },
-  { metric: 'Timeliness', score: 83, target: 90 },
-  { metric: 'Validity', score: 92, target: 97 },
-  { metric: 'Uniqueness', score: 96, target: 99 },
-]
+/* Deterministic privacy posture per dataset, so the seed is reproducible. */
+const PII = new Set(['DS-005', 'DS-007', 'DS-010', 'DS-011'])
+const SENS_FROM_LICENSE: Record<string, Sensitivity> = { Open: 'Public', Research: 'Internal', Commercial: 'Confidential', Enterprise: 'Restricted' }
+const ANON_OVERRIDE: Record<string, Anonymization> = { 'DS-005': 'None', 'DS-010': 'None', 'DS-007': 'Masking', 'DS-011': 'Masking', 'DS-009': 'k-Anonymity' }
 
-/* ----------------------------------------------------- permission matrix */
-type Access = 'Full' | 'Masked' | 'None'
-const ROLES = ['Owner', 'Contractor', 'Designer', 'Supplier', 'AI Licensee', 'Public'] as const
-const DOMAINS = ['BIM', 'Cost', 'Contracts', 'Field', 'Personal Data'] as const
-type Role = (typeof ROLES)[number]
-type Domain = (typeof DOMAINS)[number]
+const clampPct = (n: number) => Math.max(0, Math.min(100, n))
 
-const MATRIX: Record<Role, Record<Domain, Access>> = {
-  Owner: { BIM: 'Full', Cost: 'Full', Contracts: 'Full', Field: 'Full', 'Personal Data': 'Masked' },
-  Contractor: { BIM: 'Full', Cost: 'Masked', Contracts: 'Masked', Field: 'Full', 'Personal Data': 'Masked' },
-  Designer: { BIM: 'Full', Cost: 'Masked', Contracts: 'None', Field: 'Masked', 'Personal Data': 'None' },
-  Supplier: { BIM: 'Masked', Cost: 'None', Contracts: 'None', Field: 'Masked', 'Personal Data': 'None' },
-  'AI Licensee': { BIM: 'Masked', Cost: 'Masked', Contracts: 'None', Field: 'Masked', 'Personal Data': 'None' },
-  Public: { BIM: 'None', Cost: 'None', Contracts: 'None', Field: 'None', 'Personal Data': 'None' },
-}
+const seed = (): DatasetGov[] =>
+  DATASETS.map((d) => ({
+    id: d.id,
+    name: d.name,
+    dimensions: {
+      completeness: clampPct(d.quality + 2),
+      validity: clampPct(d.quality - 1),
+      consistency: clampPct(d.quality - 4),
+      timeliness: clampPct(d.quality - 9),
+      uniqueness: clampPct(d.quality + 3),
+    },
+    containsPII: PII.has(d.id),
+    sensitivity: SENS_FROM_LICENSE[d.license] ?? 'Internal',
+    anonymization: ANON_OVERRIDE[d.id] ?? (d.anonymized ? 'Masking' : 'None'),
+    records: d.records,
+  }))
 
-const ACCESS_META: Record<Access, { cls: string; label: string }> = {
-  Full: { cls: 'bg-emerald-500/12 text-emerald-300 ring-emerald-500/25', label: 'Full' },
-  Masked: { cls: 'bg-amber-500/12 text-amber-300 ring-amber-500/25', label: 'Masked' },
-  None: { cls: 'bg-slate-500/10 text-slate-500 ring-slate-400/15', label: 'None' },
-}
+const GRADE_VARIANT: Record<Grade, 'success' | 'warn' | 'danger'> = { A: 'success', B: 'success', C: 'warn', D: 'danger' }
+const SENS_VARIANT: Record<Sensitivity, 'neutral' | 'brand' | 'warn' | 'danger'> = { Public: 'neutral', Internal: 'brand', Confidential: 'warn', Restricted: 'danger' }
+const ANON_VARIANT: Record<Anonymization, 'danger' | 'warn' | 'brand' | 'success'> = { None: 'danger', Masking: 'warn', 'k-Anonymity': 'brand', Differential: 'success' }
 
-/* --------------------------------------------------------------- lineage */
-const LINEAGE: { icon: typeof Database; label: string; accent: Accent }[] = [
-  { icon: Server, label: 'Source', accent: 'sky' },
-  { icon: Filter, label: 'Ingest', accent: 'blue' },
-  { icon: Workflow, label: 'Transform', accent: 'violet' },
-  { icon: Gauge, label: 'Quality-score', accent: 'cyan' },
-  { icon: EyeOff, label: 'Anonymize', accent: 'teal' },
-  { icon: Layers, label: 'Dataset', accent: 'emerald' },
-  { icon: UserCheck, label: 'Consumer', accent: 'amber' },
-]
-
-/* --------------------------------------------------------- license tiers */
-type LicenseRow = {
-  tier: string
-  rights: string
-  redistribution: 'Yes' | 'No' | 'Limited'
-  attribution: 'Required' | 'Optional'
-  price: string
-  accent: Accent
-}
-const LICENSE_TIERS: LicenseRow[] = [
-  { tier: 'Open', rights: 'View, download, internal use', redistribution: 'Yes', attribution: 'Required', price: 'Free', accent: 'sky' },
-  { tier: 'Research', rights: 'Non-commercial analysis & publication', redistribution: 'Limited', attribution: 'Required', price: 'Free / credits', accent: 'cyan' },
-  { tier: 'Commercial', rights: 'Commercial analytics & products', redistribution: 'No', attribution: 'Optional', price: 'Per-seat / usage', accent: 'emerald' },
-  { tier: 'Enterprise', rights: 'Org-wide use, AI training, clean rooms', redistribution: 'No', attribution: 'Optional', price: 'Negotiated', accent: 'violet' },
-]
-
-/* ------------------------------------------------------------ audit feed */
-type AuditEvent = {
-  actor: string
-  action: string
-  dataset: string
-  time: string
-  result: 'Allowed' | 'Masked' | 'Denied'
-}
-const AUDIT: AuditEvent[] = [
-  { actor: 'Apex Engineering', action: 'License download', dataset: 'Labeled Structural Drawings Corpus', time: '2m ago', result: 'Allowed' },
-  { actor: 'AI Licensee · NeuralBuild', action: 'Clean-room query', dataset: 'Global Cost Benchmarks — Commercial', time: '14m ago', result: 'Masked' },
-  { actor: 'Supplier · Vertex Curtain Wall', action: 'Access request', dataset: 'Schedule Outcomes — 38k Projects', time: '38m ago', result: 'Denied' },
-  { actor: 'Owner · Meridian Holdings', action: 'Policy update', dataset: 'Building Operations Telemetry', time: '1h ago', result: 'Allowed' },
-  { actor: 'Designer · Helix Studio', action: 'PII re-identification attempt', dataset: 'RFI → Response Pairs (NLP)', time: '2h ago', result: 'Denied' },
-  { actor: 'Contractor · BuildCorp', action: 'Lineage export', dataset: 'Defect & NCR Image Set', time: '3h ago', result: 'Allowed' },
-]
-
-const RESULT_VARIANT: Record<AuditEvent['result'], 'success' | 'warn' | 'danger'> = {
-  Allowed: 'success',
-  Masked: 'warn',
-  Denied: 'danger',
-}
-
-/* ------------------------------------------------------- clean-room cards */
-const CLEAN_ROOM: { icon: typeof Lock; title: string; body: string; accent: Accent }[] = [
-  { icon: Lock, title: 'Privacy-preserving aggregation', body: 'Contributors never expose raw records. Queries run inside clean rooms returning only differentially-private, aggregated results.', accent: 'teal' },
-  { icon: Coins, title: 'Contributor monetization', body: 'Every dataset carries usage-based royalties, so firms get paid each time their governed data trains a model or answers a query.', accent: 'emerald' },
-  { icon: FileSignature, title: 'Clear ownership & licensing', body: 'Machine-readable licenses bind ownership, consent and permitted use to the data itself — settling the confidentiality deadlock.', accent: 'cyan' },
-]
-
-/* ------------------------------------------------------------- AI features */
-const AI_FEATURES: { icon: typeof Gauge; title: string; body: string; accent: Accent }[] = [
-  { icon: Gauge, title: 'Data quality scoring', body: 'Continuously scores completeness, accuracy, consistency and validity, gating low-trust records before they reach consumers.', accent: 'cyan' },
-  { icon: EyeOff, title: 'Privacy protection', body: 'Detects PII and commercially-sensitive fields, then applies masking, k-anonymity and differential privacy automatically.', accent: 'teal' },
-  { icon: KeyRound, title: 'Permission management', body: 'Attribute-based access control resolves every request against role, domain, license and consent in real time.', accent: 'emerald' },
-  { icon: ScrollText, title: 'License enforcement & audit', body: 'Immutable, tamper-evident logs prove who accessed what, under which license — assurance-ready for any auditor.', accent: 'sky' },
-]
-
-const MATRIX_TABS = [
-  { id: 'matrix', label: 'Access matrix', icon: Grid3x3 },
-  { id: 'lineage', label: 'Data lineage', icon: GitBranch },
-]
+const QUALITY_TARGET = 97
 
 export default function Governance() {
-  const [view, setView] = useState<string>('matrix')
+  const [rows, setRows] = useState<DatasetGov[]>(seed)
+  const [weights, setWeights] = useState<QualityWeights>(DEFAULT_QUALITY_WEIGHTS)
+  const [minQuality, setMinQuality] = useState(80)
+  const [maxExposure, setMaxExposure] = useState(40)
+  const [edited, setEdited] = useState(false)
 
-  const deniedEvents = useMemo(() => AUDIT.filter((a) => a.result === 'Denied').length, [])
+  const touch = () => setEdited(true)
+  const setDim = (id: string, key: keyof DatasetGov['dimensions'], v: number) => {
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, dimensions: { ...r.dimensions, [key]: clampPct(v) } } : r)))
+    touch()
+  }
+  const set = (id: string, patch: Partial<DatasetGov>) => { setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r))); touch() }
+  const cycle = <T,>(id: string, key: 'sensitivity' | 'anonymization', order: T[], cur: T) => {
+    const next = order[(order.indexOf(cur) + 1) % order.length]
+    set(id, { [key]: next } as Partial<DatasetGov>)
+  }
+  const addRow = () => { setRows((rs) => [...rs, { id: `DS-${Math.floor(100 + Math.random() * 899)}`, name: 'New dataset', dimensions: { completeness: 85, validity: 85, consistency: 82, timeliness: 78, uniqueness: 88 }, containsPII: false, sensitivity: 'Internal', anonymization: 'None', records: 10_000 }]); touch() }
+  const removeRow = (id: string) => { setRows((rs) => rs.filter((r) => r.id !== id)); touch() }
+  const reset = () => { setRows(seed()); setWeights(DEFAULT_QUALITY_WEIGHTS); setMinQuality(80); setMaxExposure(40); setEdited(false) }
+
+  const thresholds = { minQuality, maxExposure }
+  const results = useMemo(() => scoreDatasets(rows, weights, thresholds), [rows, weights, minQuality, maxExposure])
+  const summary = useMemo(() => summarize(results), [results])
+  const normW = normalizeWeights(weights)
+
+  const radarData = useMemo(() => {
+    const avg = dimensionAverages(rows)
+    return [
+      { metric: 'Completeness', score: avg.completeness, target: QUALITY_TARGET },
+      { metric: 'Validity', score: avg.validity, target: QUALITY_TARGET },
+      { metric: 'Consistency', score: avg.consistency, target: QUALITY_TARGET },
+      { metric: 'Timeliness', score: avg.timeliness, target: QUALITY_TARGET },
+      { metric: 'Uniqueness', score: avg.uniqueness, target: QUALITY_TARGET },
+    ]
+  }, [rows])
+  const scatter = results.map((r) => ({ x: r.qualityScore, y: r.exposure, name: r.name }))
+  const gated = results.filter((r) => !r.publishable)
+
+  const setWeight = (key: keyof QualityWeights, v: number) => { setWeights((w) => ({ ...w, [key]: v })); touch() }
 
   return (
     <div className="space-y-8">
@@ -160,326 +116,229 @@ export default function Governance() {
         icon={ShieldCheck}
         eyebrow="Data Platform"
         title="Governance & Trust"
-        description="Permissions, anonymization, ownership, lineage, licensing and audit — the trust layer that finally makes confidential AEC data shareable. Clean rooms, machine-readable licenses and contributor royalties dissolve the data-sharing deadlock."
         accent={ACCENT_NAME}
+        description="A live data-governance workbench. Edit each dataset's quality dimensions and privacy posture, weight what quality means to you, and set the publish gate — the composite quality score, PII-exposure risk, trust grade and publish verdict recompute instantly. Real data-quality and privacy math, not a static dashboard."
         actions={
           <>
-            <Badge variant="success" dot>
-              SOC 2 · GDPR
+            {edited && (
+              <button onClick={reset} className="btn-ghost">
+                <RotateCcw className="h-4 w-4" /> Reset
+              </button>
+            )}
+            <Badge variant={summary.highRisk > 0 ? 'danger' : 'success'} dot>
+              {summary.publishable}/{summary.count} publishable
             </Badge>
-            <button className="btn-ghost">
-              <FileLock2 className="h-4 w-4" /> Access policy
-            </button>
           </>
         }
       />
 
-      {/* ===================================================== KPI row */}
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
-        <StatTile
-          label="Datasets governed"
-          value={formatNumber(1842)}
-          delta="124"
-          deltaPositive
-          icon={Database}
-          accent="teal"
-          sub="Under active policy"
-        />
-        <StatTile
-          label="Avg. quality score"
-          value={`${avgQuality.toFixed(1)}%`}
-          delta="0.8 pts"
-          deltaPositive
-          icon={Gauge}
-          accent="cyan"
-          sub="Across all domains"
-        />
-        <StatTile
-          label="Anonymization"
-          value={`${Math.round(anonymizedPct)}%`}
-          delta="6 pts"
-          deltaPositive
-          icon={EyeOff}
-          accent="emerald"
-          sub="Coverage of records"
-        />
-        <StatTile
-          label="Access policies"
-          value="318"
-          delta="22"
-          deltaPositive
-          icon={KeyRound}
-          accent="sky"
-          sub="Attribute-based rules"
-        />
-        <StatTile
-          label="Audit events"
-          value={`${formatNumber(48200, { compact: true })}`}
-          delta="9.4%"
-          deltaPositive
-          icon={ScrollText}
-          accent="violet"
-          sub="Trailing 30 days"
-        />
-        <StatTile
-          label="License agreements"
-          value="1,206"
-          delta="58"
-          deltaPositive
-          icon={FileSignature}
-          accent="amber"
-          sub="Active contracts"
-        />
-      </section>
+      {/* KPIs — recompute as you edit */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        <StatTile label="Datasets governed" value={String(summary.count)} icon={Database} accent="teal" sub={`${formatNumber(summary.records, { compact: true })} records`} />
+        <StatTile label="Avg quality score" value={summary.avgQuality.toFixed(1)} icon={Gauge} accent={summary.avgQuality >= 90 ? 'emerald' : 'amber'} sub="Weighted across dimensions" />
+        <StatTile label="Avg exposure" value={summary.avgExposure.toFixed(1)} icon={EyeOff} accent={summary.avgExposure <= 25 ? 'emerald' : summary.avgExposure <= 45 ? 'amber' : 'rose'} sub="0–100 PII/privacy risk" />
+        <StatTile label="Publishable" value={`${summary.publishable}/${summary.count}`} icon={CheckCircle2} accent={summary.publishable === summary.count ? 'emerald' : 'amber'} sub={`q ≥ ${minQuality}, exp ≤ ${maxExposure}`} />
+        <StatTile label="High re-ID risk" value={String(summary.highRisk)} icon={AlertTriangle} accent="rose" sub="Need stronger anonymization" />
+      </div>
 
-      {/* ===================================================== Quality + matrix/lineage */}
-      <section className="grid gap-5 lg:grid-cols-5">
+      {/* controls: quality weights + publish gate */}
+      <Card>
+        <CardHeader
+          icon={SlidersHorizontal}
+          accent={ACCENT_NAME}
+          title="Quality weighting & publish gate"
+          subtitle="Weight the five quality dimensions to your standard and set the gate every dataset must clear to publish"
+        />
+        <div className="grid gap-6 border-t border-edge/50 p-5 lg:grid-cols-2">
+          <div className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-3">
+            <WeightSlider label="Completeness" value={weights.completeness} pct={normW.completeness} onChange={(v) => setWeight('completeness', v)} />
+            <WeightSlider label="Validity" value={weights.validity} pct={normW.validity} onChange={(v) => setWeight('validity', v)} />
+            <WeightSlider label="Consistency" value={weights.consistency} pct={normW.consistency} onChange={(v) => setWeight('consistency', v)} />
+            <WeightSlider label="Timeliness" value={weights.timeliness} pct={normW.timeliness} onChange={(v) => setWeight('timeliness', v)} />
+            <WeightSlider label="Uniqueness" value={weights.uniqueness} pct={normW.uniqueness} onChange={(v) => setWeight('uniqueness', v)} />
+          </div>
+          <div className="grid grid-cols-2 gap-5 sm:max-w-md">
+            <Param label="Min quality to publish" value={minQuality} step={1} onChange={(v) => { setMinQuality(clampPct(v)); touch() }} />
+            <Param label="Max exposure to publish" value={maxExposure} step={1} onChange={(v) => { setMaxExposure(clampPct(v)); touch() }} />
+            <p className="col-span-2 text-xs leading-relaxed text-slate-500">
+              A dataset publishes only when its weighted quality is at least the minimum <em>and</em> its PII-exposure risk is at or below the maximum. Apply stronger anonymization to bring exposure down.
+            </p>
+          </div>
+        </div>
+      </Card>
+
+      {/* editable dataset governance table */}
+      <Card>
+        <CardHeader
+          icon={KeyRound}
+          accent={ACCENT_NAME}
+          title="Dataset governance — editable"
+          subtitle="Edit dimension scores; click PII, sensitivity or anonymization to cycle. Quality, exposure, grade and the publish verdict recompute live."
+          action={
+            <button onClick={addRow} className="btn-ghost h-9 px-3 py-0 text-xs">
+              <Plus className="h-3.5 w-3.5" /> Add dataset
+            </button>
+          }
+        />
+        <div className="overflow-x-auto border-t border-edge/50">
+          <table className="w-full min-w-[1200px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
+                <th className="px-4 py-2.5 font-medium">Dataset</th>
+                <th className="px-2 py-2.5 text-right font-medium" title="Completeness">Cmpl</th>
+                <th className="px-2 py-2.5 text-right font-medium" title="Validity">Vld</th>
+                <th className="px-2 py-2.5 text-right font-medium" title="Consistency">Cnst</th>
+                <th className="px-2 py-2.5 text-right font-medium" title="Timeliness">Tml</th>
+                <th className="px-2 py-2.5 text-right font-medium" title="Uniqueness">Unq</th>
+                <th className="px-2 py-2.5 text-center font-medium">PII</th>
+                <th className="px-2 py-2.5 text-center font-medium">Sensitivity</th>
+                <th className="px-2 py-2.5 text-center font-medium">Anonymization</th>
+                <th className="px-3 py-2.5 font-medium">Quality</th>
+                <th className="px-3 py-2.5 text-right font-medium">Exposure</th>
+                <th className="px-3 py-2.5 text-center font-medium">Publish</th>
+                <th className="px-2 py-2.5" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-edge/40">
+              {results.map((r) => (
+                <tr key={r.id} className="hover:bg-elevated/30">
+                  <td className="px-4 py-2">
+                    <input value={r.name} onChange={(e) => set(r.id, { name: e.target.value })} className="w-44 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-teal-500/40" />
+                    <div className="text-[10px] text-slate-600">{r.id}</div>
+                  </td>
+                  <DimCell value={r.dimensions.completeness} onChange={(v) => setDim(r.id, 'completeness', v)} />
+                  <DimCell value={r.dimensions.validity} onChange={(v) => setDim(r.id, 'validity', v)} />
+                  <DimCell value={r.dimensions.consistency} onChange={(v) => setDim(r.id, 'consistency', v)} />
+                  <DimCell value={r.dimensions.timeliness} onChange={(v) => setDim(r.id, 'timeliness', v)} />
+                  <DimCell value={r.dimensions.uniqueness} onChange={(v) => setDim(r.id, 'uniqueness', v)} />
+                  <td className="px-2 py-2 text-center">
+                    <button onClick={() => set(r.id, { containsPII: !r.containsPII })} title="Toggle PII">
+                      <Badge variant={r.containsPII ? 'danger' : 'neutral'}>{r.containsPII ? 'Yes' : 'No'}</Badge>
+                    </button>
+                  </td>
+                  <td className="px-2 py-2 text-center">
+                    <button onClick={() => cycle(r.id, 'sensitivity', SENS_ORDER, r.sensitivity)} title="Cycle sensitivity">
+                      <Badge variant={SENS_VARIANT[r.sensitivity]}>{r.sensitivity}</Badge>
+                    </button>
+                  </td>
+                  <td className="px-2 py-2 text-center">
+                    <button onClick={() => cycle(r.id, 'anonymization', ANON_ORDER, r.anonymization)} title="Cycle anonymization">
+                      <Badge variant={ANON_VARIANT[r.anonymization]}>{r.anonymization}</Badge>
+                    </button>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <ProgressBar value={r.qualityScore} accent={r.qualityScore >= 90 ? 'emerald' : r.qualityScore >= 75 ? 'amber' : 'rose'} height="sm" className="w-14" />
+                      <span className="w-10 text-sm font-semibold text-slate-100 data-mono">{r.qualityScore}</span>
+                      <Badge variant={GRADE_VARIANT[r.grade]}>{r.grade}</Badge>
+                    </div>
+                  </td>
+                  <td className={cn('px-3 py-2 text-right data-mono', r.reId === 'Low' ? 'text-emerald-300' : r.reId === 'Medium' ? 'text-amber-300' : 'text-rose-300')}>
+                    {r.exposure}
+                    <span className="ml-1 text-[10px] text-slate-500">{r.reId}</span>
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    {r.publishable ? (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> Publish</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-rose-300"><Lock className="h-3.5 w-3.5" /> Gated</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    <button onClick={() => removeRow(r.id)} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* charts driven by the live model */}
+      <div className="grid gap-4 lg:grid-cols-5">
         <Card className="lg:col-span-2">
-          <CardHeader
-            title="Data quality dimensions"
-            subtitle="Trust scored on six dimensions vs target"
-            icon={RadarIcon}
-            accent="cyan"
-          />
-          <div className="px-3 pb-5">
-            <RadarViz
-              data={QUALITY_DIMENSIONS}
-              series={[
-                { key: 'score', name: 'Score', accent: 'teal' },
-                { key: 'target', name: 'Target', accent: 'cyan' },
-              ]}
-              height={300}
-            />
+          <CardHeader icon={RadarIcon} accent={ACCENT_NAME} title="Quality dimensions" subtitle={`Cohort average vs ${QUALITY_TARGET} target`} />
+          <div className="px-3 pb-5 pt-2">
+            <RadarViz data={radarData} series={[{ key: 'score', name: 'Average', accent: 'teal' }, { key: 'target', name: 'Target', accent: 'cyan' }]} height={300} />
           </div>
         </Card>
-
         <Card className="lg:col-span-3">
-          <CardHeader
-            title={view === 'matrix' ? 'Permission & access matrix' : 'Data lineage'}
-            subtitle={
-              view === 'matrix'
-                ? 'Role × data domain — Full, Masked or None'
-                : 'From raw source to governed consumer, every hop recorded'
-            }
-            icon={view === 'matrix' ? Grid3x3 : GitBranch}
-            accent="teal"
-            action={<Tabs tabs={MATRIX_TABS} active={view} onChange={setView} />}
-          />
-          {view === 'matrix' ? (
-            <div className="overflow-x-auto px-5 pb-5">
-              <table className="w-full min-w-[560px] border-separate border-spacing-1 text-sm">
-                <thead>
-                  <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
-                    <th className="px-2 py-2 font-medium">Role</th>
-                    {DOMAINS.map((d) => (
-                      <th key={d} className="px-2 py-2 text-center font-medium">
-                        {d}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {ROLES.map((role) => (
-                    <tr key={role}>
-                      <td className="whitespace-nowrap px-2 py-1.5 font-medium text-slate-200">{role}</td>
-                      {DOMAINS.map((d) => {
-                        const access = MATRIX[role][d]
-                        const meta = ACCESS_META[access]
-                        return (
-                          <td key={d} className="px-1 py-1">
-                            <div
-                              className={cn(
-                                'rounded-lg px-2 py-1.5 text-center text-xs font-medium ring-1 ring-inset',
-                                meta.cls,
-                              )}
-                            >
-                              {meta.label}
-                            </div>
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="mt-4 flex flex-wrap gap-4 text-xs text-slate-500">
-                {(['Full', 'Masked', 'None'] as Access[]).map((a) => (
-                  <span key={a} className="inline-flex items-center gap-1.5">
-                    <span className={cn('h-2.5 w-2.5 rounded-sm ring-1 ring-inset', ACCESS_META[a].cls)} />
-                    {ACCESS_META[a].label}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="px-5 pb-6 pt-2">
-              <div className="flex flex-wrap items-center gap-y-4">
-                {LINEAGE.map((step, i) => (
-                  <div key={step.label} className="flex items-center">
-                    <div className="flex flex-col items-center gap-2 text-center">
-                      <IconBadge icon={step.icon} accent={step.accent} />
-                      <span className="text-xs font-medium text-slate-300">{step.label}</span>
-                    </div>
-                    {i < LINEAGE.length - 1 && (
-                      <ArrowRight className="mx-2 h-4 w-4 shrink-0 text-slate-600" />
-                    )}
-                  </div>
-                ))}
-              </div>
-              <p className="mt-5 rounded-lg border border-edge/60 bg-elevated/40 px-3 py-2.5 text-xs leading-relaxed text-slate-400">
-                Every transformation is captured as immutable lineage — buyers see exactly how a dataset was
-                derived, scored and anonymized, while contributors retain provenance over their source data.
-              </p>
+          <CardHeader icon={ShieldCheck} accent={ACCENT_NAME} title="Quality vs exposure" subtitle="Each dataset — the publishable zone is high quality (right) and low exposure (bottom)" />
+          <div className="border-t border-edge/50 p-5">
+            <ScatterViz data={scatter} xKey="x" yKey="y" xName="Quality" yName="Exposure" height={300} accent="teal" />
+            <p className="mt-2 text-xs text-slate-500">Points high on the exposure axis are gated until anonymization brings them under your {maxExposure} threshold.</p>
+          </div>
+        </Card>
+      </div>
+
+      {/* live read-out */}
+      <Card className="relative overflow-hidden">
+        <div className="pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full bg-teal-500/20 opacity-20 blur-3xl" />
+        <CardHeader icon={Sparkles} accent={ACCENT_NAME} title="Governance read-out" subtitle="Computed from your current policy" />
+        <div className="space-y-2.5 border-t border-edge/50 p-5">
+          <p className="text-[15px] leading-relaxed text-slate-300">{governanceNarrative(summary)}</p>
+          {gated.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {gated.map((r) => (
+                <span key={r.id} className="inline-flex items-center gap-1 rounded-md bg-rose-500/10 px-2 py-0.5 text-[11px] text-rose-300">
+                  <Lock className="h-3 w-3" /> {r.name} · q{r.qualityScore} · exp {r.exposure}
+                </span>
+              ))}
             </div>
           )}
-        </Card>
-      </section>
-
-      {/* ===================================================== Clean room callout */}
-      <section className="space-y-4">
-        <SectionHeading
-          eyebrow="The #2 unsolved pain point"
-          title="Why firms can finally share confidential data"
-          description="Confidentiality and unclear ownership freeze the industry's most valuable data. Clean rooms, machine-readable licensing and contributor monetization remove every reason to keep it locked away."
-        />
-        <div className="grid gap-4 lg:grid-cols-3">
-          {CLEAN_ROOM.map((c) => (
-            <Card key={c.title} className="p-6" hover>
-              <IconBadge icon={c.icon} accent={c.accent} size="lg" />
-              <h3 className="mt-4 font-semibold text-slate-100">{c.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-slate-400">{c.body}</p>
-            </Card>
-          ))}
         </div>
-      </section>
-
-      {/* ===================================================== License tiers */}
-      <section className="space-y-4">
-        <SectionHeading
-          eyebrow="Licensing"
-          title="License tiers"
-          description="Clear, machine-readable usage rights attached to every dataset — from fully open to negotiated enterprise terms."
-        />
-        <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead>
-                <tr className="border-b border-edge/60 text-left text-xs uppercase tracking-wider text-slate-500">
-                  <th className="px-5 py-3 font-medium">Tier</th>
-                  <th className="px-3 py-3 font-medium">Usage rights</th>
-                  <th className="px-3 py-3 font-medium">Redistribution</th>
-                  <th className="px-3 py-3 font-medium">Attribution</th>
-                  <th className="px-5 py-3 text-right font-medium">Price model</th>
-                </tr>
-              </thead>
-              <tbody>
-                {LICENSE_TIERS.map((t) => (
-                  <tr
-                    key={t.tier}
-                    className="border-b border-edge/40 transition-colors last:border-0 hover:bg-elevated/40"
-                  >
-                    <td className="px-5 py-3.5">
-                      <span className="inline-flex items-center gap-2 font-medium text-slate-100">
-                        <span className={cn('h-2 w-2 rounded-full', ACCENT[t.accent].dot)} />
-                        {t.tier}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3.5 text-slate-300">{t.rights}</td>
-                    <td className="px-3 py-3.5">
-                      <Badge
-                        variant={t.redistribution === 'Yes' ? 'success' : t.redistribution === 'Limited' ? 'warn' : 'neutral'}
-                      >
-                        {t.redistribution}
-                      </Badge>
-                    </td>
-                    <td className="px-3 py-3.5 text-slate-300">{t.attribution}</td>
-                    <td className="px-5 py-3.5 text-right text-slate-200 data-mono">{t.price}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      </section>
-
-      {/* ===================================================== Audit feed */}
-      <section className="grid gap-5 lg:grid-cols-5">
-        <Card className="lg:col-span-3">
-          <CardHeader
-            title="Audit log"
-            subtitle="Tamper-evident access events across the platform"
-            icon={ScrollText}
-            accent="teal"
-            action={<Badge variant="danger">{deniedEvents} denied</Badge>}
-          />
-          <div className="divide-y divide-edge/40">
-            {AUDIT.map((e, i) => (
-              <div key={i} className="flex items-center gap-3 px-5 py-3">
-                <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg ring-1', ACCENT.teal.bg, ACCENT.teal.ring)}>
-                  <Cpu className={cn('h-4 w-4', ACCENT.teal.text)} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-slate-200">{e.action}</div>
-                  <div className="truncate text-xs text-slate-500">
-                    {e.actor} · {e.dataset}
-                  </div>
-                </div>
-                <span className="shrink-0 text-xs text-slate-500 data-mono">{e.time}</span>
-                <Badge variant={RESULT_VARIANT[e.result]}>{e.result}</Badge>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <Card className="lg:col-span-2">
-          <CardHeader
-            title="Trust posture"
-            subtitle="Live compliance & control coverage"
-            icon={Boxes}
-            accent="emerald"
-          />
-          <div className="space-y-3 px-5 pb-5">
-            {[
-              { label: 'SOC 2 Type II controls', value: 'Passing', variant: 'success' as const },
-              { label: 'GDPR / CCPA readiness', value: 'Compliant', variant: 'success' as const },
-              { label: 'Encryption (at rest & transit)', value: 'AES-256', variant: 'cyan' as const },
-              { label: 'PII auto-redaction', value: 'Enabled', variant: 'success' as const },
-              { label: 'Open re-identification risks', value: '0', variant: 'success' as const },
-              { label: 'Policy violations (30d)', value: '3 blocked', variant: 'warn' as const },
-            ].map((row) => (
-              <div
-                key={row.label}
-                className="flex items-center justify-between gap-4 rounded-lg border border-edge/50 bg-elevated/30 px-3.5 py-2.5"
-              >
-                <span className="text-sm text-slate-300">{row.label}</span>
-                <Badge variant={row.variant}>{row.value}</Badge>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </section>
-
-      {/* ===================================================== AI capabilities */}
-      <section className="space-y-4">
-        <SectionHeading
-          eyebrow="AI capabilities"
-          title="What the engine automates"
-          description="Governance is enforced by models, not paperwork — every record is scored, protected, permissioned and logged the moment it enters the platform."
-        />
-        <Card className="p-6">
-          <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2">
-            {AI_FEATURES.map((f) => (
-              <FeatureRow key={f.title} icon={f.icon} title={f.title} accent={f.accent}>
-                {f.body}
-              </FeatureRow>
-            ))}
-          </div>
-          <div className="mt-6 flex items-center gap-2 border-t border-edge/50 pt-5 text-xs text-slate-500">
-            <Sparkles className={cn('h-3.5 w-3.5', ACCENT.teal.text)} />
-            Controls are auditable end-to-end and map to SOC 2, ISO 27001, GDPR and CSRD evidence requirements.
-          </div>
-        </Card>
-      </section>
+      </Card>
     </div>
+  )
+}
+
+/* A quality-weight slider 0–100% (stored 0–1), showing the normalized share. */
+function WeightSlider({ label, value, pct, onChange }: { label: string; value: number; pct: number; onChange: (v: number) => void }) {
+  return (
+    <div>
+      <div className="mb-1 flex items-baseline justify-between">
+        <span className="text-xs font-medium text-slate-300">{label}</span>
+        <span className="text-xs font-semibold text-teal-300 data-mono">{Math.round(pct * 100)}%</span>
+      </div>
+      <input type="range" min={0} max={1} step={0.05} value={value} onChange={(e) => onChange(Number(e.target.value))} className="w-full accent-teal-500" />
+    </div>
+  )
+}
+
+/* A labelled, controlled numeric parameter input. */
+function Param({ label, value, onChange, step = 1 }: { label: string; value: number; onChange: (v: number) => void; step?: number }) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-sm font-medium text-slate-200">{label}</span>
+      <input
+        type="number"
+        step={step}
+        value={value}
+        onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) onChange(n) }}
+        className="w-full rounded-lg border border-edge/60 bg-elevated/40 px-3 py-1.5 text-sm text-slate-100 data-mono focus:border-teal-500/50 focus:outline-none focus:ring-1 focus:ring-teal-500/30"
+      />
+    </label>
+  )
+}
+
+/* A compact inline-editable dimension score (0–100). */
+function DimCell({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const [editing, setEditing] = useState(false)
+  const tone = value >= 90 ? 'text-emerald-300' : value >= 75 ? 'text-amber-300' : 'text-rose-300'
+  return (
+    <td className="px-2 py-2 text-right">
+      {editing ? (
+        <input
+          autoFocus
+          type="number"
+          defaultValue={value}
+          onBlur={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) onChange(n); setEditing(false) }}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditing(false) }}
+          className="w-14 rounded border border-teal-500/50 bg-elevated px-1 py-0.5 text-right text-sm text-slate-100 focus:outline-none"
+        />
+      ) : (
+        <button onClick={() => setEditing(true)} className={cn('data-mono hover:text-white hover:underline', tone)} title="Click to edit">{value}</button>
+      )}
+    </td>
   )
 }
