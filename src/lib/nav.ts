@@ -23,6 +23,7 @@ import {
   Leaf,
   Building2,
   Flame,
+  Building,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -52,6 +53,7 @@ export const NAV: NavItem[] = [
   // Studio — the three functional pillars + entry points
   { path: '/', label: 'For You', blurb: 'Your personalized home — picks, insights & shortcuts', icon: Home, accent: 'blue', group: 'Studio', tag: 'NEW' },
   { path: '/overview', label: 'Platform Overview', blurb: 'The unified studio for the built environment', icon: LayoutDashboard, accent: 'sky', group: 'Studio' },
+  { path: '/project', label: 'Project Workspace', blurb: 'One project, every lens — edit vitals, watch all engines recompute', icon: Building, accent: 'blue', group: 'Studio', tag: 'NEW' },
   { path: '/data', label: 'Data Center', blurb: 'Browse, preview & download AEC datasets', icon: Store, accent: 'emerald', group: 'Studio' },
   { path: '/workbench', label: 'Data Workbench', blurb: 'Open data in a grid — edit, sort, filter & derive', icon: Table2, accent: 'cyan', group: 'Studio', tag: 'NEW' },
   { path: '/analyze', label: 'Analysis Studio', blurb: 'Bring data, profile it, chart & ask AI', icon: Microscope, accent: 'violet', group: 'Studio', tag: 'AI' },

@@ -15,6 +15,7 @@ import { computeReadiness, type MLDataset } from './mldata.ts'
 import { answerQuestion } from './query.ts'
 import { makeScenario, upsert, removeById, renameScenario, forModule, diff, parseScenarios, type Scenario } from './scenarios.ts'
 import { buildReportHtml, tableToCsv, kpiToItem, esc, type ReportSpec } from './report.ts'
+import { deriveProjectModel, projectNarrative, type ProjectVitals } from './project-model.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -293,6 +294,30 @@ section('report')
   ok('csv has header + rows', csv.split('\r\n').length === 3)
   ok('csv quotes commas', csv.includes('"on, track"'))
   ok('csv escapes quotes', csv.includes('"Lumen ""T4"""'))
+}
+
+// ── project-model (unified project) ──────────────────────────────────────────
+section('project-model')
+{
+  const meridian: ProjectVitals = { id: 'PRJ-1042', name: 'Meridian Tower', sector: 'Commercial', location: 'Dubai', value: 820_000_000, gfa: 142_000, progress: 64, costVariance: 4.2, scheduleVariance: 18, risk: 62, safety: 91, quality: 88, carbon: 612, rfis: 1240, clashes: 38 }
+  const m = deriveProjectModel(meridian)
+  // CPI = 1 / (1 + costVar/100) = 1/1.042 ≈ 0.96 (independent of progress)
+  ok('EVM CPI ≈ 0.96', Math.abs(m.evm.cpi - 0.96) < 0.01, m.evm.cpi)
+  ok('EVM EAC > budget when over budget', m.evm.eac > meridian.value)
+  // composite health matches the portfolio engine (hand-verified 71 earlier)
+  ok('composite health = 71', m.health === 71, m.health)
+  ok('six dimensions present', Object.keys(m.dims).length === 6)
+  ok('carbon rating D (612 vs 500)', m.carbonRating === 'D', m.carbonRating)
+  ok('carbon intensity passthrough', m.carbonIntensity === 612)
+  ok('cost per m² = value/gfa', m.costPerM2 === Math.round(820_000_000 / 142_000), m.costPerM2)
+  ok('exposure = value×(1−health)', m.exposure === Math.round(820_000_000 * (1 - 71 / 100)))
+
+  // editing vitals re-runs every lens
+  ok('raising cost variance lowers CPI', deriveProjectModel({ ...meridian, costVariance: 20 }).evm.cpi < m.evm.cpi)
+  ok('cutting carbon improves rating', ['A', 'B', 'C'].includes(deriveProjectModel({ ...meridian, carbon: 400 }).carbonRating))
+  ok('improving safety/quality/risk/carbon raises health', deriveProjectModel({ ...meridian, carbon: 400, safety: 96, quality: 94, risk: 25 }).health > m.health)
+  ok('narrative names the project + health', /Meridian Tower/.test(projectNarrative(m)) && new RegExp(`${m.health}/100`).test(projectNarrative(m)))
+  ok('zero gfa → costPerM2 0 (guard)', deriveProjectModel({ ...meridian, gfa: 0 }).costPerM2 === 0)
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)

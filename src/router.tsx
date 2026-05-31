@@ -31,6 +31,7 @@ const Field = lazy(() => import('@/pages/Field'))
 const RealityCapture = lazy(() => import('@/pages/RealityCapture'))
 const Sustainability = lazy(() => import('@/pages/Sustainability'))
 const DigitalTwin = lazy(() => import('@/pages/DigitalTwin'))
+const ProjectWorkspace = lazy(() => import('@/pages/ProjectWorkspace'))
 const PainPoints = lazy(() => import('@/pages/PainPoints'))
 
 // Match the router base to however the app is hosted (root on Vercel/Netlify,
@@ -46,6 +47,7 @@ export const router = createBrowserRouter(
       children: [
         { index: true, element: <ForYou /> },
         { path: 'overview', element: <Overview /> },
+        { path: 'project', element: <ProjectWorkspace /> },
         // Pillars
         { path: 'data', element: <DataCenter /> },
         { path: 'data/:id', element: <DatasetDetail /> },
