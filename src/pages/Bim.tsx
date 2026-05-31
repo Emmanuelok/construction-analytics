@@ -115,7 +115,7 @@ export default function Bim() {
   const reset = () => { setPairs(seed()); setElements(1_500_000); setEdited(false) }
 
   const h = useMemo(() => computeHealth(pairs, elements), [pairs, elements])
-  const { scenarios, save, remove } = useScenarios('bim')
+  const { scenarios, save, remove, importRaw } = useScenarios('bim')
   const summary: KPI[] = [
     { label: 'Model health', value: h.health },
     { label: 'Open clashes', value: h.totalOpen },
@@ -173,6 +173,8 @@ export default function Bim() {
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <ScenarioBar
+            onImport={importRaw}
+            module="bim"
             accent="blue"
             scenarios={scenarios}
             onSave={(name) => save(name, { pairs, elements }, summary)}

@@ -74,7 +74,7 @@ export default function Sustainability() {
 
   const r = useMemo(() => computeCarbon(lines, { gfa, benchmark }), [lines, gfa, benchmark])
   const wholeLife = wholeLifeIntensity(r.intensity, operational, studyPeriod)
-  const { scenarios, save, remove } = useScenarios('sustainability')
+  const { scenarios, save, remove, importRaw } = useScenarios('sustainability')
   const summary: KPI[] = [
     { label: 'Carbon intensity', value: r.intensity },
     { label: 'Reduction vs baseline', value: r.savingPct, unit: '%' },
@@ -124,6 +124,8 @@ export default function Sustainability() {
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <ScenarioBar
+            onImport={importRaw}
+            module="sustainability"
             accent="emerald"
             scenarios={scenarios}
             onSave={(name) => save(name, { lines, gfa, benchmark, operational, studyPeriod }, summary)}

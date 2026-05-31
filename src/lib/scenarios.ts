@@ -80,3 +80,66 @@ export function parseScenarios(raw: string | null): Scenario[] {
     return []
   }
 }
+
+/* ---- portable export / import / share ---------------------------------------
+ * Scenarios can leave a browser two ways: a downloadable JSON bundle (one or
+ * many), and a compact url-safe share token for a single scenario. Imports are
+ * defensive — malformed entries are dropped, ids are regenerated to avoid
+ * collisions, and a target module can be enforced so a Cost scenario never
+ * lands in the Carbon workbench. */
+
+const BUNDLE_KIND = 'aec.scenario.bundle.v1'
+export type ScenarioBundle = { kind: typeof BUNDLE_KIND; exportedAt: string; scenarios: Scenario[] }
+
+/** Serialize one or more scenarios to a pretty JSON bundle for download. */
+export function exportBundle(scenarios: Scenario[]): string {
+  const bundle: ScenarioBundle = { kind: BUNDLE_KIND, exportedAt: new Date().toISOString(), scenarios }
+  return JSON.stringify(bundle, null, 2)
+}
+
+/** Parse a bundle (or a bare scenario / array) back into scenarios. Never throws. */
+export function importBundle(raw: string): Scenario[] {
+  let v: unknown
+  try { v = JSON.parse(raw) } catch { return [] }
+  const candidates: unknown[] =
+    Array.isArray(v) ? v
+    : v && typeof v === 'object' && Array.isArray((v as ScenarioBundle).scenarios) ? (v as ScenarioBundle).scenarios
+    : v && typeof v === 'object' ? [v]
+    : []
+  return candidates.filter(isScenario)
+}
+
+const b64encode = (s: string): string => {
+  const b = typeof btoa === 'function' ? btoa(unescape(encodeURIComponent(s))) : Buffer.from(s, 'utf8').toString('base64')
+  return b.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+const b64decode = (s: string): string => {
+  const b = s.replace(/-/g, '+').replace(/_/g, '/')
+  const raw = typeof atob === 'function' ? atob(b) : Buffer.from(b, 'base64').toString('binary')
+  try { return decodeURIComponent(escape(raw)) } catch { return raw }
+}
+
+/** Encode a single scenario to a compact, url-safe share token. */
+export function encodeScenarioToken(s: Scenario): string {
+  return b64encode(JSON.stringify(s))
+}
+
+/** Decode a share token back to a scenario, or null if invalid. */
+export function decodeScenarioToken(token: string): Scenario | null {
+  try {
+    const v: unknown = JSON.parse(b64decode(token))
+    return isScenario(v) ? (v as Scenario) : null
+  } catch {
+    return null
+  }
+}
+
+/** Prepare an imported scenario for adoption: fresh id, optional module override. */
+export function adoptScenario(s: Scenario, opts: { module?: string } = {}): Scenario {
+  return {
+    ...s,
+    id: `scn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    module: opts.module ?? s.module,
+    createdAt: new Date().toISOString(),
+  }
+}

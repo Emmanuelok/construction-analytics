@@ -71,7 +71,7 @@ export default function Field() {
 
   const sites = useMemo(() => rows.map(computeSite), [rows])
   const p = useMemo(() => computePortfolio(rows), [rows])
-  const { scenarios, save, remove } = useScenarios('field')
+  const { scenarios, save, remove, importRaw } = useScenarios('field')
   const summary: KPI[] = [
     { label: 'Productivity index', value: p.productivity, unit: '%' },
     { label: 'Portfolio TRIR', value: p.trir },
@@ -123,6 +123,8 @@ export default function Field() {
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <ScenarioBar
+            onImport={importRaw}
+            module="field"
             accent="amber"
             scenarios={scenarios}
             onSave={(name) => save(name, { rows }, summary)}

@@ -75,7 +75,7 @@ export default function AiStudio() {
 
   const scored = useMemo(() => rows.map((d) => computeReadiness(d)), [rows])
   const s = useMemo(() => summarize(rows), [rows])
-  const { scenarios, save, remove } = useScenarios('ai-studio')
+  const { scenarios, save, remove, importRaw } = useScenarios('ai-studio')
   const summary: KPI[] = [
     { label: 'Avg readiness', value: s.avgReadiness },
     { label: 'Ready to train', value: s.ready },
@@ -124,6 +124,8 @@ export default function AiStudio() {
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <ScenarioBar
+            onImport={importRaw}
+            module="ai-studio"
             accent="fuchsia"
             scenarios={scenarios}
             onSave={(name) => save(name, { rows }, summary)}

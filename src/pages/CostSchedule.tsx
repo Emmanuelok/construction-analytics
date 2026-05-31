@@ -41,7 +41,7 @@ const HEALTH: Record<Evm['health'], { label: string; variant: 'success' | 'warn'
 export default function CostSchedule() {
   const [rows, setRows] = useState<Row[]>(seed)
   const [edited, setEdited] = useState(false)
-  const { scenarios, save, remove } = useScenarios('cost-schedule')
+  const { scenarios, save, remove, importRaw } = useScenarios('cost-schedule')
 
   const set = (id: string, patch: Partial<Row>) => {
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)))
@@ -119,6 +119,8 @@ export default function CostSchedule() {
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <ScenarioBar
+            onImport={importRaw}
+            module="cost-schedule"
             accent="rose"
             scenarios={scenarios}
             onSave={(name) => save(name, { rows }, summary)}

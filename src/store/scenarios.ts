@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '@/store/auth'
 import {
+  adoptScenario,
   forModule,
+  importBundle,
   makeScenario,
   parseScenarios,
   removeById,
@@ -55,5 +57,19 @@ export function useScenarios(module: string) {
   const remove = useCallback((id: string) => persist((cur) => removeById(cur, id)), [persist])
   const rename = useCallback((id: string, name: string) => persist((cur) => renameScenario(cur, id, name)), [persist])
 
-  return { scenarios, save, remove, rename }
+  /** Adopt scenarios from a raw bundle/token-decoded payload into THIS module.
+   *  Returns the number imported (0 = nothing valid). */
+  const importRaw = useCallback((raw: string): number => {
+    const incoming = importBundle(raw)
+    if (!incoming.length) return 0
+    persist((cur) => incoming.reduce((acc, s) => upsert(acc, adoptScenario(s, { module })), cur))
+    return incoming.length
+  }, [persist, module])
+
+  /** Adopt a single scenario object (e.g. from a decoded share token). */
+  const importScenario = useCallback((s: Scenario): void => {
+    persist((cur) => upsert(cur, adoptScenario(s, { module })))
+  }, [persist, module])
+
+  return { scenarios, save, remove, rename, importRaw, importScenario }
 }

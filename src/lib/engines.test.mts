@@ -13,7 +13,7 @@ import { dimensionScores, computeProject, scorePortfolio, type ProjectInput } fr
 import { parseDocument } from './docparse.ts'
 import { computeReadiness, type MLDataset } from './mldata.ts'
 import { answerQuestion } from './query.ts'
-import { makeScenario, upsert, removeById, renameScenario, forModule, diff, parseScenarios, type Scenario } from './scenarios.ts'
+import { makeScenario, upsert, removeById, renameScenario, forModule, diff, parseScenarios, exportBundle, importBundle, encodeScenarioToken, decodeScenarioToken, adoptScenario, type Scenario } from './scenarios.ts'
 import { buildReportHtml, tableToCsv, kpiToItem, esc, type ReportSpec } from './report.ts'
 import { deriveProjectModel, projectNarrative, type ProjectVitals } from './project-model.ts'
 import { SCHEMAS, autoMap, coerceField, validateImport, recordsToCsv } from './ingest.ts'
@@ -263,6 +263,29 @@ section('scenarios')
   ok('parseScenarios: round-trips valid', parseScenarios(JSON.stringify([s1, s2])).length === 2)
   ok('parseScenarios: drops malformed entries', parseScenarios(JSON.stringify([s1, { nope: true }])).length === 1)
   ok('parseScenarios: null → []', parseScenarios(null).length === 0)
+
+  // export / import / share
+  const sx = makeScenario('cost-schedule', 'Baseline', { rows: [1, 2, 3] }, [{ label: 'CPI', value: 0.94 }])
+  const sy = makeScenario('carbon', 'Low-carbon', { lines: [] }, [{ label: 'Intensity', value: 459 }])
+  const bundle = exportBundle([sx, sy])
+  ok('exportBundle is JSON with kind + scenarios', /aec\.scenario\.bundle\.v1/.test(bundle) && JSON.parse(bundle).scenarios.length === 2)
+  ok('importBundle round-trips a bundle', importBundle(bundle).length === 2 && importBundle(bundle)[0].name === 'Baseline')
+  ok('importBundle accepts a bare array', importBundle(JSON.stringify([sx])).length === 1)
+  ok('importBundle accepts a single scenario object', importBundle(JSON.stringify(sx)).length === 1)
+  ok('importBundle drops malformed entries', importBundle(JSON.stringify({ kind: 'x', scenarios: [sx, { nope: true }] })).length === 1)
+  ok('importBundle bad JSON → []', importBundle('not json').length === 0)
+  ok('importBundle preserves data payload', (importBundle(bundle)[0].data as { rows: number[] }).rows.length === 3)
+
+  const tok = encodeScenarioToken(sx)
+  ok('scenario token is url-safe', !/[+/=]/.test(tok))
+  ok('decodeScenarioToken round-trips', decodeScenarioToken(tok)?.name === 'Baseline' && decodeScenarioToken(tok)?.module === 'cost-schedule')
+  ok('decodeScenarioToken rejects junk', decodeScenarioToken('@@notbase64@@') === null)
+
+  const adopted = adoptScenario(sx, { module: 'insights' })
+  ok('adoptScenario regenerates id', adopted.id !== sx.id)
+  ok('adoptScenario can override module', adopted.module === 'insights')
+  ok('adoptScenario keeps name + data', adopted.name === 'Baseline' && (adopted.data as { rows: number[] }).rows.length === 3)
+  ok('adoptScenario keeps module when not overridden', adoptScenario(sx).module === 'cost-schedule')
 }
 
 // ── report (export / board brief) ────────────────────────────────────────────

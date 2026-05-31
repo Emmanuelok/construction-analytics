@@ -109,7 +109,7 @@ export default function Procurement() {
   const baselineRank = useMemo(() => new Map(baseline.map((s) => [s.id, s.rank])), [baseline])
   const ordered = useMemo(() => [...scored].sort((a, b) => a.rank - b.rank), [scored])
   const stats = useMemo(() => cohortStats(scored), [scored])
-  const { scenarios, save, remove } = useScenarios('procurement')
+  const { scenarios, save, remove, importRaw } = useScenarios('procurement')
   const summary: KPI[] = [
     { label: 'Avg score', value: stats.avgScore },
     { label: 'High-risk suppliers', value: stats.highRisk },
@@ -163,6 +163,8 @@ export default function Procurement() {
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <ScenarioBar
+            onImport={importRaw}
+            module="procurement"
             accent="lime"
             scenarios={scenarios}
             onSave={(name) => save(name, { rows, weights }, summary)}

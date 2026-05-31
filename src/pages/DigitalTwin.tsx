@@ -135,7 +135,7 @@ export default function DigitalTwin() {
   const comfort = useMemo(() => comfortIndex(floors.map((f) => f.temp), comfortSetpoint, comfortBand), [floors, comfortSetpoint, comfortBand])
   const scored = useMemo(() => assets.map(computeAsset), [assets])
   const s = useMemo(() => summarize(assets), [assets])
-  const { scenarios, save, remove } = useScenarios('digital-twin')
+  const { scenarios, save, remove, importRaw } = useScenarios('digital-twin')
   const summary: KPI[] = [
     { label: 'Avg asset health', value: s.avgHealth },
     { label: 'Active alarms', value: s.alarms },
@@ -188,6 +188,8 @@ export default function DigitalTwin() {
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
       <ScenarioBar
+        onImport={importRaw}
+        module="digital-twin"
         accent="violet"
         scenarios={scenarios}
         onSave={(name) => save(name, { floors, assets, comfortSetpoint, comfortBand }, summary)}

@@ -62,7 +62,7 @@ export default function ProjectWorkspace() {
   const baseProject = useMemo(() => PROJECTS.find((p) => p.id === projectId) ?? PROJECTS[0], [projectId])
   const [vitals, setVitals] = useState<ProjectVitals>(() => toVitals(PROJECTS.find((p) => p.id === initialId) ?? PROJECTS[0]))
   const [edited, setEdited] = useState(false)
-  const { scenarios, save, remove } = useScenarios('project')
+  const { scenarios, save, remove, importRaw } = useScenarios('project')
 
   const selectProject = (id: string) => {
     const p = PROJECTS.find((x) => x.id === id) ?? PROJECTS[0]
@@ -131,6 +131,8 @@ export default function ProjectWorkspace() {
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <ScenarioBar
+            onImport={importRaw}
+            module="project"
             accent={ACCENT_NAME}
             scenarios={scenarios}
             onSave={(name) => save(name, { projectId, vitals }, summary)}

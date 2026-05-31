@@ -100,7 +100,7 @@ export default function Governance() {
   const thresholds = { minQuality, maxExposure }
   const results = useMemo(() => scoreDatasets(rows, weights, thresholds), [rows, weights, minQuality, maxExposure])
   const summary = useMemo(() => summarize(results), [results])
-  const { scenarios, save, remove } = useScenarios('governance')
+  const { scenarios, save, remove, importRaw } = useScenarios('governance')
   const kpis: KPI[] = [
     { label: 'Avg quality', value: summary.avgQuality },
     { label: 'Avg exposure', value: summary.avgExposure },
@@ -163,6 +163,8 @@ export default function Governance() {
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <ScenarioBar
+            onImport={importRaw}
+            module="governance"
             accent="teal"
             scenarios={scenarios}
             onSave={(name) => save(name, { rows, weights, minQuality, maxExposure }, kpis)}

@@ -36,6 +36,7 @@ const ProjectWorkspace = lazy(() => import('@/pages/ProjectWorkspace'))
 const Alerts = lazy(() => import('@/pages/Alerts'))
 const ShareRedirect = lazy(() => import('@/pages/ShareRedirect'))
 const Developer = lazy(() => import('@/pages/Developer'))
+const ScenarioShare = lazy(() => import('@/pages/ScenarioShare'))
 const PainPoints = lazy(() => import('@/pages/PainPoints'))
 
 // Match the router base to however the app is hosted (root on Vercel/Netlify,
@@ -54,6 +55,7 @@ export const router = createBrowserRouter(
         { path: 'overview', element: <Overview /> },
         { path: 'project', element: <ProjectWorkspace /> },
         { path: 'alerts', element: <Alerts /> },
+        { path: 'share/scenario/:token', element: <ScenarioShare /> },
         { path: 'share/:token', element: <ShareRedirect /> },
         // Pillars
         { path: 'data', element: <DataCenter /> },

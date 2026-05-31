@@ -70,7 +70,7 @@ export default function RealityCapture() {
   const thresholds = { tolerancePct, minConfidence }
   const zones = useMemo(() => rows.map((z) => scoreZone(z, thresholds)), [rows, tolerancePct, minConfidence])
   const s = useMemo(() => summarize(rows, thresholds), [rows, tolerancePct, minConfidence])
-  const { scenarios, save, remove } = useScenarios('reality-capture')
+  const { scenarios, save, remove, importRaw } = useScenarios('reality-capture')
   const summary: KPI[] = [
     { label: 'Verified completion', value: s.verifiedPct, unit: '%' },
     { label: 'Claimed completion', value: s.claimedPct, unit: '%' },
@@ -121,6 +121,8 @@ export default function RealityCapture() {
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <ScenarioBar
+            onImport={importRaw}
+            module="reality-capture"
             accent="cyan"
             scenarios={scenarios}
             onSave={(name) => save(name, { rows, tolerancePct, minConfidence }, summary)}

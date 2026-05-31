@@ -1,9 +1,10 @@
-import { useState } from 'react'
-import { Bookmark, Save, Trash2, X, GitCompareArrows, Check, Plus } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { Bookmark, Save, Trash2, X, GitCompareArrows, Check, Plus, Download, Upload, Share2 } from 'lucide-react'
 import { ACCENT, type Accent } from '@/lib/nav'
 import { cn } from '@/lib/cn'
 import { formatCurrency } from '@/lib/format'
-import { diff, type Scenario } from '@/lib/scenarios'
+import { diff, exportBundle, encodeScenarioToken, type Scenario } from '@/lib/scenarios'
+import { downloadText } from '@/lib/download'
 
 function fmtKpi(unit: string | undefined, v: number): string {
   if (unit === '$') return formatCurrency(v)
@@ -20,18 +21,28 @@ export function ScenarioBar({
   onSave,
   onLoad,
   onRemove,
+  onImport,
+  module,
   accent = 'blue',
 }: {
   scenarios: Scenario[]
   onSave: (name: string) => void
   onLoad: (s: Scenario) => void
   onRemove: (id: string) => void
+  /** Adopt a raw bundle/token payload into this workbench. Enables Import + Share. */
+  onImport?: (raw: string) => number
+  /** Module slug, used to build share-link URLs. */
+  module?: string
   accent?: Accent
 }) {
   const a = ACCENT[accent]
   const [naming, setNaming] = useState(false)
   const [name, setName] = useState('')
   const [compare, setCompare] = useState<string[]>([])
+  const [importing, setImporting] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [flash, setFlash] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const commit = () => { onSave(name); setName(''); setNaming(false) }
   const toggleCompare = (id: string) =>
@@ -40,6 +51,27 @@ export function ScenarioBar({
   const a0 = scenarios.find((s) => s.id === compare[0])
   const b0 = scenarios.find((s) => s.id === compare[1])
   const rows = a0 && b0 ? diff(a0, b0) : []
+
+  const note = (msg: string) => { setFlash(msg); setTimeout(() => setFlash(null), 1800) }
+  const exportAll = () => {
+    if (!scenarios.length) return
+    downloadText(`${module ?? 'scenarios'}-scenarios.json`, exportBundle(scenarios), 'JSON')
+    note(`Exported ${scenarios.length}`)
+  }
+  const runImport = (raw: string) => {
+    const n = onImport ? onImport(raw) : 0
+    note(n > 0 ? `Imported ${n}` : 'Nothing valid to import')
+    if (n > 0) { setImporting(false); setImportText('') }
+  }
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (f) runImport(await f.text()); e.target.value = ''
+  }
+  const shareScenario = async (s: Scenario) => {
+    const base = import.meta.env.BASE_URL.replace(/\/$/, '')
+    const url = `${window.location.origin}${base}/share/scenario/${encodeScenarioToken(s)}`
+    try { await navigator.clipboard.writeText(url) } catch { /* clipboard blocked */ }
+    note('Share link copied')
+  }
 
   return (
     <div className="rounded-2xl border border-edge/60 bg-surface/40 p-3">
@@ -67,6 +99,21 @@ export function ScenarioBar({
           </button>
         )}
 
+        {scenarios.length > 0 && (
+          <button onClick={exportAll} title="Download all scenarios as JSON" aria-label="Export scenarios" className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white">
+            <Download className="h-3.5 w-3.5" /> Export
+          </button>
+        )}
+        {onImport && (
+          <>
+            <button onClick={() => setImporting((v) => !v)} aria-expanded={importing} title="Import scenarios from JSON or a share link" className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white">
+              <Upload className="h-3.5 w-3.5" /> Import
+            </button>
+            <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={onFile} />
+          </>
+        )}
+        {flash && <span className="text-[11px] font-medium text-emerald-300">{flash}</span>}
+
         {scenarios.length > 0 && <span className="text-[11px] text-slate-600">·</span>}
 
         <div className="flex flex-wrap items-center gap-1.5">
@@ -78,7 +125,10 @@ export function ScenarioBar({
                   <Check className="h-2.5 w-2.5" />
                 </button>
                 <button onClick={() => onLoad(s)} title="Load this scenario" className="max-w-[140px] truncate font-medium hover:underline">{s.name}</button>
-                <button onClick={() => onRemove(s.id)} title="Delete" className="text-slate-600 opacity-0 transition-opacity hover:text-rose-300 group-hover:opacity-100"><Trash2 className="h-3 w-3" /></button>
+                {onImport && (
+                  <button onClick={() => shareScenario(s)} title="Copy a share link" aria-label={`Share ${s.name}`} className="text-slate-600 opacity-0 transition-opacity hover:text-blue-300 group-hover:opacity-100"><Share2 className="h-3 w-3" /></button>
+                )}
+                <button onClick={() => onRemove(s.id)} title="Delete" aria-label={`Delete ${s.name}`} className="text-slate-600 opacity-0 transition-opacity hover:text-rose-300 group-hover:opacity-100"><Trash2 className="h-3 w-3" /></button>
               </span>
             )
           })}
@@ -91,6 +141,27 @@ export function ScenarioBar({
           <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-blue-300"><GitCompareArrows className="h-3.5 w-3.5" /> comparing 2</span>
         )}
       </div>
+
+      {importing && onImport && (
+        <div className="mt-3 rounded-xl border border-edge/60 bg-elevated/30 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-300">Import scenarios</span>
+            <button onClick={() => fileRef.current?.click()} className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-white"><Upload className="h-3 w-3" /> from file…</button>
+          </div>
+          <textarea
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            rows={3}
+            placeholder="Paste an exported scenarios JSON bundle, or a single scenario…"
+            aria-label="Scenario JSON to import"
+            className="w-full resize-y rounded-lg border border-edge/70 bg-base/60 px-2.5 py-2 font-mono text-[11px] text-slate-200 placeholder:text-slate-600 focus:border-blue-500/50 focus:outline-none"
+          />
+          <div className="mt-2 flex items-center gap-2">
+            <button onClick={() => runImport(importText)} disabled={!importText.trim()} className="inline-flex items-center gap-1 rounded-lg bg-blue-500/15 px-2.5 py-1 text-xs font-medium text-blue-200 ring-1 ring-inset ring-blue-500/30 hover:bg-blue-500/25 disabled:opacity-40"><Check className="h-3.5 w-3.5" /> Import</button>
+            <button onClick={() => { setImporting(false); setImportText('') }} className="text-[11px] text-slate-500 hover:text-slate-300">Cancel</button>
+          </div>
+        </div>
+      )}
 
       {rows.length > 0 && a0 && b0 && (
         <div className="mt-3 overflow-x-auto rounded-xl border border-edge/50">

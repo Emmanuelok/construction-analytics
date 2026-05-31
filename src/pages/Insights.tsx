@@ -84,7 +84,7 @@ export default function Insights() {
   const reset = () => { setRows(seed()); setWeights(DEFAULT_WEIGHTS); setEdited(false) }
 
   const pf = useMemo(() => scorePortfolio(rows, weights), [rows, weights])
-  const { scenarios, save, remove } = useScenarios('insights')
+  const { scenarios, save, remove, importRaw } = useScenarios('insights')
   const summary: KPI[] = [
     { label: 'Portfolio health', value: pf.health },
     { label: 'Value at risk', value: pf.exposure, unit: '$' },
@@ -146,6 +146,8 @@ export default function Insights() {
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <ScenarioBar
+            onImport={importRaw}
+            module="insights"
             accent="cyan"
             scenarios={scenarios}
             onSave={(name) => save(name, { rows, weights }, summary)}
