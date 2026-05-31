@@ -19,6 +19,9 @@ import { ScatterViz, BarSeries } from '@/components/charts'
 import { ACCENT } from '@/lib/nav'
 import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
+import { useScenarios } from '@/store/scenarios'
+import { ScenarioBar } from '@/components/ScenarioBar'
+import type { KPI } from '@/lib/scenarios'
 import {
   computeAsset,
   summarize,
@@ -128,6 +131,13 @@ export default function DigitalTwin() {
   const comfort = useMemo(() => comfortIndex(floors.map((f) => f.temp), comfortSetpoint, comfortBand), [floors, comfortSetpoint, comfortBand])
   const scored = useMemo(() => assets.map(computeAsset), [assets])
   const s = useMemo(() => summarize(assets), [assets])
+  const { scenarios, save, remove } = useScenarios('digital-twin')
+  const summary: KPI[] = [
+    { label: 'Avg asset health', value: s.avgHealth },
+    { label: 'Active alarms', value: s.alarms },
+    { label: 'Overdue services', value: s.overdue },
+    { label: 'Comfort index', value: comfort, unit: '%' },
+  ]
   const f = floors[Math.min(selected, floors.length - 1)]
   const fStatus = floorStatuses[Math.min(selected, floors.length - 1)]
 
@@ -155,6 +165,21 @@ export default function DigitalTwin() {
             </Badge>
           </>
         }
+      />
+
+      <ScenarioBar
+        accent="violet"
+        scenarios={scenarios}
+        onSave={(name) => save(name, { floors, assets, comfortSetpoint, comfortBand }, summary)}
+        onLoad={(sc) => {
+          const d = sc.data as { floors?: typeof floors; assets?: typeof assets; comfortSetpoint?: number; comfortBand?: number }
+          if (d.floors) setFloors(d.floors)
+          if (d.assets) setAssets(d.assets)
+          if (typeof d.comfortSetpoint === 'number') setComfortSetpoint(d.comfortSetpoint)
+          if (typeof d.comfortBand === 'number') setComfortBand(d.comfortBand)
+          setEdited(true)
+        }}
+        onRemove={remove}
       />
 
       {/* KPIs — recompute as you tune telemetry */}

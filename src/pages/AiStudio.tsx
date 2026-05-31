@@ -22,6 +22,9 @@ import { Donut, BarSeries } from '@/components/charts'
 import { ACCENT, type Accent } from '@/lib/nav'
 import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
+import { useScenarios } from '@/store/scenarios'
+import { ScenarioBar } from '@/components/ScenarioBar'
+import type { KPI } from '@/lib/scenarios'
 import {
   computeReadiness,
   summarize,
@@ -68,6 +71,13 @@ export default function AiStudio() {
 
   const scored = useMemo(() => rows.map((d) => computeReadiness(d)), [rows])
   const s = useMemo(() => summarize(rows), [rows])
+  const { scenarios, save, remove } = useScenarios('ai-studio')
+  const summary: KPI[] = [
+    { label: 'Avg readiness', value: s.avgReadiness },
+    { label: 'Ready to train', value: s.ready },
+    { label: 'Usable examples', value: s.totalEffective },
+    { label: 'With warnings', value: s.withWarnings },
+  ]
   const selected = scored.find((d) => d.id === selectedId) ?? scored[0]
   const readinessData = scored.map((d) => ({ name: d.name.length > 16 ? d.name.slice(0, 15) + '…' : d.name, readiness: d.readiness }))
 
@@ -91,6 +101,14 @@ export default function AiStudio() {
             </Badge>
           </>
         }
+      />
+
+      <ScenarioBar
+        accent="fuchsia"
+        scenarios={scenarios}
+        onSave={(name) => save(name, { rows }, summary)}
+        onLoad={(sc) => { const d = sc.data as { rows?: typeof rows }; if (d.rows) { setRows(d.rows); setEdited(true) } }}
+        onRemove={remove}
       />
 
       {/* KPIs — recompute as you curate */}

@@ -31,6 +31,9 @@ import { Donut, BarSeries } from '@/components/charts'
 import { ACCENT, type Accent } from '@/lib/nav'
 import { cn } from '@/lib/cn'
 import { formatCurrency, formatNumber } from '@/lib/format'
+import { useScenarios } from '@/store/scenarios'
+import { ScenarioBar } from '@/components/ScenarioBar'
+import type { KPI } from '@/lib/scenarios'
 import { parseIfc, type ParsedIfc } from '@/lib/ifc'
 import { SAMPLE_IFC } from '@/lib/ifc-sample'
 import {
@@ -108,6 +111,13 @@ export default function Bim() {
   const reset = () => { setPairs(seed()); setElements(1_500_000); setEdited(false) }
 
   const h = useMemo(() => computeHealth(pairs, elements), [pairs, elements])
+  const { scenarios, save, remove } = useScenarios('bim')
+  const summary: KPI[] = [
+    { label: 'Model health', value: h.health },
+    { label: 'Open clashes', value: h.totalOpen },
+    { label: 'Resolution rate', value: h.resolutionPct, unit: '%' },
+    { label: 'Critical open', value: h.criticalOpen },
+  ]
   const burndown = h.pairs.map((p) => ({ name: `${p.a}×${p.b}`, Resolved: p.resolved, Open: p.open }))
   const severityData = h.bySeverity.filter((s) => s.open > 0).map((s) => ({ name: s.severity, value: s.open, accent: SEV_ACCENT[s.severity] }))
   const critical = h.pairs.filter((p) => p.status === 'critical')
@@ -141,6 +151,14 @@ export default function Bim() {
       )}
 
       {parsed && <ParsedModel data={parsed} onClear={() => setParsed(null)} />}
+
+      <ScenarioBar
+        accent="blue"
+        scenarios={scenarios}
+        onSave={(name) => save(name, { pairs, elements }, summary)}
+        onLoad={(s) => { const d = s.data as { pairs?: typeof pairs; elements?: number }; if (d.pairs) setPairs(d.pairs); if (typeof d.elements === 'number') setElements(d.elements); setEdited(true) }}
+        onRemove={remove}
+      />
 
       {/* model-health KPIs — recompute as you coordinate */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

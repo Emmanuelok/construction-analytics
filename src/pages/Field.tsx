@@ -24,6 +24,9 @@ import {
 } from '@/lib/field-metrics'
 import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
+import { useScenarios } from '@/store/scenarios'
+import { ScenarioBar } from '@/components/ScenarioBar'
+import type { KPI } from '@/lib/scenarios'
 
 const ACCENT_NAME = 'amber' as const
 
@@ -64,6 +67,13 @@ export default function Field() {
 
   const sites = useMemo(() => rows.map(computeSite), [rows])
   const p = useMemo(() => computePortfolio(rows), [rows])
+  const { scenarios, save, remove } = useScenarios('field')
+  const summary: KPI[] = [
+    { label: 'Productivity index', value: p.productivity, unit: '%' },
+    { label: 'Portfolio TRIR', value: p.trir },
+    { label: 'Safety score', value: p.safetyScore },
+    { label: 'At-risk sites', value: p.atRisk },
+  ]
 
   // charts driven by the live metrics
   const outputData = sites.map((s) => ({ name: s.name.length > 16 ? s.name.slice(0, 15) + '…' : s.name, Planned: s.outputPlanned, Actual: s.outputActual }))
@@ -90,6 +100,14 @@ export default function Field() {
             </Badge>
           </>
         }
+      />
+
+      <ScenarioBar
+        accent="amber"
+        scenarios={scenarios}
+        onSave={(name) => save(name, { rows }, summary)}
+        onLoad={(s) => { const d = s.data as { rows?: typeof rows }; if (d.rows) { setRows(d.rows); setEdited(true) } }}
+        onRemove={remove}
       />
 
       {/* portfolio KPIs — recompute as you edit */}

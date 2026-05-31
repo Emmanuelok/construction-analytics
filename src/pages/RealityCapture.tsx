@@ -26,6 +26,9 @@ import {
 } from '@/lib/verify'
 import { cn } from '@/lib/cn'
 import { formatNumber, formatCurrency } from '@/lib/format'
+import { useScenarios } from '@/store/scenarios'
+import { ScenarioBar } from '@/components/ScenarioBar'
+import type { KPI } from '@/lib/scenarios'
 
 const ACCENT_NAME = 'cyan' as const
 
@@ -63,6 +66,13 @@ export default function RealityCapture() {
   const thresholds = { tolerancePct, minConfidence }
   const zones = useMemo(() => rows.map((z) => scoreZone(z, thresholds)), [rows, tolerancePct, minConfidence])
   const s = useMemo(() => summarize(rows, thresholds), [rows, tolerancePct, minConfidence])
+  const { scenarios, save, remove } = useScenarios('reality-capture')
+  const summary: KPI[] = [
+    { label: 'Verified completion', value: s.verifiedPct, unit: '%' },
+    { label: 'Claimed completion', value: s.claimedPct, unit: '%' },
+    { label: 'Value at risk', value: s.valueAtRisk, unit: '$' },
+    { label: 'Verification score', value: s.avgVerification },
+  ]
 
   const compareData = zones.map((z) => ({ name: short(z.zone), Claimed: z.claimedPct, Verified: z.verifiedPct }))
   const gapData = zones.map((z) => ({ name: short(z.zone), gap: Math.round(z.claimGapValue) }))
@@ -88,6 +98,20 @@ export default function RealityCapture() {
             </Badge>
           </>
         }
+      />
+
+      <ScenarioBar
+        accent="cyan"
+        scenarios={scenarios}
+        onSave={(name) => save(name, { rows, tolerancePct, minConfidence }, summary)}
+        onLoad={(sc) => {
+          const d = sc.data as { rows?: typeof rows; tolerancePct?: number; minConfidence?: number }
+          if (d.rows) setRows(d.rows)
+          if (typeof d.tolerancePct === 'number') setTolerancePct(d.tolerancePct)
+          if (typeof d.minConfidence === 'number') setMinConfidence(d.minConfidence)
+          setEdited(true)
+        }}
+        onRemove={remove}
       />
 
       {/* KPIs — recompute as capture verifies work */}
