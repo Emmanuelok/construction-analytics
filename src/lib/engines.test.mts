@@ -14,6 +14,7 @@ import { parseDocument } from './docparse.ts'
 import { computeReadiness, type MLDataset } from './mldata.ts'
 import { answerQuestion } from './query.ts'
 import { makeScenario, upsert, removeById, renameScenario, forModule, diff, parseScenarios, type Scenario } from './scenarios.ts'
+import { buildReportHtml, tableToCsv, kpiToItem, esc, type ReportSpec } from './report.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -256,6 +257,42 @@ section('scenarios')
   ok('parseScenarios: round-trips valid', parseScenarios(JSON.stringify([s1, s2])).length === 2)
   ok('parseScenarios: drops malformed entries', parseScenarios(JSON.stringify([s1, { nope: true }])).length === 1)
   ok('parseScenarios: null → []', parseScenarios(null).length === 0)
+}
+
+// ── report (export / board brief) ────────────────────────────────────────────
+section('report')
+{
+  ok('kpiToItem formats money (M)', kpiToItem({ label: 'EAC', value: 820_000_000, unit: '$' }).value === '$820M', kpiToItem({ label: 'EAC', value: 820_000_000, unit: '$' }).value)
+  ok('kpiToItem formats money (B)', kpiToItem({ label: 'BAC', value: 1_200_000_000, unit: '$' }).value === '$1.2B', kpiToItem({ label: 'BAC', value: 1_200_000_000, unit: '$' }).value)
+  ok('kpiToItem formats percent', kpiToItem({ label: 'CV', value: 5.25, unit: '%' }).value === '5.3%')
+  ok('kpiToItem formats days', kpiToItem({ label: 'Lead', value: 140, unit: 'd' }).value === '140 d')
+  ok('kpiToItem plain number', kpiToItem({ label: 'Health', value: 71 }).value === '71')
+
+  ok('esc neutralizes HTML', esc('<script>alert(1)</script>') === '&lt;script&gt;alert(1)&lt;/script&gt;')
+
+  const spec: ReportSpec = {
+    title: 'Cost & Schedule',
+    subtitle: 'Portfolio brief',
+    module: 'cost-schedule',
+    generatedAt: '2026-05-31T12:00:00.000Z',
+    kpis: [{ label: 'Portfolio CPI', value: '0.94' }, { label: 'EAC', value: '$1.2B' }],
+    narrative: 'Portfolio is over budget with a 12-point claim gap.',
+    table: { title: 'Projects', columns: ['Project', 'CPI'], rows: [['Meridian Tower', 0.92], ['Riverside <Hub>', 0.81]] },
+  }
+  const html = buildReportHtml(spec)
+  ok('html is a full document', html.startsWith('<!doctype html>') && html.includes('</html>'))
+  ok('html includes the title', html.includes('Cost &amp; Schedule'))
+  ok('html includes KPI label + value', html.includes('Portfolio CPI') && html.includes('0.94'))
+  ok('html includes narrative', html.includes('12-point claim gap'))
+  ok('html renders table rows', html.includes('Meridian Tower') && html.includes('0.81'))
+  ok('html escapes table cell injection', html.includes('Riverside &lt;Hub&gt;') && !html.includes('Riverside <Hub>'))
+  ok('html names the studio + module', html.includes('AEC Data') && html.includes('cost-schedule'))
+  ok('missing generatedAt still builds', buildReportHtml({ title: 'X', module: 'm' }).includes('Board brief'))
+
+  const csv = tableToCsv({ columns: ['Project', 'Note'], rows: [['Meridian', 'on, track'], ['Lumen "T4"', 'ok']] })
+  ok('csv has header + rows', csv.split('\r\n').length === 3)
+  ok('csv quotes commas', csv.includes('"on, track"'))
+  ok('csv escapes quotes', csv.includes('"Lumen ""T4"""'))
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)

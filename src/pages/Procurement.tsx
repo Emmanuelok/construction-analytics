@@ -29,6 +29,8 @@ import { cn } from '@/lib/cn'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
 import type { KPI } from '@/lib/scenarios'
+import { ExportMenu } from '@/components/ExportMenu'
+import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 
 const ACCENT_L = 'lime' as const
 
@@ -112,6 +114,19 @@ export default function Procurement() {
     { label: 'Avg lead time', value: stats.avgLead, unit: 'd' },
     { label: 'Top score', value: stats.best?.score ?? 0 },
   ]
+  const reportTable: ReportTable = {
+    title: 'Supplier scorecard',
+    columns: ['Rank', 'Supplier', 'Score', 'On-time', 'Quality', 'Lead (d)', 'Price idx', 'Risk'],
+    rows: ordered.map((s) => [s.rank, s.name, s.score, `${s.onTime}%`, `${s.quality}%`, s.leadTime, s.priceIndex, s.risk]),
+  }
+  const reportSpec: ReportSpec = {
+    title: 'Procurement Intelligence',
+    subtitle: `Supplier scorecard · ${rows.length} suppliers`,
+    module: 'procurement',
+    kpis: summary.map(kpiToItem),
+    narrative: `Under the current weighting, ${stats.best?.name ?? '—'} leads with a composite score of ${stats.best?.score ?? 0}. Average score is ${stats.avgScore}; ${stats.highRisk} supplier${stats.highRisk === 1 ? '' : 's'} fall below the 70-point risk threshold.`,
+    table: reportTable,
+  }
   const normW = normalizeWeights(weights)
 
   const activePreset = PRESETS.find((p) => sameWeights(normalizeWeights(p.weights), normW))?.id
@@ -143,13 +158,18 @@ export default function Procurement() {
         }
       />
 
-      <ScenarioBar
-        accent="lime"
-        scenarios={scenarios}
-        onSave={(name) => save(name, { rows, weights }, summary)}
-        onLoad={(s) => { const d = s.data as { rows?: Row[]; weights?: Weights }; if (d.rows) setRows(d.rows); if (d.weights) setWeights(d.weights); setEdited(true) }}
-        onRemove={remove}
-      />
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <ScenarioBar
+            accent="lime"
+            scenarios={scenarios}
+            onSave={(name) => save(name, { rows, weights }, summary)}
+            onLoad={(s) => { const d = s.data as { rows?: Row[]; weights?: Weights }; if (d.rows) setRows(d.rows); if (d.weights) setWeights(d.weights); setEdited(true) }}
+            onRemove={remove}
+          />
+        </div>
+        <ExportMenu accent="lime" spec={reportSpec} csv={reportTable} />
+      </div>
 
       {/* cohort KPIs — recompute as you edit data or weights */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

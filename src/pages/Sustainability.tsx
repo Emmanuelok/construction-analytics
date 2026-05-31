@@ -28,6 +28,8 @@ import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
 import type { KPI } from '@/lib/scenarios'
+import { ExportMenu } from '@/components/ExportMenu'
+import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 
 const ACCENT_NAME = 'emerald' as const
 const PALETTE: Accent[] = ['rose', 'amber', 'violet', 'cyan', 'sky', 'emerald', 'teal', 'fuchsia']
@@ -77,6 +79,19 @@ export default function Sustainability() {
     { label: 'Embodied (tCO₂e)', value: Math.round(r.totalCarbon / 1000) },
     { label: 'Whole-life intensity', value: wholeLife },
   ]
+  const reportTable: ReportTable = {
+    title: 'Material take-off',
+    columns: ['Material', 'Quantity', 'Factor (kgCO₂e/unit)', 'Carbon (tCO₂e)', 'Saving (tCO₂e)'],
+    rows: r.lines.map((l) => [l.name, `${formatNumber(l.quantity)} ${l.unit}`, formatNumber(l.factor), Math.round(l.carbon / 1000), Math.round(l.saving / 1000)]),
+  }
+  const reportSpec: ReportSpec = {
+    title: 'Sustainability & ESG',
+    subtitle: `Embodied-carbon brief · rating ${r.rating} · ${gfa.toLocaleString()} m²`,
+    module: 'sustainability',
+    kpis: summary.map(kpiToItem),
+    narrative: carbonNarrative(r),
+    table: reportTable,
+  }
   const accentFor = (id: string) => PALETTE[lines.findIndex((l) => l.id === id) % PALETTE.length]
 
   const compareData = r.lines.map((l) => ({ name: l.name.length > 16 ? l.name.slice(0, 15) + '…' : l.name, Specified: Math.round(l.carbon / 1000), Baseline: Math.round(l.baselineCarbon / 1000) }))
@@ -104,21 +119,26 @@ export default function Sustainability() {
         }
       />
 
-      <ScenarioBar
-        accent="emerald"
-        scenarios={scenarios}
-        onSave={(name) => save(name, { lines, gfa, benchmark, operational, studyPeriod }, summary)}
-        onLoad={(s) => {
-          const d = s.data as { lines?: typeof lines; gfa?: number; benchmark?: number; operational?: number; studyPeriod?: number }
-          if (d.lines) setLines(d.lines)
-          if (typeof d.gfa === 'number') setGfa(d.gfa)
-          if (typeof d.benchmark === 'number') setBenchmark(d.benchmark)
-          if (typeof d.operational === 'number') setOperational(d.operational)
-          if (typeof d.studyPeriod === 'number') setStudyPeriod(d.studyPeriod)
-          setEdited(true)
-        }}
-        onRemove={remove}
-      />
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <ScenarioBar
+            accent="emerald"
+            scenarios={scenarios}
+            onSave={(name) => save(name, { lines, gfa, benchmark, operational, studyPeriod }, summary)}
+            onLoad={(s) => {
+              const d = s.data as { lines?: typeof lines; gfa?: number; benchmark?: number; operational?: number; studyPeriod?: number }
+              if (d.lines) setLines(d.lines)
+              if (typeof d.gfa === 'number') setGfa(d.gfa)
+              if (typeof d.benchmark === 'number') setBenchmark(d.benchmark)
+              if (typeof d.operational === 'number') setOperational(d.operational)
+              if (typeof d.studyPeriod === 'number') setStudyPeriod(d.studyPeriod)
+              setEdited(true)
+            }}
+            onRemove={remove}
+          />
+        </div>
+        <ExportMenu accent="emerald" spec={reportSpec} csv={reportTable} />
+      </div>
 
       {/* KPIs — recompute as you edit */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

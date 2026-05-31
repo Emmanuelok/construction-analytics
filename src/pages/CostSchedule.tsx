@@ -21,6 +21,8 @@ import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
 import type { KPI } from '@/lib/scenarios'
+import { ExportMenu } from '@/components/ExportMenu'
+import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 
 /* An editable row in the controls workbench — the fields that drive EVM. */
 type Row = { id: string; name: string; bac: number; progress: number; costVar: number; slip: number }
@@ -70,6 +72,19 @@ export default function CostSchedule() {
     { label: 'VAC', value: portfolio.vac, unit: '$' },
     { label: 'At-risk projects', value: atRisk.length },
   ]
+  const reportTable: ReportTable = {
+    title: 'Project controls',
+    columns: ['Project', 'Budget', '% Complete', 'Cost var %', 'Slip (d)', 'CPI', 'SPI', 'EAC', 'Health'],
+    rows: evms.map(({ row, evm }) => [row.name, formatMoney(row.bac), `${row.progress}%`, `${row.costVar}%`, row.slip, evm.cpi.toFixed(2), evm.spi.toFixed(2), formatMoney(evm.eac), HEALTH[evm.health].label]),
+  }
+  const reportSpec: ReportSpec = {
+    title: 'Cost & Schedule',
+    subtitle: `Earned-value brief · ${rows.length} projects`,
+    module: 'cost-schedule',
+    kpis: summary.map(kpiToItem),
+    narrative: `Across ${rows.length} projects the portfolio CPI is ${portfolio.cpi.toFixed(2)} and SPI ${portfolio.spi.toFixed(2)}, forecasting ${formatMoney(portfolio.eac)} at completion against a ${formatMoney(portfolio.bac)} budget — ${portfolio.vac < 0 ? `a ${formatMoney(Math.abs(portfolio.vac))} overrun` : `a ${formatMoney(portfolio.vac)} saving`}. ${atRisk.length} project${atRisk.length === 1 ? '' : 's'} at risk.`,
+    table: reportTable,
+  }
 
   const cpiSpiData = evms.map((e) => ({ x: e.evm.spi, y: e.evm.cpi, name: e.row.name }))
   const eacData = [...evms]
@@ -99,13 +114,18 @@ export default function CostSchedule() {
         }
       />
 
-      <ScenarioBar
-        accent="rose"
-        scenarios={scenarios}
-        onSave={(name) => save(name, { rows }, summary)}
-        onLoad={(s) => { const d = s.data as { rows?: Row[] }; if (d.rows) { setRows(d.rows); setEdited(true) } }}
-        onRemove={remove}
-      />
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <ScenarioBar
+            accent="rose"
+            scenarios={scenarios}
+            onSave={(name) => save(name, { rows }, summary)}
+            onLoad={(s) => { const d = s.data as { rows?: Row[] }; if (d.rows) { setRows(d.rows); setEdited(true) } }}
+            onRemove={remove}
+          />
+        </div>
+        <ExportMenu accent="rose" spec={reportSpec} csv={reportTable} />
+      </div>
 
       {/* portfolio EVM KPIs — recompute as you edit */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

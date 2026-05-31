@@ -5,7 +5,21 @@ export const MIME: Record<string, string> = {
   GeoJSON: 'application/geo+json',
   IFC: 'text/plain;charset=utf-8',
   XML: 'application/xml',
+  HTML: 'text/html;charset=utf-8',
   TXT: 'text/plain;charset=utf-8',
+}
+
+/** Open generated HTML in a new tab and trigger the print dialog (Save as PDF). */
+export function openPrintable(html: string): boolean {
+  const w = window.open('', '_blank')
+  if (!w) return false // popup blocked
+  w.document.open()
+  w.document.write(html)
+  w.document.close()
+  w.focus()
+  // let layout settle before invoking print
+  setTimeout(() => { try { w.print() } catch { /* user can print manually */ } }, 350)
+  return true
 }
 
 export function downloadText(filename: string, content: string, format = 'TXT') {

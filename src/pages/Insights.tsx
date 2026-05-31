@@ -33,6 +33,8 @@ import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
 import type { KPI } from '@/lib/scenarios'
+import { ExportMenu } from '@/components/ExportMenu'
+import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 
 const ACCENT_NAME = 'cyan' as const
 
@@ -87,6 +89,19 @@ export default function Insights() {
     { label: 'At-risk projects', value: pf.atRisk },
     { label: 'Wtd cost variance', value: pf.wtdCostVariance, unit: '%' },
   ]
+  const reportTable: ReportTable = {
+    title: 'Project watchlist (worst-first)',
+    columns: ['Project', 'Sector', 'Value', 'Health', 'Exposure', 'Status'],
+    rows: pf.watchlist.map((p) => [p.name, p.sector, formatMoney(p.value), p.health, formatMoney(p.exposure), STATUS_META[p.status].label]),
+  }
+  const reportSpec: ReportSpec = {
+    title: 'Executive Insights',
+    subtitle: `Portfolio decision brief · ${pf.projects.length} projects`,
+    module: 'insights',
+    kpis: summary.map(kpiToItem),
+    narrative: portfolioNarrative(pf),
+    table: reportTable,
+  }
   const normW = normalizeWeights(weights)
   const activePreset = PRESETS.find((p) => sameW(normalizeWeights(p.weights), normW))?.id
 
@@ -126,13 +141,18 @@ export default function Insights() {
         }
       />
 
-      <ScenarioBar
-        accent="cyan"
-        scenarios={scenarios}
-        onSave={(name) => save(name, { rows, weights }, summary)}
-        onLoad={(s) => { const d = s.data as { rows?: typeof rows; weights?: typeof weights }; if (d.rows) setRows(d.rows); if (d.weights) setWeights(d.weights); setEdited(true) }}
-        onRemove={remove}
-      />
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <ScenarioBar
+            accent="cyan"
+            scenarios={scenarios}
+            onSave={(name) => save(name, { rows, weights }, summary)}
+            onLoad={(s) => { const d = s.data as { rows?: typeof rows; weights?: typeof weights }; if (d.rows) setRows(d.rows); if (d.weights) setWeights(d.weights); setEdited(true) }}
+            onRemove={remove}
+          />
+        </div>
+        <ExportMenu accent="cyan" spec={reportSpec} csv={reportTable} />
+      </div>
 
       {/* KPIs — recompute as you weight & edit */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
