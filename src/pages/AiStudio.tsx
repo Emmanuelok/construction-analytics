@@ -26,6 +26,7 @@ import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
 import { ScrollableTable } from '@/components/ScrollableTable'
 import { ExportMenu } from '@/components/ExportMenu'
+import { CollabBar } from '@/components/CollabBar'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 import {
@@ -132,6 +133,8 @@ export default function AiStudio() {
         </div>
         <ExportMenu accent="fuchsia" spec={reportSpec} csv={reportTable} />
       </div>
+
+      <CollabBar subject="ai-studio" accent="fuchsia" />
 
       {/* KPIs — recompute as you curate */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

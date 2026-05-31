@@ -30,6 +30,7 @@ import { ScenarioBar } from '@/components/ScenarioBar'
 import { ScrollableTable } from '@/components/ScrollableTable'
 import type { KPI } from '@/lib/scenarios'
 import { ExportMenu } from '@/components/ExportMenu'
+import { CollabBar } from '@/components/CollabBar'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 
 const ACCENT_NAME = 'emerald' as const
@@ -140,6 +141,8 @@ export default function Sustainability() {
         </div>
         <ExportMenu accent="emerald" spec={reportSpec} csv={reportTable} />
       </div>
+
+      <CollabBar subject="sustainability" accent="emerald" />
 
       {/* KPIs — recompute as you edit */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

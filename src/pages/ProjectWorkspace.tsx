@@ -25,6 +25,7 @@ import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
 import { ExportMenu } from '@/components/ExportMenu'
+import { CollabBar } from '@/components/CollabBar'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 
@@ -139,6 +140,8 @@ export default function ProjectWorkspace() {
         </div>
         <ExportMenu accent={ACCENT_NAME} spec={reportSpec} csv={reportTable} />
       </div>
+
+      <CollabBar subject={`project:${projectId}`} accent={ACCENT_NAME} />
 
       {/* unified KPIs */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

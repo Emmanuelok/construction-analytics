@@ -31,6 +31,7 @@ import { ScenarioBar } from '@/components/ScenarioBar'
 import { ScrollableTable } from '@/components/ScrollableTable'
 import type { KPI } from '@/lib/scenarios'
 import { ExportMenu } from '@/components/ExportMenu'
+import { CollabBar } from '@/components/CollabBar'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 
 const ACCENT_L = 'lime' as const
@@ -171,6 +172,8 @@ export default function Procurement() {
         </div>
         <ExportMenu accent="lime" spec={reportSpec} csv={reportTable} />
       </div>
+
+      <CollabBar subject="procurement" accent="lime" />
 
       {/* cohort KPIs — recompute as you edit data or weights */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

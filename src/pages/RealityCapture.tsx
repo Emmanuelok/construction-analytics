@@ -30,6 +30,7 @@ import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
 import { ScrollableTable } from '@/components/ScrollableTable'
 import { ExportMenu } from '@/components/ExportMenu'
+import { CollabBar } from '@/components/CollabBar'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 
@@ -135,6 +136,8 @@ export default function RealityCapture() {
         </div>
         <ExportMenu accent="cyan" spec={reportSpec} csv={reportTable} />
       </div>
+
+      <CollabBar subject="reality-capture" accent="cyan" />
 
       {/* KPIs — recompute as capture verifies work */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

@@ -23,6 +23,7 @@ import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
 import { ScrollableTable } from '@/components/ScrollableTable'
 import { ExportMenu } from '@/components/ExportMenu'
+import { CollabBar } from '@/components/CollabBar'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 import {
@@ -203,6 +204,8 @@ export default function DigitalTwin() {
         </div>
         <ExportMenu accent="violet" spec={reportSpec} csv={reportTable} />
       </div>
+
+      <CollabBar subject="digital-twin" accent="violet" />
 
       {/* KPIs — recompute as you tune telemetry */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

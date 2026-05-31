@@ -19,6 +19,7 @@ import { deriveProjectModel, projectNarrative, type ProjectVitals } from './proj
 import { SCHEMAS, autoMap, coerceField, validateImport, recordsToCsv } from './ingest.ts'
 import { compare, evaluate, summarize as summarizeAlerts, metricsForVitals, makeRule, parseRules, DEFAULT_RULES, type Subject } from './alerts.ts'
 import { editLabel, removeLabel, actionLabel, percentValueText, toggleLabel } from './a11y.ts'
+import { parseMentions, makeComment, threadFor, addComment, removeComment, toggleResolved, summarizeThread, encodeShareToken, decodeShareToken, shareUrl, logActivity, parseComments, subjectLabel, type Comment as CollabComment, type Author } from './collab.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -424,6 +425,61 @@ section('a11y')
   ok('actionLabel', actionLabel('Resolve', 'Struct×MEP') === 'Resolve Struct×MEP')
   ok('percentValueText rounds', percentValueText(0.3) === '30 percent' && percentValueText(0.255) === '26 percent')
   ok('toggleLabel on/off', toggleLabel('Cost overrun', true) === 'Cost overrun, on' && toggleLabel('Cost overrun', false) === 'Cost overrun, off')
+}
+
+// ── collab (comments / mentions / share / activity) ──────────────────────────
+section('collab')
+{
+  const alice: Author = { id: 'u1', name: 'Alice' }
+  const bob: Author = { id: 'u2', name: 'Bob' }
+
+  // mentions
+  ok('parseMentions extracts handles', JSON.stringify(parseMentions('hey @bob and @carol_99, see this')) === JSON.stringify(['bob', 'carol_99']))
+  ok('parseMentions dedups + lowercases', JSON.stringify(parseMentions('@Bob @bob @BOB')) === JSON.stringify(['bob']))
+  ok('parseMentions ignores emails', parseMentions('mail me at jo@example.com').length === 0)
+  ok('parseMentions strips trailing punctuation', JSON.stringify(parseMentions('ping @alice.')) === JSON.stringify(['alice']))
+  ok('parseMentions empty', parseMentions('no mentions here').length === 0)
+
+  // comments + thread
+  let comments: CollabComment[] = []
+  const c1 = makeComment('cost-schedule', alice, 'CPI looks off — @bob can you check?')
+  comments = addComment(comments, c1)
+  ok('makeComment captures author + mentions', c1.authorName === 'Alice' && c1.mentions[0] === 'bob' && !c1.resolved)
+  comments = addComment(comments, makeComment('cost-schedule', bob, 'Looking now'))
+  comments = addComment(comments, makeComment('procurement', alice, 'different subject'))
+  ok('threadFor filters by subject', threadFor(comments, 'cost-schedule').length === 2)
+  ok('threadFor is chronological', threadFor(comments, 'cost-schedule')[0].id === c1.id)
+  ok('other subjects isolated', threadFor(comments, 'procurement').length === 1)
+
+  // resolve + remove
+  comments = toggleResolved(comments, c1.id)
+  ok('toggleResolved flips', threadFor(comments, 'cost-schedule').find((c) => c.id === c1.id)!.resolved === true)
+  const s = summarizeThread(comments, 'cost-schedule')
+  ok('summary counts open/resolved/participants', s.total === 2 && s.resolved === 1 && s.open === 1 && s.participants === 2)
+  ok('summary lastAt set', typeof s.lastAt === 'string')
+  comments = removeComment(comments, c1.id)
+  ok('removeComment drops it', threadFor(comments, 'cost-schedule').length === 1)
+
+  // share tokens
+  const tok = encodeShareToken('project:PRJ-1042')
+  ok('share token is url-safe', !/[+/=]/.test(tok))
+  ok('decode round-trips', decodeShareToken(tok) === 'project:PRJ-1042')
+  ok('decode rejects junk', decodeShareToken('@@@not-base64@@@') === null || decodeShareToken('zzzz') !== 'project:PRJ-1042')
+  ok('shareUrl builds a deep link', shareUrl('https://app.example.com', '/construction-analytics', 'cost-schedule') === `https://app.example.com/construction-analytics/share/${encodeShareToken('cost-schedule')}`)
+  ok('shareUrl handles root base', shareUrl('https://x.io/', '/', 'bim').startsWith('https://x.io/share/'))
+
+  // activity
+  let log = logActivity([], alice, 'commented on', 'cost-schedule')
+  log = logActivity(log, bob, 'shared', 'project:PRJ-1042')
+  ok('logActivity newest-first', log[0].actorName === 'Bob' && log[1].actorName === 'Alice')
+  ok('activity carries verb + subject', log[0].verb === 'shared' && log[0].subject === 'project:PRJ-1042')
+
+  // persistence + labels
+  ok('parseComments round-trips', parseComments(JSON.stringify(comments)).length === comments.length)
+  ok('parseComments bad JSON → []', parseComments('nope').length === 0)
+  ok('parseComments drops malformed', parseComments(JSON.stringify([comments[0], { x: 1 }])).length === 1)
+  ok('subjectLabel project', subjectLabel('project:PRJ-1042') === 'Project PRJ-1042')
+  ok('subjectLabel slug', subjectLabel('cost-schedule') === 'Cost Schedule')
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)

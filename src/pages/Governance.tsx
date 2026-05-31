@@ -37,6 +37,7 @@ import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
 import { ScrollableTable } from '@/components/ScrollableTable'
 import { ExportMenu } from '@/components/ExportMenu'
+import { CollabBar } from '@/components/CollabBar'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 
@@ -178,6 +179,8 @@ export default function Governance() {
         </div>
         <ExportMenu accent="teal" spec={reportSpec} csv={reportTable} />
       </div>
+
+      <CollabBar subject="governance" accent="teal" />
 
       {/* KPIs — recompute as you edit */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
