@@ -21,6 +21,8 @@ import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
+import { ExportMenu } from '@/components/ExportMenu'
+import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 import {
   computeAsset,
@@ -145,6 +147,20 @@ export default function DigitalTwin() {
   const scatter = scored.map((a) => ({ x: a.health, y: a.criticality, name: a.name }))
   const alarms = scored.filter((a) => a.alarm)
 
+  const reportTable: ReportTable = {
+    title: 'Asset maintenance',
+    columns: ['Asset', 'Type', 'Reading', 'Setpoint', 'Health', 'Priority', 'Status'],
+    rows: scored.map((a) => [a.name, a.type, `${a.reading}${a.unit}`, `${a.setpoint}${a.unit}`, a.health, a.priority, a.status]),
+  }
+  const reportSpec: ReportSpec = {
+    title: 'Digital Twin & Asset Intelligence',
+    subtitle: `Operations brief · ${s.alarms} alarm${s.alarms === 1 ? '' : 's'}`,
+    module: 'digital-twin',
+    kpis: summary.map(kpiToItem),
+    narrative: maintenanceNarrative(s),
+    table: reportTable,
+  }
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -167,6 +183,8 @@ export default function DigitalTwin() {
         }
       />
 
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
       <ScenarioBar
         accent="violet"
         scenarios={scenarios}
@@ -181,6 +199,9 @@ export default function DigitalTwin() {
         }}
         onRemove={remove}
       />
+        </div>
+        <ExportMenu accent="violet" spec={reportSpec} csv={reportTable} />
+      </div>
 
       {/* KPIs — recompute as you tune telemetry */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

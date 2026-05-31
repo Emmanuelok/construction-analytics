@@ -35,6 +35,8 @@ import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
+import { ExportMenu } from '@/components/ExportMenu'
+import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 
 const ACCENT_NAME = 'teal' as const
@@ -118,6 +120,20 @@ export default function Governance() {
   const scatter = results.map((r) => ({ x: r.qualityScore, y: r.exposure, name: r.name }))
   const gated = results.filter((r) => !r.publishable)
 
+  const reportTable: ReportTable = {
+    title: 'Dataset governance',
+    columns: ['Dataset', 'Quality', 'Grade', 'Exposure', 'Re-ID', 'Publish'],
+    rows: results.map((r) => [r.name, r.qualityScore, r.grade, r.exposure, r.reId, r.publishable ? 'Yes' : 'Gated']),
+  }
+  const reportSpec: ReportSpec = {
+    title: 'Governance & Trust',
+    subtitle: `Data-governance brief · ${summary.publishable}/${summary.count} publishable`,
+    module: 'governance',
+    kpis: kpis.map(kpiToItem),
+    narrative: governanceNarrative(summary),
+    table: reportTable,
+  }
+
   const setWeight = (key: keyof QualityWeights, v: number) => { setWeights((w) => ({ ...w, [key]: v })); touch() }
 
   return (
@@ -142,20 +158,25 @@ export default function Governance() {
         }
       />
 
-      <ScenarioBar
-        accent="teal"
-        scenarios={scenarios}
-        onSave={(name) => save(name, { rows, weights, minQuality, maxExposure }, kpis)}
-        onLoad={(s) => {
-          const d = s.data as { rows?: typeof rows; weights?: typeof weights; minQuality?: number; maxExposure?: number }
-          if (d.rows) setRows(d.rows)
-          if (d.weights) setWeights(d.weights)
-          if (typeof d.minQuality === 'number') setMinQuality(d.minQuality)
-          if (typeof d.maxExposure === 'number') setMaxExposure(d.maxExposure)
-          setEdited(true)
-        }}
-        onRemove={remove}
-      />
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <ScenarioBar
+            accent="teal"
+            scenarios={scenarios}
+            onSave={(name) => save(name, { rows, weights, minQuality, maxExposure }, kpis)}
+            onLoad={(s) => {
+              const d = s.data as { rows?: typeof rows; weights?: typeof weights; minQuality?: number; maxExposure?: number }
+              if (d.rows) setRows(d.rows)
+              if (d.weights) setWeights(d.weights)
+              if (typeof d.minQuality === 'number') setMinQuality(d.minQuality)
+              if (typeof d.maxExposure === 'number') setMaxExposure(d.maxExposure)
+              setEdited(true)
+            }}
+            onRemove={remove}
+          />
+        </div>
+        <ExportMenu accent="teal" spec={reportSpec} csv={reportTable} />
+      </div>
 
       {/* KPIs — recompute as you edit */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

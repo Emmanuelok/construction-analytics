@@ -26,6 +26,8 @@ import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
+import { ExportMenu } from '@/components/ExportMenu'
+import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 
 const ACCENT_NAME = 'amber' as const
@@ -80,6 +82,20 @@ export default function Field() {
   const frontier = sites.map((s) => ({ x: s.productivity, y: s.safetyScore, name: s.name }))
   const worst = [...sites].filter((s) => s.status === 'at-risk').sort((a, b) => a.safetyScore - b.safetyScore)
 
+  const reportTable: ReportTable = {
+    title: 'Site execution',
+    columns: ['Site', 'Staffing', 'Productivity', 'TRIR', 'Safety', 'Status'],
+    rows: sites.map((s) => [s.name, `${s.staffing}%`, `${s.productivity}%`, s.trir.toFixed(2), s.safetyScore, STATUS[s.status].label]),
+  }
+  const reportSpec: ReportSpec = {
+    title: 'Construction Analytics',
+    subtitle: `Field execution brief · ${p.sites} sites`,
+    module: 'field',
+    kpis: summary.map(kpiToItem),
+    narrative: fieldNarrative(p),
+    table: reportTable,
+  }
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -102,13 +118,18 @@ export default function Field() {
         }
       />
 
-      <ScenarioBar
-        accent="amber"
-        scenarios={scenarios}
-        onSave={(name) => save(name, { rows }, summary)}
-        onLoad={(s) => { const d = s.data as { rows?: typeof rows }; if (d.rows) { setRows(d.rows); setEdited(true) } }}
-        onRemove={remove}
-      />
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <ScenarioBar
+            accent="amber"
+            scenarios={scenarios}
+            onSave={(name) => save(name, { rows }, summary)}
+            onLoad={(s) => { const d = s.data as { rows?: typeof rows }; if (d.rows) { setRows(d.rows); setEdited(true) } }}
+            onRemove={remove}
+          />
+        </div>
+        <ExportMenu accent="amber" spec={reportSpec} csv={reportTable} />
+      </div>
 
       {/* portfolio KPIs — recompute as you edit */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

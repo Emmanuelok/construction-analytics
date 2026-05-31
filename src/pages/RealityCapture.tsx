@@ -28,6 +28,8 @@ import { cn } from '@/lib/cn'
 import { formatNumber, formatCurrency } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
+import { ExportMenu } from '@/components/ExportMenu'
+import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 
 const ACCENT_NAME = 'cyan' as const
@@ -78,6 +80,20 @@ export default function RealityCapture() {
   const gapData = zones.map((z) => ({ name: short(z.zone), gap: Math.round(z.claimGapValue) }))
   const flagged = zones.filter((z) => z.status !== 'verified')
 
+  const reportTable: ReportTable = {
+    title: 'Progress verification',
+    columns: ['Zone', 'Claimed', 'Verified', 'Claim gap', 'Score', 'Status'],
+    rows: zones.map((z) => [z.zone, `${z.claimedPct}%`, `${z.verifiedPct}%`, formatMoney(z.claimGapValue), z.verificationScore, z.status]),
+  }
+  const reportSpec: ReportSpec = {
+    title: 'Reality Capture & Verification',
+    subtitle: `Progress-verification brief · ${formatMoney(s.valueAtRisk)} at risk`,
+    module: 'reality-capture',
+    kpis: summary.map(kpiToItem),
+    narrative: verifyNarrative(s),
+    table: reportTable,
+  }
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -100,19 +116,24 @@ export default function RealityCapture() {
         }
       />
 
-      <ScenarioBar
-        accent="cyan"
-        scenarios={scenarios}
-        onSave={(name) => save(name, { rows, tolerancePct, minConfidence }, summary)}
-        onLoad={(sc) => {
-          const d = sc.data as { rows?: typeof rows; tolerancePct?: number; minConfidence?: number }
-          if (d.rows) setRows(d.rows)
-          if (typeof d.tolerancePct === 'number') setTolerancePct(d.tolerancePct)
-          if (typeof d.minConfidence === 'number') setMinConfidence(d.minConfidence)
-          setEdited(true)
-        }}
-        onRemove={remove}
-      />
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <ScenarioBar
+            accent="cyan"
+            scenarios={scenarios}
+            onSave={(name) => save(name, { rows, tolerancePct, minConfidence }, summary)}
+            onLoad={(sc) => {
+              const d = sc.data as { rows?: typeof rows; tolerancePct?: number; minConfidence?: number }
+              if (d.rows) setRows(d.rows)
+              if (typeof d.tolerancePct === 'number') setTolerancePct(d.tolerancePct)
+              if (typeof d.minConfidence === 'number') setMinConfidence(d.minConfidence)
+              setEdited(true)
+            }}
+            onRemove={remove}
+          />
+        </div>
+        <ExportMenu accent="cyan" spec={reportSpec} csv={reportTable} />
+      </div>
 
       {/* KPIs — recompute as capture verifies work */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

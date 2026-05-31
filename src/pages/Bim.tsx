@@ -33,6 +33,8 @@ import { cn } from '@/lib/cn'
 import { formatCurrency, formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
+import { ExportMenu } from '@/components/ExportMenu'
+import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 import { parseIfc, type ParsedIfc } from '@/lib/ifc'
 import { SAMPLE_IFC } from '@/lib/ifc-sample'
@@ -122,6 +124,20 @@ export default function Bim() {
   const severityData = h.bySeverity.filter((s) => s.open > 0).map((s) => ({ name: s.severity, value: s.open, accent: SEV_ACCENT[s.severity] }))
   const critical = h.pairs.filter((p) => p.status === 'critical')
 
+  const reportTable: ReportTable = {
+    title: 'Clash coordination',
+    columns: ['Interface', 'Severity', 'Detected', 'Resolved', 'Open', 'Resolution', 'Status'],
+    rows: h.pairs.map((p) => [`${p.a}×${p.b}`, p.severity, p.total, p.resolved, p.open, `${p.resolutionPct}%`, p.status]),
+  }
+  const reportSpec: ReportSpec = {
+    title: 'BIM Intelligence',
+    subtitle: `Clash & model-health brief · health ${h.health}`,
+    module: 'bim',
+    kpis: summary.map(kpiToItem),
+    narrative: clashNarrative(h),
+    table: reportTable,
+  }
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -152,13 +168,18 @@ export default function Bim() {
 
       {parsed && <ParsedModel data={parsed} onClear={() => setParsed(null)} />}
 
-      <ScenarioBar
-        accent="blue"
-        scenarios={scenarios}
-        onSave={(name) => save(name, { pairs, elements }, summary)}
-        onLoad={(s) => { const d = s.data as { pairs?: typeof pairs; elements?: number }; if (d.pairs) setPairs(d.pairs); if (typeof d.elements === 'number') setElements(d.elements); setEdited(true) }}
-        onRemove={remove}
-      />
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <ScenarioBar
+            accent="blue"
+            scenarios={scenarios}
+            onSave={(name) => save(name, { pairs, elements }, summary)}
+            onLoad={(s) => { const d = s.data as { pairs?: typeof pairs; elements?: number }; if (d.pairs) setPairs(d.pairs); if (typeof d.elements === 'number') setElements(d.elements); setEdited(true) }}
+            onRemove={remove}
+          />
+        </div>
+        <ExportMenu accent="blue" spec={reportSpec} csv={reportTable} />
+      </div>
 
       {/* model-health KPIs — recompute as you coordinate */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

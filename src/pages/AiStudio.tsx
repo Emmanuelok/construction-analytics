@@ -24,6 +24,8 @@ import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
+import { ExportMenu } from '@/components/ExportMenu'
+import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 import {
   computeReadiness,
@@ -81,6 +83,20 @@ export default function AiStudio() {
   const selected = scored.find((d) => d.id === selectedId) ?? scored[0]
   const readinessData = scored.map((d) => ({ name: d.name.length > 16 ? d.name.slice(0, 15) + '…' : d.name, readiness: d.readiness }))
 
+  const reportTable: ReportTable = {
+    title: 'Dataset readiness',
+    columns: ['Dataset', 'Task', 'Examples', 'Readiness', 'Grade', 'Ready'],
+    rows: scored.map((d) => [d.name, d.task, d.examples, d.readiness, d.grade, d.readyToTrain ? 'Yes' : 'Gated']),
+  }
+  const reportSpec: ReportSpec = {
+    title: 'AI Training Studio',
+    subtitle: `Dataset readiness brief · ${s.ready}/${s.count} ready to train`,
+    module: 'ai-studio',
+    kpis: summary.map(kpiToItem),
+    narrative: `${s.ready} of ${s.count} datasets are ready to train, averaging ${s.avgReadiness}/100 readiness. ${formatNumber(s.totalEffective)} of ${formatNumber(s.totalExamples)} labeled examples are usable after de-duplication and incomplete-label removal; ${s.withWarnings} dataset${s.withWarnings === 1 ? '' : 's'} carry blocking or quality warnings.`,
+    table: reportTable,
+  }
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -103,13 +119,18 @@ export default function AiStudio() {
         }
       />
 
-      <ScenarioBar
-        accent="fuchsia"
-        scenarios={scenarios}
-        onSave={(name) => save(name, { rows }, summary)}
-        onLoad={(sc) => { const d = sc.data as { rows?: typeof rows }; if (d.rows) { setRows(d.rows); setEdited(true) } }}
-        onRemove={remove}
-      />
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <ScenarioBar
+            accent="fuchsia"
+            scenarios={scenarios}
+            onSave={(name) => save(name, { rows }, summary)}
+            onLoad={(sc) => { const d = sc.data as { rows?: typeof rows }; if (d.rows) { setRows(d.rows); setEdited(true) } }}
+            onRemove={remove}
+          />
+        </div>
+        <ExportMenu accent="fuchsia" spec={reportSpec} csv={reportTable} />
+      </div>
 
       {/* KPIs — recompute as you curate */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
