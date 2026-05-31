@@ -33,6 +33,7 @@ import { cn } from '@/lib/cn'
 import { formatCurrency, formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
+import { ScrollableTable } from '@/components/ScrollableTable'
 import { ExportMenu } from '@/components/ExportMenu'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
@@ -223,7 +224,7 @@ export default function Bim() {
             </button>
           }
         />
-        <div className="overflow-x-auto border-t border-edge/50">
+        <ScrollableTable label="Clash coordination" className="border-t border-edge/50">
           <table className="w-full min-w-[940px] text-left text-sm">
             <thead>
               <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
@@ -271,7 +272,7 @@ export default function Bim() {
                             <Wrench className="h-3 w-3" /> Resolve
                           </button>
                         )}
-                        <button onClick={() => removePair(p.id)} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => removePair(p.id)} aria-label={`Remove ${p.a}×${p.b} interface`} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>
                     </td>
                   </tr>
@@ -279,7 +280,7 @@ export default function Bim() {
               })}
             </tbody>
           </table>
-        </div>
+        </ScrollableTable>
       </Card>
 
       {/* charts driven by the live model */}

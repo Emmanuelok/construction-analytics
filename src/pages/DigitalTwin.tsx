@@ -21,6 +21,7 @@ import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
+import { ScrollableTable } from '@/components/ScrollableTable'
 import { ExportMenu } from '@/components/ExportMenu'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
@@ -283,7 +284,7 @@ export default function DigitalTwin() {
             </button>
           }
         />
-        <div className="overflow-x-auto border-t border-edge/50">
+        <ScrollableTable label="Asset maintenance" className="border-t border-edge/50">
           <table className="w-full min-w-[1080px] text-left text-sm">
             <thead>
               <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
@@ -339,7 +340,7 @@ export default function DigitalTwin() {
                             <Wrench className="h-3 w-3" /> Service
                           </button>
                         )}
-                        <button onClick={() => removeAsset(a.id)} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => removeAsset(a.id)} aria-label={`Remove ${a.name}`} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>
                     </td>
                   </tr>
@@ -347,7 +348,7 @@ export default function DigitalTwin() {
               })}
             </tbody>
           </table>
-        </div>
+        </ScrollableTable>
       </Card>
 
       {/* charts driven by the live fleet */}

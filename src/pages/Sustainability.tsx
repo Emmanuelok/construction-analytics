@@ -27,6 +27,7 @@ import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
+import { ScrollableTable } from '@/components/ScrollableTable'
 import type { KPI } from '@/lib/scenarios'
 import { ExportMenu } from '@/components/ExportMenu'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
@@ -184,7 +185,7 @@ export default function Sustainability() {
             </button>
           }
         />
-        <div className="overflow-x-auto border-t border-edge/50">
+        <ScrollableTable label="Material take-off" className="border-t border-edge/50">
           <table className="w-full min-w-[920px] text-left text-sm">
             <thead>
               <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
@@ -228,13 +229,13 @@ export default function Sustainability() {
                     {l.saving !== 0 ? tonnes(l.saving) : '—'}
                   </td>
                   <td className="px-2 py-2 text-right">
-                    <button onClick={() => removeRow(l.id)} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                    <button onClick={() => removeRow(l.id)} aria-label={`Remove ${l.name}`} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollableTable>
       </Card>
 
       {/* charts driven by the live model */}

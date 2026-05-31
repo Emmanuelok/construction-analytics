@@ -20,6 +20,7 @@ import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
+import { ScrollableTable } from '@/components/ScrollableTable'
 import type { KPI } from '@/lib/scenarios'
 import { ExportMenu } from '@/components/ExportMenu'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
@@ -149,7 +150,7 @@ export default function CostSchedule() {
             </button>
           }
         />
-        <div className="overflow-x-auto border-t border-edge/50">
+        <ScrollableTable label="Project controls" className="border-t border-edge/50">
           <table className="w-full min-w-[900px] text-left text-sm">
             <thead>
               <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
@@ -185,14 +186,14 @@ export default function CostSchedule() {
                     <td className={cn('px-3 py-2 text-right data-mono', evm.vac < 0 ? 'text-rose-300' : 'text-emerald-300')}>{formatMoney(evm.vac)}</td>
                     <td className="px-3 py-2 text-center"><Badge variant={h.variant} dot>{h.label}</Badge></td>
                     <td className="px-2 py-2 text-right">
-                      <button onClick={() => removeRow(row.id)} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => removeRow(row.id)} aria-label={`Remove ${row.name}`} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
                     </td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
-        </div>
+        </ScrollableTable>
       </Card>
 
       {/* charts driven by the live EVM */}

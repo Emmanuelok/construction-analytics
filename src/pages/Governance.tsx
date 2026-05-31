@@ -35,6 +35,7 @@ import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
+import { ScrollableTable } from '@/components/ScrollableTable'
 import { ExportMenu } from '@/components/ExportMenu'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
@@ -226,7 +227,7 @@ export default function Governance() {
             </button>
           }
         />
-        <div className="overflow-x-auto border-t border-edge/50">
+        <ScrollableTable label="Dataset governance" className="border-t border-edge/50">
           <table className="w-full min-w-[1200px] text-left text-sm">
             <thead>
               <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
@@ -291,13 +292,13 @@ export default function Governance() {
                     )}
                   </td>
                   <td className="px-2 py-2 text-right">
-                    <button onClick={() => removeRow(r.id)} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                    <button onClick={() => removeRow(r.id)} aria-label={`Remove ${r.name}`} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollableTable>
       </Card>
 
       {/* charts driven by the live model */}
@@ -346,7 +347,7 @@ function WeightSlider({ label, value, pct, onChange }: { label: string; value: n
         <span className="text-xs font-medium text-slate-300">{label}</span>
         <span className="text-xs font-semibold text-teal-300 data-mono">{Math.round(pct * 100)}%</span>
       </div>
-      <input type="range" min={0} max={1} step={0.05} value={value} onChange={(e) => onChange(Number(e.target.value))} className="w-full accent-teal-500" />
+      <input type="range" min={0} max={1} step={0.05} value={value} onChange={(e) => onChange(Number(e.target.value))} aria-label={`${label} weight`} aria-valuetext={`${Math.round(pct * 100)} percent`} className="w-full accent-teal-500" />
     </div>
   )
 }

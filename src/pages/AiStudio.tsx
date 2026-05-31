@@ -24,6 +24,7 @@ import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
+import { ScrollableTable } from '@/components/ScrollableTable'
 import { ExportMenu } from '@/components/ExportMenu'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
@@ -154,7 +155,7 @@ export default function AiStudio() {
             </button>
           }
         />
-        <div className="overflow-x-auto border-t border-edge/50">
+        <ScrollableTable label="Datasets" className="border-t border-edge/50">
           <table className="w-full min-w-[1140px] text-left text-sm">
             <thead>
               <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
@@ -210,7 +211,7 @@ export default function AiStudio() {
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollableTable>
       </Card>
 
       {/* readiness breakdown for the selected dataset */}

@@ -28,6 +28,7 @@ import {
 import { cn } from '@/lib/cn'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
+import { ScrollableTable } from '@/components/ScrollableTable'
 import type { KPI } from '@/lib/scenarios'
 import { ExportMenu } from '@/components/ExportMenu'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
@@ -226,7 +227,7 @@ export default function Procurement() {
             </button>
           }
         />
-        <div className="overflow-x-auto border-t border-edge/50">
+        <ScrollableTable label="Supplier leaderboard" className="border-t border-edge/50">
           <table className="w-full min-w-[920px] text-left text-sm">
             <thead>
               <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
@@ -276,14 +277,14 @@ export default function Procurement() {
                       <Badge variant={RISK[s.risk].variant} dot>{s.risk}</Badge>
                     </td>
                     <td className="px-2 py-2 text-right">
-                      <button onClick={() => removeRow(s.id)} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => removeRow(s.id)} aria-label={`Remove ${s.name}`} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
                     </td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
-        </div>
+        </ScrollableTable>
       </Card>
 
       {/* charts driven by live scoring */}
@@ -365,6 +366,8 @@ function WeightSlider({ label, hint, value, pct, onChange }: { label: string; hi
         step={0.05}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
+        aria-label={`${label} weight`}
+        aria-valuetext={`${Math.round(pct * 100)} percent`}
         className="w-full accent-lime-500"
       />
       <div className="mt-1 text-[11px] text-slate-500">{hint}</div>
@@ -388,7 +391,7 @@ function NumCell({ value, onChange, fmt, tone }: { value: number; onChange: (v: 
           className="w-20 rounded border border-lime-500/50 bg-elevated px-1 py-0.5 text-right text-sm text-slate-100 focus:outline-none"
         />
       ) : (
-        <button onClick={() => setEditing(true)} className={cn('data-mono hover:text-white hover:underline', toneClass)} title="Click to edit">
+        <button onClick={() => setEditing(true)} className={cn('data-mono hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lime-500/50', toneClass)} aria-label={`Edit value, currently ${fmt(value)}`} title="Click to edit">
           {fmt(value)}
         </button>
       )}

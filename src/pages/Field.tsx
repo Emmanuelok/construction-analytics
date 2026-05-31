@@ -26,6 +26,7 @@ import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
+import { ScrollableTable } from '@/components/ScrollableTable'
 import { ExportMenu } from '@/components/ExportMenu'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
@@ -153,7 +154,7 @@ export default function Field() {
             </button>
           }
         />
-        <div className="overflow-x-auto border-t border-edge/50">
+        <ScrollableTable label="Site execution" className="border-t border-edge/50">
           <table className="w-full min-w-[1040px] text-left text-sm">
             <thead>
               <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
@@ -212,14 +213,14 @@ export default function Field() {
                     <td className={cn('px-3 py-2 text-right data-mono', s.trir <= 2.5 ? 'text-emerald-300' : s.trir <= 4 ? 'text-amber-300' : 'text-rose-300')}>{s.trir.toFixed(2)}</td>
                     <td className="px-3 py-2 text-center"><Badge variant={st.variant} dot>{st.label}</Badge></td>
                     <td className="px-2 py-2 text-right">
-                      <button onClick={() => removeRow(s.id)} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => removeRow(s.id)} aria-label={`Remove ${s.name}`} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
                     </td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
-        </div>
+        </ScrollableTable>
       </Card>
 
       {/* charts driven by the live metrics */}

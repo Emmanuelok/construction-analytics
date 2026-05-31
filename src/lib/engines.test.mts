@@ -18,6 +18,7 @@ import { buildReportHtml, tableToCsv, kpiToItem, esc, type ReportSpec } from './
 import { deriveProjectModel, projectNarrative, type ProjectVitals } from './project-model.ts'
 import { SCHEMAS, autoMap, coerceField, validateImport, recordsToCsv } from './ingest.ts'
 import { compare, evaluate, summarize as summarizeAlerts, metricsForVitals, makeRule, parseRules, DEFAULT_RULES, type Subject } from './alerts.ts'
+import { editLabel, removeLabel, actionLabel, percentValueText, toggleLabel } from './a11y.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -410,6 +411,19 @@ section('alerts')
   ok('parseRules: bad JSON → []', parseRules('nope').length === 0)
   ok('parseRules: round-trips valid', parseRules(JSON.stringify(DEFAULT_RULES)).length === DEFAULT_RULES.length)
   ok('parseRules: drops malformed', parseRules(JSON.stringify([DEFAULT_RULES[0], { id: 'x' }])).length === 1)
+}
+
+// ── a11y (label builders) ────────────────────────────────────────────────────
+section('a11y')
+{
+  ok('editLabel with unit', editLabel('Cost variance', 4.2, '%') === 'Edit Cost variance, currently 4.2%')
+  ok('editLabel no unit', editLabel('Quality', 88) === 'Edit Quality, currently 88')
+  ok('editLabel thousands grouped', editLabel('Budget', 820000000, '') === 'Edit Budget, currently 820,000,000')
+  ok('editLabel string value', editLabel('Phase', 'Construction') === 'Edit Phase, currently Construction')
+  ok('removeLabel', removeLabel('Meridian Tower') === 'Remove Meridian Tower')
+  ok('actionLabel', actionLabel('Resolve', 'Struct×MEP') === 'Resolve Struct×MEP')
+  ok('percentValueText rounds', percentValueText(0.3) === '30 percent' && percentValueText(0.255) === '26 percent')
+  ok('toggleLabel on/off', toggleLabel('Cost overrun', true) === 'Cost overrun, on' && toggleLabel('Cost overrun', false) === 'Cost overrun, off')
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)
