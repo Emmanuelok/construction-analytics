@@ -17,6 +17,7 @@ import { makeScenario, upsert, removeById, renameScenario, forModule, diff, pars
 import { buildReportHtml, tableToCsv, kpiToItem, esc, type ReportSpec } from './report.ts'
 import { deriveProjectModel, projectNarrative, type ProjectVitals } from './project-model.ts'
 import { SCHEMAS, autoMap, coerceField, validateImport, recordsToCsv } from './ingest.ts'
+import { compare, evaluate, summarize as summarizeAlerts, metricsForVitals, makeRule, parseRules, DEFAULT_RULES, type Subject } from './alerts.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -376,6 +377,39 @@ section('ingest')
   // canonical CSV out
   const csv = recordsToCsv(r1.records, projectSchema)
   ok('recordsToCsv has header + rows', csv.split('\r\n').length === 3 && csv.startsWith('Project name,'))
+}
+
+// ── alerts (threshold rules) ─────────────────────────────────────────────────
+section('alerts')
+{
+  ok('compare <', compare(0.89, '<', 0.9) && !compare(0.95, '<', 0.9))
+  ok('compare >=', compare(30, '>=', 30) && !compare(29, '>=', 30))
+  ok('compare !=', compare(1, '!=', 2) && !compare(2, '!=', 2))
+
+  const PV = (over: Partial<ProjectVitals>): ProjectVitals => ({ id: 'p', name: 'P', sector: 'S', location: 'L', value: 5e8, gfa: 50000, progress: 50, costVariance: 0, scheduleVariance: 0, risk: 30, safety: 95, quality: 92, carbon: 400, rfis: 500, clashes: 10, ...over });
+  const m = metricsForVitals(PV({ costVariance: 11.5, scheduleVariance: 96, carbon: 820, safety: 82, rfis: 2240 }))
+  ok('metricsForVitals computes cpi', Math.abs(m.cpi - 1 / 1.115) < 0.01, m.cpi)
+  ok('metricsForVitals exposes raw + derived', m.carbon === 820 && typeof m.health === 'number' && typeof m.exposure === 'number')
+
+  const healthy: Subject = { id: 'a', name: 'Healthy', metrics: metricsForVitals(PV({})) }
+  const risky: Subject = { id: 'b', name: 'Riverside', metrics: metricsForVitals(PV({ name: 'Riverside', value: 98e7, costVariance: 11.5, scheduleVariance: 96, risk: 83, safety: 82, quality: 79, carbon: 820, rfis: 2240, clashes: 102 })) }
+  const alerts = evaluate(DEFAULT_RULES, [healthy, risky])
+  ok('healthy project triggers nothing', alerts.every((a) => a.subjectId !== 'a'), JSON.stringify(alerts.filter((a) => a.subjectId === 'a').map((a) => a.ruleName)))
+  ok('risky project breaches the cost-overrun rule', alerts.some((a) => a.subjectId === 'b' && a.ruleId === 'r-cpi'))
+  ok('risky project breaches major-delay + at-risk + carbon + safety + rfi', ['r-slip', 'r-health', 'r-carbon', 'r-safety', 'r-rfi'].every((id) => alerts.some((a) => a.ruleId === id && a.subjectId === 'b')))
+  ok('alerts carry the actual value + label', alerts[0].value !== undefined && alerts[0].metricLabel.length > 0)
+  ok('alerts sorted worst-first (High before Low)', (() => { const sev = alerts.map((a) => a.severity); const lastHigh = sev.lastIndexOf('High'); const firstLow = sev.indexOf('Low'); return firstLow === -1 || lastHigh < firstLow })())
+
+  const s = summarizeAlerts(alerts)
+  ok('summary counts by severity', s.high >= 3 && s.medium >= 2 && s.low >= 1, JSON.stringify(s))
+  ok('summary total = alerts length', s.total === alerts.length)
+  ok('summary subjects affected = 1 (only risky)', s.subjects === 1, s.subjects)
+
+  ok('disabled rule never fires', evaluate(DEFAULT_RULES.map((r) => ({ ...r, enabled: false })), [risky]).length === 0)
+  ok('makeRule defaults sane', (() => { const r = makeRule(); return r.enabled && r.op === '<' && r.metric === 'health' && r.id.length > 0 })())
+  ok('parseRules: bad JSON → []', parseRules('nope').length === 0)
+  ok('parseRules: round-trips valid', parseRules(JSON.stringify(DEFAULT_RULES)).length === DEFAULT_RULES.length)
+  ok('parseRules: drops malformed', parseRules(JSON.stringify([DEFAULT_RULES[0], { id: 'x' }])).length === 1)
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)

@@ -24,6 +24,7 @@ import {
   Building2,
   Flame,
   Building,
+  Bell,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -63,6 +64,7 @@ export const NAV: NavItem[] = [
   { path: '/sell', label: 'Seller Studio', blurb: 'Upload, auto-tag, price & publish data', icon: UploadCloud, accent: 'lime', group: 'Studio' },
   { path: '/library', label: 'My Library', blurb: 'Cart, licenses & downloads', icon: Library, accent: 'cyan', group: 'Studio' },
   { path: '/ask', label: 'Ask AEC', blurb: 'Natural-language analytics over everything', icon: Sparkles, accent: 'violet', group: 'Studio', tag: 'AI' },
+  { path: '/alerts', label: 'Alerts', blurb: 'Set thresholds; get notified when projects cross the line', icon: Bell, accent: 'rose', group: 'Studio', tag: 'NEW' },
 
   // Intelligence engines (supporting analytics)
   { path: '/insights', label: 'Executive Insights', blurb: 'Portfolio KPIs, risk & decisions', icon: Gauge, accent: 'cyan', group: 'Intelligence' },
