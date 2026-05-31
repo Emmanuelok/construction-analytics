@@ -24,6 +24,7 @@ import { AreaTrend, RadarViz } from '@/components/charts'
 import { INGESTION_SERIES, DOMAIN_AREAS } from '@/data/platform'
 import { ACCENT } from '@/lib/nav'
 import { cn } from '@/lib/cn'
+import { ImportWorkbench } from '@/components/ImportWorkbench'
 
 const CONNECTORS = [
   { name: 'Autodesk Revit / ACC', kind: 'BIM', status: 'live', icon: Boxes },
@@ -93,6 +94,9 @@ export default function Lakehouse() {
         <StatTile label="Avg quality score" value="93.6%" delta="1.4%" deltaPositive icon={Gauge} accent="emerald" />
         <StatTile label="Ingested / day" value="62 TB" delta="3.0%" deltaPositive icon={Workflow} accent="blue" />
       </div>
+
+      {/* Operable ingestion: map any table → canonical schema → validate → send on */}
+      <ImportWorkbench />
 
       {/* Ingestion trend */}
       <Card>

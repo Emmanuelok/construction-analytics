@@ -16,6 +16,7 @@ import { answerQuestion } from './query.ts'
 import { makeScenario, upsert, removeById, renameScenario, forModule, diff, parseScenarios, type Scenario } from './scenarios.ts'
 import { buildReportHtml, tableToCsv, kpiToItem, esc, type ReportSpec } from './report.ts'
 import { deriveProjectModel, projectNarrative, type ProjectVitals } from './project-model.ts'
+import { SCHEMAS, autoMap, coerceField, validateImport, recordsToCsv } from './ingest.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -318,6 +319,63 @@ section('project-model')
   ok('improving safety/quality/risk/carbon raises health', deriveProjectModel({ ...meridian, carbon: 400, safety: 96, quality: 94, risk: 25 }).health > m.health)
   ok('narrative names the project + health', /Meridian Tower/.test(projectNarrative(m)) && new RegExp(`${m.health}/100`).test(projectNarrative(m)))
   ok('zero gfa → costPerM2 0 (guard)', deriveProjectModel({ ...meridian, gfa: 0 }).costPerM2 === 0)
+}
+
+// ── ingest (ETL mapping + validation) ────────────────────────────────────────
+section('ingest')
+{
+  const projectSchema = SCHEMAS.find((s) => s.id === 'project-master')!
+  // auto-map fuzzy headers
+  const map = autoMap(['Project Name', 'Sector', 'Contract Value', 'GFA (m2)', '% Complete', 'Phase'], projectSchema)
+  ok('autoMap matches name', map.name === 'Project Name')
+  ok('autoMap matches value', map.value === 'Contract Value', map.value)
+  ok('autoMap matches gfa', map.gfa === 'GFA (m2)', map.gfa)
+  ok('autoMap matches enum phase', map.phase === 'Phase')
+  ok('autoMap leaves unmatched null', autoMap(['foo', 'bar'], projectSchema).name === null)
+
+  // coercion
+  ok('coerce number strips $ ,', coerceField({ key: 'v', label: 'V', type: 'number' }, '$1,250,000').value === 1250000)
+  ok('coerce number rejects text', coerceField({ key: 'v', label: 'V', type: 'number' }, 'abc').ok === false)
+  ok('coerce date normalizes', coerceField({ key: 'd', label: 'D', type: 'date' }, '2026-09-30').value === '2026-09-30')
+  ok('coerce date rejects junk', coerceField({ key: 'd', label: 'D', type: 'date' }, 'soon').ok === false)
+  ok('coerce enum canonicalizes case', coerceField({ key: 'p', label: 'P', type: 'enum', enumValues: ['Design', 'Construction'] }, 'construction').value === 'Construction')
+  ok('coerce enum rejects unknown', coerceField({ key: 'p', label: 'P', type: 'enum', enumValues: ['Design'] }, 'Demolition').ok === false)
+  ok('required empty → not ok', coerceField({ key: 'n', label: 'N', type: 'string', required: true }, '  ').ok === false)
+  ok('optional empty → ok', coerceField({ key: 'n', label: 'N', type: 'string' }, '').ok === true)
+
+  // full validate: clean rows
+  const cols = ['name', 'value', 'gfa', 'progress', 'phase']
+  const mapping = { name: 'name', sector: null, location: null, value: 'value', gfa: 'gfa', progress: 'progress', phase: 'phase' }
+  const clean = [
+    { name: 'Tower A', value: '800000000', gfa: '142000', progress: '64', phase: 'Construction' },
+    { name: 'Hub B', value: '980000000', gfa: '54000', progress: '71', phase: 'Construction' },
+  ]
+  void cols
+  const r1 = validateImport(clean, projectSchema, mapping)
+  ok('clean import: all rows valid', r1.report.validRows === 2 && r1.report.invalidRows === 0, JSON.stringify({ v: r1.report.validRows, i: r1.report.invalidRows }))
+  ok('clean import: high quality', r1.report.qualityScore >= 80, r1.report.qualityScore)
+  ok('records standardized to schema keys', typeof r1.records[0].value === 'number' && r1.records[0].name === 'Tower A')
+  ok('name fillRate 100', r1.report.fields.find((f) => f.key === 'name')!.fillRate === 100)
+
+  // dirty rows: bad number + bad enum + missing required
+  const dirty = [
+    { name: 'OK', value: '500', gfa: '1000', progress: '50', phase: 'Construction' },
+    { name: '', value: 'NaNish', gfa: '1000', progress: '50', phase: 'Demolition' }, // missing name, bad value, bad enum
+  ]
+  const r2 = validateImport(dirty, projectSchema, mapping)
+  ok('dirty import flags invalid row', r2.report.invalidRows === 1 && r2.report.validRows === 1, JSON.stringify({ v: r2.report.validRows, i: r2.report.invalidRows }))
+  ok('sample errors captured', r2.report.sampleErrors.length >= 2)
+  ok('value field error counted', r2.report.fields.find((f) => f.key === 'value')!.errors >= 1)
+
+  // unmapped required → flagged + quality tanks
+  const r3 = validateImport(clean, projectSchema, { ...mapping, name: null })
+  ok('unmapped required flagged', r3.report.unmappedRequired.includes('Project name'))
+  ok('unmapped required → 0 valid rows', r3.report.validRows === 0)
+  ok('unmapped required → low quality', r3.report.qualityScore < 50, r3.report.qualityScore)
+
+  // canonical CSV out
+  const csv = recordsToCsv(r1.records, projectSchema)
+  ok('recordsToCsv has header + rows', csv.split('\r\n').length === 3 && csv.startsWith('Project name,'))
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)
