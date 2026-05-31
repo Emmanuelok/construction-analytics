@@ -26,6 +26,9 @@ import {
   type RiskTier,
 } from '@/lib/supplier-score'
 import { cn } from '@/lib/cn'
+import { useScenarios } from '@/store/scenarios'
+import { ScenarioBar } from '@/components/ScenarioBar'
+import type { KPI } from '@/lib/scenarios'
 
 const ACCENT_L = 'lime' as const
 
@@ -102,6 +105,13 @@ export default function Procurement() {
   const baselineRank = useMemo(() => new Map(baseline.map((s) => [s.id, s.rank])), [baseline])
   const ordered = useMemo(() => [...scored].sort((a, b) => a.rank - b.rank), [scored])
   const stats = useMemo(() => cohortStats(scored), [scored])
+  const { scenarios, save, remove } = useScenarios('procurement')
+  const summary: KPI[] = [
+    { label: 'Avg score', value: stats.avgScore },
+    { label: 'High-risk suppliers', value: stats.highRisk },
+    { label: 'Avg lead time', value: stats.avgLead, unit: 'd' },
+    { label: 'Top score', value: stats.best?.score ?? 0 },
+  ]
   const normW = normalizeWeights(weights)
 
   const activePreset = PRESETS.find((p) => sameWeights(normalizeWeights(p.weights), normW))?.id
@@ -131,6 +141,14 @@ export default function Procurement() {
             </Badge>
           </>
         }
+      />
+
+      <ScenarioBar
+        accent="lime"
+        scenarios={scenarios}
+        onSave={(name) => save(name, { rows, weights }, summary)}
+        onLoad={(s) => { const d = s.data as { rows?: Row[]; weights?: Weights }; if (d.rows) setRows(d.rows); if (d.weights) setWeights(d.weights); setEdited(true) }}
+        onRemove={remove}
       />
 
       {/* cohort KPIs — recompute as you edit data or weights */}

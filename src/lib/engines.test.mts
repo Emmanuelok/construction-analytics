@@ -13,6 +13,7 @@ import { dimensionScores, computeProject, scorePortfolio, type ProjectInput } fr
 import { parseDocument } from './docparse.ts'
 import { computeReadiness, type MLDataset } from './mldata.ts'
 import { answerQuestion } from './query.ts'
+import { makeScenario, upsert, removeById, renameScenario, forModule, diff, parseScenarios, type Scenario } from './scenarios.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -219,6 +220,42 @@ section('query (Ask NL)')
   const a10 = answerQuestion('compare cost per m² across sectors', D)
   ok('cost per m² by sector', a10.matched && /Cost intensity/.test(a10.answer) && a10.chart?.unit === 'money', a10.answer)
   ok('every matched result carries sql + domains', [a1, a2, a3, a4, a5, a6, a7, a8].every((r) => r.sql.length > 0 && r.domains.length > 0))
+}
+
+// ── scenarios (save / reload / compare) ──────────────────────────────────────
+section('scenarios')
+{
+  const s1 = makeScenario('cost-schedule', 'Baseline', { rows: [1, 2] }, [{ label: 'CPI', value: 0.94 }, { label: 'EAC', value: 1000, unit: '$' }])
+  ok('makeScenario sets module/name/data/summary', s1.module === 'cost-schedule' && s1.name === 'Baseline' && s1.summary.length === 2)
+  ok('blank name → fallback', makeScenario('m', '   ', {}, []).name === 'Untitled scenario')
+  ok('ids are unique', makeScenario('m', 'a', {}, []).id !== makeScenario('m', 'b', {}, []).id)
+
+  let list: Scenario[] = []
+  list = upsert(list, s1)
+  ok('upsert adds', list.length === 1)
+  const s1b = { ...s1, name: 'Baseline v2' }
+  list = upsert(list, s1b)
+  ok('upsert replaces by id (no dup)', list.length === 1 && list[0].name === 'Baseline v2')
+  const s2 = makeScenario('cost-schedule', 'Recovery', {}, [{ label: 'CPI', value: 1.02 }, { label: 'EAC', value: 920, unit: '$' }])
+  const s3 = makeScenario('carbon', 'Low-carbon', {}, [{ label: 'Intensity', value: 459 }])
+  list = upsert(upsert(list, s2), s3)
+  ok('forModule filters by module', forModule(list, 'cost-schedule').length === 2 && forModule(list, 'carbon').length === 1)
+  ok('rename updates name only', renameScenario(list, s2.id, 'Recovery plan').find((x) => x.id === s2.id)!.name === 'Recovery plan')
+  ok('removeById drops one', removeById(list, s3.id).length === list.length - 1)
+
+  const d = diff(s1b, s2)
+  ok('diff matches KPIs by label', d.length === 2)
+  const cpi = d.find((x) => x.label === 'CPI')!
+  ok('diff delta = b − a', cpi.delta === 0.08, cpi.delta)
+  ok('diff pctDelta computed', Math.abs(cpi.pctDelta - 8.5) < 0.2, cpi.pctDelta)
+  const eac = d.find((x) => x.label === 'EAC')!
+  ok('diff carries unit + negative delta', eac.unit === '$' && eac.delta === -80, eac.delta)
+
+  ok('parseScenarios: bad JSON → []', parseScenarios('{not json').length === 0)
+  ok('parseScenarios: non-array → []', parseScenarios('{"a":1}').length === 0)
+  ok('parseScenarios: round-trips valid', parseScenarios(JSON.stringify([s1, s2])).length === 2)
+  ok('parseScenarios: drops malformed entries', parseScenarios(JSON.stringify([s1, { nope: true }])).length === 1)
+  ok('parseScenarios: null → []', parseScenarios(null).length === 0)
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)

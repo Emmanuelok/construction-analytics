@@ -18,6 +18,9 @@ import { PROJECTS } from '@/data/platform'
 import { computeEvm, portfolioEvm, evmNarrative, formatMoney, type Evm } from '@/lib/evm'
 import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
+import { useScenarios } from '@/store/scenarios'
+import { ScenarioBar } from '@/components/ScenarioBar'
+import type { KPI } from '@/lib/scenarios'
 
 /* An editable row in the controls workbench — the fields that drive EVM. */
 type Row = { id: string; name: string; bac: number; progress: number; costVar: number; slip: number }
@@ -34,6 +37,7 @@ const HEALTH: Record<Evm['health'], { label: string; variant: 'success' | 'warn'
 export default function CostSchedule() {
   const [rows, setRows] = useState<Row[]>(seed)
   const [edited, setEdited] = useState(false)
+  const { scenarios, save, remove } = useScenarios('cost-schedule')
 
   const set = (id: string, patch: Partial<Row>) => {
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)))
@@ -58,6 +62,14 @@ export default function CostSchedule() {
 
   const atRisk = evms.filter((e) => e.evm.health === 'at-risk')
   const worst = [...evms].sort((a, b) => a.evm.vac - b.evm.vac)[0]
+
+  const summary: KPI[] = [
+    { label: 'Portfolio CPI', value: portfolio.cpi },
+    { label: 'Portfolio SPI', value: portfolio.spi },
+    { label: 'Forecast EAC', value: portfolio.eac, unit: '$' },
+    { label: 'VAC', value: portfolio.vac, unit: '$' },
+    { label: 'At-risk projects', value: atRisk.length },
+  ]
 
   const cpiSpiData = evms.map((e) => ({ x: e.evm.spi, y: e.evm.cpi, name: e.row.name }))
   const eacData = [...evms]
@@ -85,6 +97,14 @@ export default function CostSchedule() {
             </Badge>
           </>
         }
+      />
+
+      <ScenarioBar
+        accent="rose"
+        scenarios={scenarios}
+        onSave={(name) => save(name, { rows }, summary)}
+        onLoad={(s) => { const d = s.data as { rows?: Row[] }; if (d.rows) { setRows(d.rows); setEdited(true) } }}
+        onRemove={remove}
       />
 
       {/* portfolio EVM KPIs — recompute as you edit */}

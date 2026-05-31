@@ -30,6 +30,9 @@ import {
 } from '@/lib/portfolio'
 import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
+import { useScenarios } from '@/store/scenarios'
+import { ScenarioBar } from '@/components/ScenarioBar'
+import type { KPI } from '@/lib/scenarios'
 
 const ACCENT_NAME = 'cyan' as const
 
@@ -77,6 +80,13 @@ export default function Insights() {
   const reset = () => { setRows(seed()); setWeights(DEFAULT_WEIGHTS); setEdited(false) }
 
   const pf = useMemo(() => scorePortfolio(rows, weights), [rows, weights])
+  const { scenarios, save, remove } = useScenarios('insights')
+  const summary: KPI[] = [
+    { label: 'Portfolio health', value: pf.health },
+    { label: 'Value at risk', value: pf.exposure, unit: '$' },
+    { label: 'At-risk projects', value: pf.atRisk },
+    { label: 'Wtd cost variance', value: pf.wtdCostVariance, unit: '%' },
+  ]
   const normW = normalizeWeights(weights)
   const activePreset = PRESETS.find((p) => sameW(normalizeWeights(p.weights), normW))?.id
 
@@ -114,6 +124,14 @@ export default function Insights() {
             </Badge>
           </>
         }
+      />
+
+      <ScenarioBar
+        accent="cyan"
+        scenarios={scenarios}
+        onSave={(name) => save(name, { rows, weights }, summary)}
+        onLoad={(s) => { const d = s.data as { rows?: typeof rows; weights?: typeof weights }; if (d.rows) setRows(d.rows); if (d.weights) setWeights(d.weights); setEdited(true) }}
+        onRemove={remove}
       />
 
       {/* KPIs — recompute as you weight & edit */}

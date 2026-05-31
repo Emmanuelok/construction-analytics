@@ -33,6 +33,9 @@ import {
 } from '@/lib/governance'
 import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
+import { useScenarios } from '@/store/scenarios'
+import { ScenarioBar } from '@/components/ScenarioBar'
+import type { KPI } from '@/lib/scenarios'
 
 const ACCENT_NAME = 'teal' as const
 
@@ -93,6 +96,13 @@ export default function Governance() {
   const thresholds = { minQuality, maxExposure }
   const results = useMemo(() => scoreDatasets(rows, weights, thresholds), [rows, weights, minQuality, maxExposure])
   const summary = useMemo(() => summarize(results), [results])
+  const { scenarios, save, remove } = useScenarios('governance')
+  const kpis: KPI[] = [
+    { label: 'Avg quality', value: summary.avgQuality },
+    { label: 'Avg exposure', value: summary.avgExposure },
+    { label: 'Publishable', value: summary.publishable },
+    { label: 'High re-ID risk', value: summary.highRisk },
+  ]
   const normW = normalizeWeights(weights)
 
   const radarData = useMemo(() => {
@@ -130,6 +140,21 @@ export default function Governance() {
             </Badge>
           </>
         }
+      />
+
+      <ScenarioBar
+        accent="teal"
+        scenarios={scenarios}
+        onSave={(name) => save(name, { rows, weights, minQuality, maxExposure }, kpis)}
+        onLoad={(s) => {
+          const d = s.data as { rows?: typeof rows; weights?: typeof weights; minQuality?: number; maxExposure?: number }
+          if (d.rows) setRows(d.rows)
+          if (d.weights) setWeights(d.weights)
+          if (typeof d.minQuality === 'number') setMinQuality(d.minQuality)
+          if (typeof d.maxExposure === 'number') setMaxExposure(d.maxExposure)
+          setEdited(true)
+        }}
+        onRemove={remove}
       />
 
       {/* KPIs — recompute as you edit */}
