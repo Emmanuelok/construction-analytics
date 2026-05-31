@@ -1,6 +1,7 @@
 import { lazy } from 'react'
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
+import Landing from '@/pages/Landing'
 import ForYou from '@/pages/ForYou'
 import Overview from '@/pages/Overview'
 import NotFound from '@/pages/NotFound'
@@ -41,6 +42,7 @@ const basename = rawBase.length > 1 ? rawBase.replace(/\/+$/, '') : '/'
 
 export const router = createBrowserRouter(
   [
+    { path: '/welcome', element: <Landing /> },
     {
       path: '/',
       element: <AppShell />,

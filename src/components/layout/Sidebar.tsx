@@ -22,7 +22,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         )}
       >
         <div className="flex h-16 shrink-0 items-center justify-between border-b border-edge/60 px-5">
-          <NavLink to="/" onClick={onClose}>
+          <NavLink to="/welcome" onClick={onClose} aria-label="AEC Studio — landing page">
             <Wordmark />
           </NavLink>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-elevated hover:text-white lg:hidden">
