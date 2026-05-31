@@ -35,6 +35,7 @@ const DigitalTwin = lazy(() => import('@/pages/DigitalTwin'))
 const ProjectWorkspace = lazy(() => import('@/pages/ProjectWorkspace'))
 const Alerts = lazy(() => import('@/pages/Alerts'))
 const ShareRedirect = lazy(() => import('@/pages/ShareRedirect'))
+const Developer = lazy(() => import('@/pages/Developer'))
 const PainPoints = lazy(() => import('@/pages/PainPoints'))
 
 // Match the router base to however the app is hosted (root on Vercel/Netlify,
@@ -73,6 +74,7 @@ export const router = createBrowserRouter(
         { path: 'lakehouse', element: <Lakehouse /> },
         { path: 'ai-studio', element: <AiStudio /> },
         { path: 'governance', element: <Governance /> },
+        { path: 'developer', element: <Developer /> },
         { path: 'bim', element: <Bim /> },
         { path: 'documents', element: <Documents /> },
         { path: 'cost-schedule', element: <CostSchedule /> },

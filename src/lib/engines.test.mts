@@ -20,6 +20,7 @@ import { SCHEMAS, autoMap, coerceField, validateImport, recordsToCsv } from './i
 import { compare, evaluate, summarize as summarizeAlerts, metricsForVitals, makeRule, parseRules, DEFAULT_RULES, type Subject } from './alerts.ts'
 import { editLabel, removeLabel, actionLabel, percentValueText, toggleLabel } from './a11y.ts'
 import { parseMentions, makeComment, threadFor, addComment, removeComment, toggleResolved, summarizeThread, encodeShareToken, decodeShareToken, shareUrl, logActivity, parseComments, subjectLabel, type Comment as CollabComment, type Author } from './collab.ts'
+import { toPublic, parseListQuery, listDatasets, findDataset, generateApiKey, isValidKeyFormat, extractApiKey, ok as apiOk, err as apiErr, type CatalogLike, type PublicDataset } from './apikit.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -480,6 +481,74 @@ section('collab')
   ok('parseComments drops malformed', parseComments(JSON.stringify([comments[0], { x: 1 }])).length === 1)
   ok('subjectLabel project', subjectLabel('project:PRJ-1042') === 'Project PRJ-1042')
   ok('subjectLabel slug', subjectLabel('cost-schedule') === 'Cost Schedule')
+}
+
+// ── apikit (public dataset API) ──────────────────────────────────────────────
+section('apikit')
+{
+  const mk = (over: Partial<CatalogLike>): CatalogLike => ({
+    id: 'd', name: 'D', provider: 'Acme', category: 'Cost', modality: 'Tabular', license: 'Commercial',
+    price: 100, quality: 90, rating: 4.5, downloads: 100, records: 1000, sizeGB: 1, anonymized: true,
+    updated: '2026-01-01', tags: ['cost'], description: 'desc', files: [{ name: 'a.csv', format: 'CSV', rows: 10, free: true }, { name: 'b.csv', format: 'CSV', free: false }],
+    ...over,
+  })
+
+  // toPublic drops sensitive fields, keeps sample file metadata
+  const pub = toPublic(mk({ id: 'x' }))
+  ok('toPublic shapes public DTO', pub.id === 'x' && pub.sampleFiles.length === 2 && pub.sampleFiles[0].name === 'a.csv')
+  ok('toPublic omits file bytes/paths', !('content' in (pub.sampleFiles[0] as object)) && !('storagePath' in (pub.sampleFiles[0] as object)) && !('generate' in (pub.sampleFiles[0] as object)))
+
+  const all: PublicDataset[] = [
+    toPublic(mk({ id: 'a', name: 'Alpha Cost', category: 'Cost', modality: 'Tabular', license: 'Commercial', rating: 4.9, downloads: 500, records: 9000, price: 4800, tags: ['benchmark'], description: 'cost data' })),
+    toPublic(mk({ id: 'b', name: 'Bravo Imagery', category: 'Reality Capture', modality: 'Imagery', license: 'Research', rating: 4.2, downloads: 1200, records: 500000, price: 0, tags: ['drone'], description: 'site photos' })),
+    toPublic(mk({ id: 'c', name: 'Charlie BIM', category: 'BIM', modality: 'BIM Model', license: 'Commercial', rating: 4.7, downloads: 300, records: 2100000, price: null, tags: ['ifc'], description: 'models' })),
+  ]
+
+  // parseListQuery
+  const q1 = parseListQuery({ sort: 'downloads', order: 'asc', page: '2', pageSize: '1' })
+  ok('parseListQuery normalizes', q1.sort === 'downloads' && q1.order === 'asc' && q1.page === 2 && q1.pageSize === 1)
+  ok('parseListQuery defaults', (() => { const q = parseListQuery({}); return q.sort === 'rating' && q.order === 'desc' && q.page === 1 && q.pageSize === 20 })())
+  ok('parseListQuery rejects bad sort', parseListQuery({ sort: 'haxx' }).sort === 'rating')
+  ok('parseListQuery clamps pageSize ≤100', parseListQuery({ pageSize: '9999' }).pageSize === 100)
+  ok('parseListQuery floors page ≥1', parseListQuery({ page: '-5' }).page === 1)
+  ok('parseListQuery reads URLSearchParams', parseListQuery(new URLSearchParams('search=Cost&license=Research')).search === 'cost' && parseListQuery(new URLSearchParams('license=Research')).license === 'research')
+
+  // filtering
+  ok('search matches name/desc/tags/provider', listDatasets(all, parseListQuery({ search: 'drone' })).data[0].id === 'b')
+  ok('filter by category', listDatasets(all, parseListQuery({ category: 'BIM' })).data.length === 1)
+  ok('filter by modality', listDatasets(all, parseListQuery({ modality: 'Imagery' })).data[0].id === 'b')
+  ok('filter by license', listDatasets(all, parseListQuery({ license: 'Commercial' })).meta.total === 2)
+
+  // sorting
+  ok('sort downloads desc', listDatasets(all, parseListQuery({ sort: 'downloads', order: 'desc' })).data[0].id === 'b')
+  ok('sort rating asc', listDatasets(all, parseListQuery({ sort: 'rating', order: 'asc' })).data[0].id === 'b')
+  ok('sort name asc', listDatasets(all, parseListQuery({ sort: 'name', order: 'asc' })).data[0].id === 'a')
+  ok('null price sorts low', listDatasets(all, parseListQuery({ sort: 'price', order: 'asc' })).data[0].id === 'c')
+
+  // pagination
+  const p = listDatasets(all, parseListQuery({ pageSize: '2', page: '2' }))
+  ok('pagination slices', p.data.length === 1 && p.meta.pages === 2 && p.meta.page === 2)
+  ok('page clamps to last', listDatasets(all, parseListQuery({ pageSize: '2', page: '9' })).meta.page === 2)
+  ok('meta.total = filtered count', listDatasets(all, parseListQuery({ license: 'Research' })).meta.total === 1)
+
+  // findDataset
+  ok('findDataset hit', findDataset(all, 'c')?.name === 'Charlie BIM')
+  ok('findDataset miss', findDataset(all, 'zzz') === undefined)
+
+  // api keys
+  const key = generateApiKey(() => 0.5)
+  ok('generateApiKey format', /^aec_[0-9a-f]{32}$/.test(key))
+  ok('isValidKeyFormat accepts', isValidKeyFormat(key))
+  ok('isValidKeyFormat rejects junk', !isValidKeyFormat('nope') && !isValidKeyFormat('aec_xyz') && !isValidKeyFormat(null))
+  ok('extractApiKey from bearer', extractApiKey({ authorization: 'Bearer aec_abc' }) === 'aec_abc')
+  ok('extractApiKey from x-api-key', extractApiKey({ 'x-api-key': 'aec_def' }) === 'aec_def')
+  ok('extractApiKey via Headers-like', extractApiKey(new Headers({ authorization: 'Bearer aec_ghi' })) === 'aec_ghi')
+  ok('extractApiKey none → null', extractApiKey({}) === null)
+
+  // envelopes
+  ok('ok wraps array as data', (apiOk(all.slice(0, 1)).body as { ok: boolean; data: unknown[] }).data.length === 1)
+  ok('ok merges object + extra', (apiOk({ meta: 1 }, { request_id: 'r' }).body as { request_id: string }).request_id === 'r')
+  ok('err shape', (() => { const e = apiErr(404, 'nope', 'not_found'); return e.status === 404 && (e.body as { ok: boolean; code: string }).ok === false && (e.body as { code: string }).code === 'not_found' })())
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)
