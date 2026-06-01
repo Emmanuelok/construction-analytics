@@ -39,7 +39,7 @@ import { CollabBar } from '@/components/CollabBar'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 import { parseIfc, type ParsedIfc } from '@/lib/ifc'
-import { buildIfcScene, DISCIPLINE_COLOR, DISCIPLINE_LABEL, type Discipline } from '@/lib/ifc-model'
+import { buildIfcScene, DISCIPLINE_COLOR, DISCIPLINE_LABEL, describeSelection, type Discipline, type SelectedElement } from '@/lib/ifc-model'
 import type { IfcMesh } from '@/lib/ifc-geometry'
 import { locateWasm } from '@/lib/ifc-wasm-url'
 const IfcModelViewer = lazy(() => import('@/components/IfcModelViewer').then((m) => ({ default: m.IfcModelViewer })))
@@ -419,9 +419,10 @@ function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: strin
   // actual triangulated solids; otherwise we keep the count-based reconstruction.
   const [meshes, setMeshes] = useState<IfcMesh[] | null>(null)
   const [geoState, setGeoState] = useState<'loading' | 'real' | 'recon'>('loading')
+  const [selected, setSelected] = useState<SelectedElement | null>(null)
   useEffect(() => {
     let cancelled = false
-    setMeshes(null); setGeoState('loading'); setHidden({})
+    setMeshes(null); setGeoState('loading'); setHidden({}); setSelected(null)
     if (!source) { setGeoState('recon'); return }
     import('@/lib/ifc-geometry')
       .then(({ extractGeometry }) => extractGeometry(new TextEncoder().encode(source), { locateFile: locateWasm }))
@@ -491,13 +492,33 @@ function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: strin
                 ))}
               </div>
             </div>
-            <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-              <IfcModelViewer input={sceneInput} meshes={real ? meshes! : undefined} hidden={hidden} height={460} />
-            </Suspense>
+            <div className="relative">
+              <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
+                <IfcModelViewer input={sceneInput} meshes={real ? meshes! : undefined} hidden={hidden} selectedKey={selected?.key ?? null} onSelect={setSelected} height={460} />
+              </Suspense>
+              {selected && (
+                <div className="absolute left-3 top-3 w-60 rounded-lg border border-edge/70 bg-base/90 p-3 text-xs shadow-xl backdrop-blur" role="status" aria-label={describeSelection(selected)}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="data-mono font-semibold text-slate-100">{selected.ifcType}</span>
+                    <button onClick={() => setSelected(null)} aria-label="Clear selection" className="text-slate-500 hover:text-slate-200"><X className="h-3.5 w-3.5" /></button>
+                  </div>
+                  <dl className="mt-2 space-y-1 text-slate-400">
+                    <div className="flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-sm" style={{ background: DISCIPLINE_COLOR[selected.discipline] }} />
+                      {DISCIPLINE_LABEL[selected.discipline]}
+                    </div>
+                    {selected.expressID != null && <div className="flex justify-between"><dt>Express ID</dt><dd className="data-mono text-slate-300">#{selected.expressID}</dd></div>}
+                    {selected.storey != null && <div className="flex justify-between"><dt>Storey</dt><dd className="data-mono text-slate-300">{selected.storey}</dd></div>}
+                    {selected.size && <div className="flex justify-between gap-2"><dt>Size</dt><dd className="data-mono text-slate-300">{selected.size.x.toFixed(1)} × {selected.size.y.toFixed(1)} × {selected.size.z.toFixed(1)} m</dd></div>}
+                    {selected.triangles != null && <div className="flex justify-between"><dt>Triangles</dt><dd className="data-mono text-slate-300">{formatNumber(selected.triangles)}</dd></div>}
+                  </dl>
+                </div>
+              )}
+            </div>
             <p className="border-t border-edge/60 px-4 py-2 text-[11px] text-slate-500">
               {real
-                ? <>Real triangulated geometry tessellated from the IFC file by the web-ifc WASM kernel, coloured by discipline. Drag to orbit, scroll to zoom, toggle disciplines above.</>
-                : <>This file carries no mesh geometry, so the model is reconstructed from its real element counts and storeys (columns on a grid, walls at the perimeter, slabs per floor, beams + MEP risers). Drag to orbit, scroll to zoom, toggle disciplines above.</>}
+                ? <>Real triangulated geometry tessellated from the IFC file by the web-ifc WASM kernel, coloured by discipline. Drag to orbit, scroll to zoom, click an element to inspect it, toggle disciplines above.</>
+                : <>This file carries no mesh geometry, so the model is reconstructed from its real element counts and storeys (columns on a grid, walls at the perimeter, slabs per floor, beams + MEP risers). Drag to orbit, scroll to zoom, click an element to inspect it, toggle disciplines above.</>}
             </p>
           </div>
         )}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Boxes } from 'lucide-react'
-import { buildIfcScene, DISCIPLINE_COLOR, type IfcSceneInput, type Discipline } from '@/lib/ifc-model'
+import { buildIfcScene, DISCIPLINE_COLOR, type IfcSceneInput, type Discipline, type SelectedElement } from '@/lib/ifc-model'
 import type { IfcMesh } from '@/lib/ifc-geometry'
 
 function webglAvailable(): boolean {
@@ -17,26 +17,36 @@ function webglAvailable(): boolean {
  *  • real geometry — when `meshes` (from web-ifc tessellation) is supplied, draws
  *    the actual triangulated solids, placed by their IFC matrices.
  *  • reconstruction — otherwise builds recognizable boxes from buildIfcScene.
- * Both colour by discipline and honour the `hidden` toggle; falls back to a text
+ * Both colour by discipline, honour the `hidden` toggle, and support click-to-
+ * inspect: a click raycasts to the element under the cursor, reports it via
+ * onSelect, and the matching `selectedKey` is outlined. Falls back to a text
  * summary where WebGL is unavailable. */
 export function IfcModelViewer({
   input,
   meshes,
   hidden = {},
+  selectedKey = null,
+  onSelect,
   height = 460,
 }: {
   input: IfcSceneInput
   meshes?: IfcMesh[]
   hidden?: Partial<Record<Discipline, boolean>>
+  selectedKey?: string | null
+  onSelect?: (el: SelectedElement | null) => void
   height?: number
 }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
-  const propsRef = useRef({ input, meshes, hidden })
-  propsRef.current = { input, meshes, hidden }
+  const propsRef = useRef({ input, meshes, hidden, selectedKey, onSelect })
+  propsRef.current = { input, meshes, hidden, selectedKey, onSelect }
 
   const rebuildRef = useRef<(() => void) | null>(null)
   useEffect(() => { rebuildRef.current?.() }, [input.entityCounts, input.storeys, meshes, hidden.struct, hidden.arch, hidden.mep, hidden.other])
+
+  // Highlight is cheap and independent of geometry, so it gets its own effect.
+  const highlightRef = useRef<((key: string | null) => void) | null>(null)
+  useEffect(() => { highlightRef.current?.(selectedKey ?? null) }, [selectedKey])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -87,6 +97,7 @@ export function IfcModelViewer({
     // Per-build disposables (real-geometry BufferGeometries) + the live object list.
     let geometries: THREE.BufferGeometry[] = []
     const objects: THREE.Mesh[] = []
+    let boxHelper: THREE.BoxHelper | null = null
 
     const orbit = { azimuth: Math.PI * 0.28, polar: Math.PI * 0.34, radius: 60, target: new THREE.Vector3(0, 0, 0) }
     const applyCamera = () => {
@@ -99,7 +110,19 @@ export function IfcModelViewer({
       camera.lookAt(target)
     }
 
+    const clearHighlight = () => {
+      if (boxHelper) { scene.remove(boxHelper); boxHelper.geometry.dispose(); (boxHelper.material as THREE.Material).dispose(); boxHelper = null }
+    }
+    const applyHighlight = (k: string | null) => {
+      clearHighlight()
+      if (!k) return
+      const obj = objects.find((o) => (o.userData as { key?: string }).key === k)
+      if (obj) { boxHelper = new THREE.BoxHelper(obj, new THREE.Color('#e2e8f0')); scene.add(boxHelper) }
+    }
+    highlightRef.current = applyHighlight
+
     const clear = () => {
+      clearHighlight()
       for (const o of objects) group.remove(o)
       objects.length = 0
       for (const g of geometries) g.dispose()
@@ -108,8 +131,6 @@ export function IfcModelViewer({
     }
 
     const frameToGroup = () => {
-      // Recentre on the model's footprint, rest its base on the ground, and pull
-      // the camera back to fit the whole bounding box.
       const box = new THREE.Box3().setFromObject(group)
       if (!box.isEmpty()) {
         const size = new THREE.Vector3(); box.getSize(size)
@@ -124,8 +145,8 @@ export function IfcModelViewer({
     }
 
     const buildReal = (list: IfcMesh[], hid: Partial<Record<Discipline, boolean>>) => {
-      for (const m of list) {
-        if (hid[m.discipline]) continue
+      list.forEach((m, i) => {
+        if (hid[m.discipline]) return
         const geom = new THREE.BufferGeometry()
         geom.setAttribute('position', new THREE.BufferAttribute(m.positions, 3))
         if (m.normals.length === m.positions.length) geom.setAttribute('normal', new THREE.BufferAttribute(m.normals, 3))
@@ -134,8 +155,9 @@ export function IfcModelViewer({
         const mesh = new THREE.Mesh(geom, matFor(m.discipline))
         mesh.applyMatrix4(new THREE.Matrix4().fromArray(m.matrix))
         mesh.castShadow = true; mesh.receiveShadow = true
+        mesh.userData = { key: `g${i}`, source: 'geometry', expressID: m.expressID, ifcType: m.ifcTypeName, discipline: m.discipline }
         group.add(mesh); objects.push(mesh); geometries.push(geom)
-      }
+      })
     }
 
     const buildRecon = (inp: IfcSceneInput, hid: Partial<Record<Discipline, boolean>>) => {
@@ -148,35 +170,60 @@ export function IfcModelViewer({
         mesh.position.set(e.x, e.y - yOffset, e.z)
         mesh.castShadow = true
         if (e.kind === 'slab') mesh.receiveShadow = true
+        mesh.userData = { key: e.id, source: 'reconstruction', ifcType: e.ifcType, discipline: e.discipline, storey: e.storey }
         group.add(mesh); objects.push(mesh)
       }
     }
 
     const build = () => {
       clear()
-      const { input: inp, meshes: ms, hidden: hid } = propsRef.current
+      const { input: inp, meshes: ms, hidden: hid, selectedKey: sk } = propsRef.current
       if (ms && ms.length) buildReal(ms, hid)
       else buildRecon(inp, hid)
       frameToGroup()
+      applyHighlight(sk ?? null)
       ;(mount as HTMLElement & { __meshCount?: number }).__meshCount = objects.length
     }
     rebuildRef.current = build
 
-    let dragging = false, lastX = 0, lastY = 0
-    const onDown = (e: PointerEvent) => { dragging = true; lastX = e.clientX; lastY = e.clientY; renderer.domElement.style.cursor = 'grabbing' }
+    let dragging = false, lastX = 0, lastY = 0, moved = false
+    const onDown = (e: PointerEvent) => { dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY; renderer.domElement.style.cursor = 'grabbing' }
     const onMove = (e: PointerEvent) => {
       if (!dragging) return
-      orbit.azimuth -= (e.clientX - lastX) * 0.01
-      orbit.polar = Math.max(0.1, Math.min(Math.PI / 2 - 0.04, orbit.polar - (e.clientY - lastY) * 0.01))
+      const dx = e.clientX - lastX, dy = e.clientY - lastY
+      if (Math.abs(dx) + Math.abs(dy) > 3) moved = true
+      orbit.azimuth -= dx * 0.01
+      orbit.polar = Math.max(0.1, Math.min(Math.PI / 2 - 0.04, orbit.polar - dy * 0.01))
       lastX = e.clientX; lastY = e.clientY; applyCamera()
     }
     const onUp = () => { dragging = false; renderer.domElement.style.cursor = 'grab' }
     const onWheel = (e: WheelEvent) => { e.preventDefault(); orbit.radius = Math.max(6, Math.min(800, orbit.radius + e.deltaY * 0.08)); applyCamera() }
+
+    // click → raycast → report the element under the cursor (skip if it was a drag)
+    const raycaster = new THREE.Raycaster()
+    const ndc = new THREE.Vector2()
+    const onClick = (e: PointerEvent) => {
+      const onSel = propsRef.current.onSelect
+      if (moved || !onSel) return
+      const rect = renderer.domElement.getBoundingClientRect()
+      ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+      ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+      raycaster.setFromCamera(ndc, camera)
+      const hit = raycaster.intersectObjects(objects)[0]
+      if (!hit) { onSel(null); return }
+      const o = hit.object as THREE.Mesh
+      const ud = o.userData as { key: string; source: 'geometry' | 'reconstruction'; expressID?: number; ifcType: string; discipline: Discipline; storey?: number }
+      const sizeV = new THREE.Vector3(); new THREE.Box3().setFromObject(o).getSize(sizeV)
+      const tri = ud.source === 'geometry' && o.geometry.index ? o.geometry.index.count / 3 : undefined
+      onSel({ key: ud.key, source: ud.source, ifcType: ud.ifcType, discipline: ud.discipline, expressID: ud.expressID, storey: ud.storey, size: { x: sizeV.x, y: sizeV.y, z: sizeV.z }, triangles: tri })
+    }
+
     const el = renderer.domElement
     el.addEventListener('pointerdown', onDown)
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     el.addEventListener('wheel', onWheel, { passive: false })
+    el.addEventListener('click', onClick)
 
     const onResize = () => { const w = mount.clientWidth || 600; camera.aspect = w / height; camera.updateProjectionMatrix(); renderer.setSize(w, height) }
     const ro = new ResizeObserver(onResize); ro.observe(mount)
@@ -190,7 +237,8 @@ export function IfcModelViewer({
     return () => {
       cancelAnimationFrame(raf); ro.disconnect()
       el.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel)
+      window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); el.removeEventListener('click', onClick)
+      clearHighlight()
       for (const g of geometries) g.dispose()
       unitBox.dispose(); Object.values(mats).forEach((m) => m?.dispose())
       ground.geometry.dispose(); (ground.material as THREE.Material).dispose()

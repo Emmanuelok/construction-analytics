@@ -23,7 +23,7 @@ import { parseMentions, makeComment, threadFor, addComment, removeComment, toggl
 import { toPublic, parseListQuery, listDatasets, findDataset, generateApiKey, isValidKeyFormat, extractApiKey, ok as apiOk, err as apiErr, type CatalogLike, type PublicDataset } from './apikit.ts'
 import { mentionNotifications, shareNotifications, alertNotifications, buildFeed, unreadCount, isUnread, timeAgo, parseReadIds, subjectName, type Notification } from './notifications.ts'
 import { buildMassing, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
-import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR } from './ifc-model.ts'
+import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, type SelectedElement } from './ifc-model.ts'
 import { extractGeometry } from './ifc-geometry.ts'
 import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
@@ -717,6 +717,12 @@ section('ifc-model')
   ok('storeys floored to ≥1', buildIfcScene({ entityCounts: counts, storeys: 0 }).storeys === 1)
 
   ok('discipline colours defined', DISCIPLINE_COLOR.struct.startsWith('#') && DISCIPLINE_COLOR.mep.startsWith('#'))
+
+  // selected-element summary (inspector panel / aria-label)
+  const geoSel: SelectedElement = { key: 'g0', source: 'geometry', ifcType: 'IFCCOLUMN', discipline: 'struct', expressID: 42, size: { x: 0.6, y: 3.2, z: 0.6 }, triangles: 12 }
+  ok('describeSelection summarises real geometry', describeSelection(geoSel) === 'IFCCOLUMN · Structural · #42 · 0.6 × 3.2 × 0.6 m · 12 triangles', describeSelection(geoSel))
+  const reconSel: SelectedElement = { key: 'e3', source: 'reconstruction', ifcType: 'IFCWALL', discipline: 'arch', storey: 2, size: { x: 4, y: 3, z: 0.2 } }
+  ok('describeSelection summarises reconstruction', describeSelection(reconSel) === 'IFCWALL · Architectural · storey 2 · 4.0 × 3.0 × 0.2 m', describeSelection(reconSel))
 }
 
 // ── ifc-geometry (real web-ifc tessellation of the bundled sample) ──────────────
@@ -739,6 +745,8 @@ section('ifc-geometry')
   ok('classifies discipline from real IFC type (36 struct, 6 arch)',
     res.meshes.filter((m) => m.discipline === 'struct').length === 36 && res.meshes.filter((m) => m.discipline === 'arch').length === 6,
     res.meshes.reduce<Record<string, number>>((a, m) => ({ ...a, [m.discipline]: (a[m.discipline] ?? 0) + 1 }), {}))
+  const names = new Set(res.meshes.map((m) => m.ifcTypeName))
+  ok('resolves readable IFC type names for the inspector', names.has('IFCCOLUMN') && names.has('IFCSLAB') && names.has('IFCBEAM') && names.has('IFCWALLSTANDARDCASE'), [...names])
   ok('bbox spans the four storeys vertically (~14m, Y-up)', !!res.bbox && near(res.bbox.max[1] - res.bbox.min[1], 14, 0.5), res.bbox)
   ok('bbox plan width ~16m', !!res.bbox && near(res.bbox.max[0] - res.bbox.min[0], 16, 0.5), res.bbox)
   // Robustness: garbage / empty bytes never throw, just yield an empty result.
