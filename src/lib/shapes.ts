@@ -4,9 +4,9 @@
  * project massing and zoning tools so buildings are actual forms, not just boxes.
  * Plain 2D geometry (scene units) — no Three.js, no DOM. */
 
-import { type Pt, polygonArea } from './zoning'
+import { type Pt, polygonArea, polygonCentroid } from './zoning'
 
-export type ShapeKind = 'rect' | 'l' | 'u' | 'cross' | 'cylinder' | 'octagon'
+export type ShapeKind = 'rect' | 'l' | 'u' | 'cross' | 'cylinder' | 'octagon' | 'custom'
 
 export const SHAPE_KINDS: { id: ShapeKind; label: string }[] = [
   { id: 'rect', label: 'Rectangle' },
@@ -15,6 +15,7 @@ export const SHAPE_KINDS: { id: ShapeKind; label: string }[] = [
   { id: 'cross', label: 'Cross' },
   { id: 'cylinder', label: 'Cylinder' },
   { id: 'octagon', label: 'Octagon' },
+  { id: 'custom', label: 'Custom' },
 ]
 
 /** A unit footprint (~1×1, centred on the origin) for the given kind. `aspect`
@@ -51,7 +52,15 @@ export function unitShape(kind: ShapeKind, aspect = 1): Pt[] {
       for (let i = 0; i < 8; i++) { const t = (Math.PI / 8) + (i / 8) * Math.PI * 2; pts.push({ x: w * 1.08 * Math.cos(t), z: d * 1.08 * Math.sin(t) }) }
       return pts
     }
+    case 'custom': // a recognizable starting pentagon the user can then edit
+      return [{ x: -w, z: -d }, { x: w, z: -d }, { x: w, z: d * 0.35 }, { x: 0, z: d }, { x: -w, z: d * 0.35 }]
   }
+}
+
+/** Translate a polygon so its centroid sits on the origin. */
+export function centerPolygon(poly: Pt[]): Pt[] {
+  const c = polygonCentroid(poly)
+  return poly.map((p) => ({ x: p.x - c.x, z: p.z - c.z }))
 }
 
 /** Scale a polygon (about the origin) so its area equals `area`. */

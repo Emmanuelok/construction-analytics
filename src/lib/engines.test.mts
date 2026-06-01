@@ -23,7 +23,7 @@ import { parseMentions, makeComment, threadFor, addComment, removeComment, toggl
 import { toPublic, parseListQuery, listDatasets, findDataset, generateApiKey, isValidKeyFormat, extractApiKey, ok as apiOk, err as apiErr, type CatalogLike, type PublicDataset } from './apikit.ts'
 import { mentionNotifications, shareNotifications, alertNotifications, buildFeed, unreadCount, isUnread, timeAgo, parseReadIds, subjectName, type Notification } from './notifications.ts'
 import { buildMassing, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
-import { unitShape, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, SHAPE_KINDS } from './shapes.ts'
+import { unitShape, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, SHAPE_KINDS } from './shapes.ts'
 import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, type SelectedElement } from './ifc-model.ts'
 import { extractGeometry } from './ifc-geometry.ts'
 import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
@@ -672,6 +672,12 @@ section('massing')
   ok('tower steps in above the podium (smaller plate)', polygonArea(pt.floors[6].polygon) < polygonArea(pt.floors[5].polygon))
   const tw = buildMassing({ gfa: 90_000, progress: 0, storeys: 10, shape: 'rect', twist: 6 })
   ok('twist rotates upper floors (plate orientation differs, area preserved)', Math.abs(tw.floors[5].polygon[0].x - tw.floors[0].polygon[0].x) > 1e-3 && Math.abs(polygonArea(tw.floors[5].polygon) - polygonArea(tw.floors[0].polygon)) < 1e-6)
+  // user-drawn custom footprint
+  const customPts = [{ x: 0, z: 0 }, { x: 6, z: 0 }, { x: 6, z: 2 }, { x: 3, z: 4 }, { x: 0, z: 2 }] // off-origin 5-gon
+  const cm = buildMassing({ gfa: 80_000, progress: 0, storeys: 8, shape: 'custom', customShape: customPts })
+  ok('custom shape uses the drawn polygon (5 pts, centred, scaled to plate area)', cm.floors[0].polygon.length === 5 && near(buildMassing({ gfa: 80_000, progress: 0, storeys: 8 }).floors[0].polygon.length, 4, 0))
+  ok('custom plate is centred on the origin', (() => { const ct = polygonCentroid(cm.floors[0].polygon); return near(ct.x, 0, 1e-6) && near(ct.z, 0, 1e-6) })())
+  ok('custom shape falls back to preset when fewer than 3 points', buildMassing({ gfa: 80_000, progress: 0, storeys: 8, shape: 'custom', customShape: [{ x: 0, z: 0 }] }).floors[0].polygon.length === 5)
 
   // progress extremes
   ok('0% → nothing built', buildMassing({ gfa: 50_000, progress: 0, storeys: 12 }).builtCount === 0)
@@ -775,6 +781,8 @@ section('shapes')
   ok('rotatePolygon preserves area', near(polygonArea(rotatePolygon(unitShape('cross'), 0.7)), polygonArea(unitShape('cross')), 1e-9))
   ok('aspect stretches width but holds area ~constant', (() => { const a = polygonArea(unitShape('rect', 2)), b = polygonArea(unitShape('rect', 1)); return near(a, b, 0.02) && shapeExtent(unitShape('rect', 2)).width > shapeExtent(unitShape('rect', 1)).width })())
   ok('cross is non-convex (extent wider than a same-area rect arm)', shapeExtent(unitShape('cross')).width > 0)
+  ok('custom preset is an editable 5-point default', unitShape('custom').length === 5)
+  ok('centerPolygon moves the centroid to the origin', (() => { const c = centerPolygon([{ x: 10, z: 10 }, { x: 14, z: 10 }, { x: 14, z: 13 }, { x: 10, z: 13 }]); const ct = polygonCentroid(c); return near(ct.x, 0, 1e-9) && near(ct.z, 0, 1e-9) })())
 }
 
 // ── zoning (site boundary + envelope + compliance) ──────────────────────────────

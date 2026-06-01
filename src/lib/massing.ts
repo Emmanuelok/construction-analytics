@@ -6,7 +6,7 @@
  * metres / a fixed scale; the viewer just draws boxes at these coordinates. */
 
 import { type Pt } from './zoning'
-import { unitShape, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, type ShapeKind } from './shapes'
+import { unitShape, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, type ShapeKind } from './shapes'
 export type { ShapeKind } from './shapes'
 export { SHAPE_KINDS } from './shapes'
 
@@ -35,6 +35,7 @@ export type MassingInput = {
   progress: number // % complete, 0–100
   storeys?: number // explicit storey count; otherwise derived from GFA
   shape?: ShapeKind // footprint form (default rectangle)
+  customShape?: Pt[] // user-drawn footprint, used when shape === 'custom'
   aspect?: number // plan aspect ratio (x ÷ z), 0.3–3
   taper?: number // 0 = none, up to ~0.6 = upper floors shrink (tower taper)
   podium?: number // 0–1 fraction of storeys forming a full-plate podium base
@@ -71,7 +72,11 @@ export function buildMassing(input: MassingInput): Massing {
   // base plate area in scene units, from GFA per storey
   const plateArea = gfa > 0 ? gfa / storeys : 0
   const sceneArea = Math.max(1, plateArea) * PLATE_SCALE * PLATE_SCALE
-  const base = scaleToArea(unitShape(shape, aspect), sceneArea)
+  // a custom (user-drawn) footprint when provided, otherwise a preset shape
+  const raw = shape === 'custom' && input.customShape && input.customShape.length >= 3
+    ? centerPolygon(input.customShape)
+    : unitShape(shape, aspect)
+  const base = scaleToArea(raw, sceneArea)
   const ext = shapeExtent(base)
 
   const builtCount = clamp(Math.round((progress / 100) * storeys), 0, storeys)

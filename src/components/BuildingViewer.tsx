@@ -43,7 +43,7 @@ export function BuildingViewer({
 
   // Rebuild only the floor meshes when the data that changes geometry changes.
   const rebuildRef = useRef<(() => void) | null>(null)
-  useEffect(() => { rebuildRef.current?.() }, [input.gfa, input.progress, input.storeys, input.shape, input.aspect, input.taper, input.podium, input.towerSetback, input.twist, mode, metric, selected])
+  useEffect(() => { rebuildRef.current?.() }, [input.gfa, input.progress, input.storeys, input.shape, input.customShape, input.aspect, input.taper, input.podium, input.towerSetback, input.twist, mode, metric, selected])
 
   useEffect(() => {
     const mount = mountRef.current

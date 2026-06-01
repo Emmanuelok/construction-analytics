@@ -3,6 +3,7 @@ import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, Ro
 import { PageHeader, StatTile, Card, CardHeader, Badge } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
+import { PolygonEditor } from '@/components/PolygonEditor'
 import {
   buildZoning, rectSite, parseGeoBoundary, scalePolygon, polygonArea, polygonCentroid,
   type Pt, type Zoning,
@@ -34,6 +35,10 @@ export default function SiteZoning() {
   const [towerSetback, setTowerSetback] = useState(DEFAULTS.towerSetback)
   const [geoText, setGeoText] = useState('')
   const [geoError, setGeoError] = useState<string | null>(null)
+  // bumping this remounts the boundary editor so it refits its view after a
+  // preset / import / reset; plain drags keep the same key (no jump).
+  const [boundaryKey, setBoundaryKey] = useState(0)
+  const applyBoundary = (pts: Pt[]) => { setBoundary(pts); setBoundaryKey((k) => k + 1) }
 
   const z: Zoning = useMemo(
     () => buildZoning({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback }),
@@ -41,7 +46,7 @@ export default function SiteZoning() {
   )
 
   const reset = () => {
-    setBoundary(PRESETS[0].pts); setFar(DEFAULTS.far); setHeightLimit(DEFAULTS.heightLimit); setSetback(DEFAULTS.setback)
+    applyBoundary(PRESETS[0].pts); setFar(DEFAULTS.far); setHeightLimit(DEFAULTS.heightLimit); setSetback(DEFAULTS.setback)
     setMaxCoverage(DEFAULTS.maxCoverage); setStoreyHeight(DEFAULTS.storeyHeight); setProposedGFA(DEFAULTS.proposedGFA)
     setProposedStoreys(DEFAULTS.proposedStoreys); setPodium(DEFAULTS.podium); setTowerSetback(DEFAULTS.towerSetback)
     setGeoText(''); setGeoError(null)
@@ -49,7 +54,7 @@ export default function SiteZoning() {
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
     if (!pts) { setGeoError('Could not find a polygon ring. Paste a GeoJSON Polygon/Feature or a [[x,y],…] ring.'); return }
-    setGeoError(null); setBoundary(pts)
+    setGeoError(null); applyBoundary(pts)
   }
 
   return (
@@ -89,17 +94,18 @@ export default function SiteZoning() {
           <CardHeader icon={Building2} accent="blue" title="Zoning & scheme — editable" subtitle="Tune the rules and the proposal; everything recomputes live" />
           <div className="space-y-4 border-t border-edge/50 p-5">
             <div>
-              <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">Site boundary</div>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">Site boundary — draw your own</div>
+              <div className="mb-2 flex flex-wrap gap-1.5">
                 {PRESETS.map((p) => {
                   const active = boundary === p.pts
                   return (
-                    <button key={p.id} onClick={() => setBoundary(p.pts)} aria-pressed={active} className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', active ? 'bg-teal-500/15 text-teal-200 ring-teal-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50 hover:text-slate-200')}>
+                    <button key={p.id} onClick={() => applyBoundary(p.pts)} aria-pressed={active} className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', active ? 'bg-teal-500/15 text-teal-200 ring-teal-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50 hover:text-slate-200')}>
                       {p.label}
                     </button>
                   )
                 })}
               </div>
+              <PolygonEditor key={boundaryKey} value={boundary} onChange={setBoundary} accent="#2dd4bf" height={220} />
             </div>
             <Range label="FAR (floor area ratio)" value={far} min={0.5} max={15} step={0.1} onChange={setFar} fmt={(v) => v.toFixed(1)} />
             <Range label="Height limit" unit="m" value={heightLimit} min={10} max={300} step={1} onChange={setHeightLimit} />

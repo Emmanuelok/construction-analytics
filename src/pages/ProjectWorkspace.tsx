@@ -18,6 +18,9 @@ import { PageHeader, Card, CardHeader, StatTile, Badge } from '@/components/ui'
 import { RadarViz } from '@/components/charts'
 const BuildingViewer = lazy(() => import('@/components/BuildingViewer').then((m) => ({ default: m.BuildingViewer })))
 import { COLOR_MODES, SHAPE_KINDS, type ColorMode, type ShapeKind } from '@/lib/massing'
+import { unitShape } from '@/lib/shapes'
+import { type Pt } from '@/lib/zoning'
+import { PolygonEditor } from '@/components/PolygonEditor'
 import { PROJECTS, type Project } from '@/data/platform'
 import { deriveProjectModel, projectNarrative, type ProjectVitals, type ProjectModel } from '@/lib/project-model'
 import { formatMoney } from '@/lib/evm'
@@ -80,6 +83,7 @@ export default function ProjectWorkspace() {
   const [selectedFloor, setSelectedFloor] = useState<number | null>(null)
   // massing form — real shapes + vertical articulation, not just a square stack
   const [shape, setShape] = useState<ShapeKind>('rect')
+  const [customShape, setCustomShape] = useState<Pt[]>(() => unitShape('custom').map((p) => ({ x: p.x * 24, z: p.z * 24 })))
   const [aspect, setAspect] = useState(1)
   const [taper, setTaper] = useState(0.2)
   const [podium, setPodium] = useState(0)
@@ -197,7 +201,7 @@ export default function ProjectWorkspace() {
         />
         <div className="grid gap-0 border-t border-edge/50 lg:grid-cols-[1.6fr_1fr]">
           <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-            <BuildingViewer input={{ gfa: vitals.gfa, progress: vitals.progress, shape, aspect, taper, podium, towerSetback, twist }} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />
+            <BuildingViewer input={{ gfa: vitals.gfa, progress: vitals.progress, shape, customShape, aspect, taper, podium, towerSetback, twist }} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />
           </Suspense>
           <div className="flex flex-col gap-3 border-t border-edge/50 p-4 lg:border-l lg:border-t-0">
             <div>
@@ -211,7 +215,8 @@ export default function ProjectWorkspace() {
                 ))}
               </div>
             </div>
-            <Slider label="Aspect ratio" value={aspect} min={0.4} max={2.5} step={0.05} onChange={setAspect} fmt={(v) => `${v.toFixed(2)}:1`} />
+            {shape === 'custom' && <PolygonEditor value={customShape} onChange={setCustomShape} accent="#60a5fa" height={200} />}
+            {shape !== 'custom' && <Slider label="Aspect ratio" value={aspect} min={0.4} max={2.5} step={0.05} onChange={setAspect} fmt={(v) => `${v.toFixed(2)}:1`} />}
             <Slider label="Taper" value={taper} min={0} max={0.6} step={0.02} onChange={setTaper} fmt={(v) => `${Math.round(v * 100)}%`} />
             <Slider label="Podium" value={podium} min={0} max={0.8} step={0.05} onChange={setPodium} fmt={(v) => (v === 0 ? 'none' : `${Math.round(v * 100)}%`)} />
             <Slider label="Tower setback" value={towerSetback} min={0} max={0.6} step={0.02} onChange={setTowerSetback} fmt={(v) => `${Math.round(v * 100)}%`} />
