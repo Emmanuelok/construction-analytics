@@ -6,12 +6,13 @@
 
 import { type Pt, polygonArea, polygonCentroid } from './zoning'
 
-export type ShapeKind = 'rect' | 'l' | 'u' | 'cross' | 'cylinder' | 'octagon' | 'custom'
+export type ShapeKind = 'rect' | 'l' | 'u' | 'court' | 'cross' | 'cylinder' | 'octagon' | 'custom'
 
 export const SHAPE_KINDS: { id: ShapeKind; label: string }[] = [
   { id: 'rect', label: 'Rectangle' },
   { id: 'l', label: 'L-shape' },
-  { id: 'u', label: 'U / courtyard' },
+  { id: 'u', label: 'U-shape' },
+  { id: 'court', label: 'Courtyard' },
   { id: 'cross', label: 'Cross' },
   { id: 'cylinder', label: 'Cylinder' },
   { id: 'octagon', label: 'Octagon' },
@@ -52,9 +53,20 @@ export function unitShape(kind: ShapeKind, aspect = 1): Pt[] {
       for (let i = 0; i < 8; i++) { const t = (Math.PI / 8) + (i / 8) * Math.PI * 2; pts.push({ x: w * 1.08 * Math.cos(t), z: d * 1.08 * Math.sin(t) }) }
       return pts
     }
+    case 'court': // courtyard — full rectangular outer ring (atrium hole via holeFor)
+      return [{ x: -w, z: -d }, { x: w, z: -d }, { x: w, z: d }, { x: -w, z: d }]
     case 'custom': // a recognizable starting pentagon the user can then edit
       return [{ x: -w, z: -d }, { x: w, z: -d }, { x: w, z: d * 0.35 }, { x: 0, z: d }, { x: -w, z: d * 0.35 }]
   }
+}
+
+/** The inner hole (atrium) for a shape, or null if it's solid. Only the courtyard
+ *  has one — a centred rectangular void cut from the plate. */
+export function holeFor(kind: ShapeKind, aspect = 1): Pt[] | null {
+  if (kind !== 'court') return null
+  const a = Math.max(0.3, Math.min(3, aspect))
+  const hw = 0.42 * 0.5 * Math.sqrt(a), hd = 0.42 * 0.5 / Math.sqrt(a)
+  return [{ x: -hw, z: -hd }, { x: hw, z: -hd }, { x: hw, z: hd }, { x: -hw, z: hd }]
 }
 
 /** Translate a polygon so its centroid sits on the origin. */

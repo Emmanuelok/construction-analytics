@@ -119,6 +119,12 @@ export function BuildingViewer({
         const shape = new THREE.Shape()
         f.polygon.forEach((p, i) => (i ? shape.lineTo(p.x, -p.z) : shape.moveTo(p.x, -p.z)))
         shape.closePath()
+        if (f.hole && f.hole.length >= 3) { // courtyard / atrium void
+          const hp = new THREE.Path()
+          f.hole.forEach((p, i) => (i ? hp.lineTo(p.x, -p.z) : hp.moveTo(p.x, -p.z)))
+          hp.closePath()
+          shape.holes.push(hp)
+        }
         const geo = new THREE.ExtrudeGeometry(shape, { depth: f.height, bevelEnabled: false })
         geo.rotateX(-Math.PI / 2) // plan (xy) → ground (xz), extrude up +y
         const isSel = sel === f.index
@@ -170,6 +176,7 @@ export function BuildingViewer({
       ;(mount as HTMLElement & { __floorCount?: number; __baseY?: number; __platePts?: number }).__floorCount = floorMeshes.length
       ;(mount as HTMLElement & { __baseY?: number }).__baseY = f0 ? f0.y - f0.height / 2 : 0
       ;(mount as HTMLElement & { __platePts?: number }).__platePts = f0 ? f0.polygon.length : 0
+      ;(mount as HTMLElement & { __hasHole?: boolean }).__hasHole = !!(f0 && f0.hole)
     }
     rebuildRef.current = buildFloors
 

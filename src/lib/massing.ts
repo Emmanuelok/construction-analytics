@@ -5,8 +5,8 @@
  * so it's deterministic and testable — no Three.js, no DOM. Scene units are
  * metres / a fixed scale; the viewer just draws boxes at these coordinates. */
 
-import { type Pt } from './zoning'
-import { unitShape, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, type ShapeKind } from './shapes'
+import { type Pt, polygonArea } from './zoning'
+import { unitShape, holeFor, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, type ShapeKind } from './shapes'
 export type { ShapeKind } from './shapes'
 export { SHAPE_KINDS } from './shapes'
 
@@ -16,6 +16,7 @@ export type FloorSpec = {
   y: number // centre height (scene units)
   height: number // storey height
   polygon: Pt[] // floor plate outline (plan, scene units) — any shape, not just a box
+  hole?: Pt[] // inner void (courtyard/atrium), if any
   built: boolean // completed at the current % progress (bottom-up)
   t: number // 0..1 position up the building (for gradients)
 }
@@ -72,11 +73,16 @@ export function buildMassing(input: MassingInput): Massing {
   // base plate area in scene units, from GFA per storey
   const plateArea = gfa > 0 ? gfa / storeys : 0
   const sceneArea = Math.max(1, plateArea) * PLATE_SCALE * PLATE_SCALE
-  // a custom (user-drawn) footprint when provided, otherwise a preset shape
-  const raw = shape === 'custom' && input.customShape && input.customShape.length >= 3
+  // a custom (user-drawn) footprint when provided, otherwise a preset shape;
+  // the courtyard also carries an inner void, so scale to the *net* plate area
+  const rawOuter = shape === 'custom' && input.customShape && input.customShape.length >= 3
     ? centerPolygon(input.customShape)
     : unitShape(shape, aspect)
-  const base = scaleToArea(raw, sceneArea)
+  const rawHole = holeFor(shape, aspect)
+  const netArea = polygonArea(rawOuter) - (rawHole ? polygonArea(rawHole) : 0)
+  const k = Math.sqrt(sceneArea / Math.max(1e-4, netArea))
+  const base = scaleAbout(rawOuter, k)
+  const baseHole = rawHole ? scaleAbout(rawHole, k) : null
   const ext = shapeExtent(base)
 
   const builtCount = clamp(Math.round((progress / 100) * storeys), 0, storeys)
@@ -89,13 +95,15 @@ export function buildMassing(input: MassingInput): Massing {
     const step = hasTower && i >= podiumFloors ? 1 - towerSetback : 1 // tower steps in above the podium
     const scale = (1 - taper * t) * step
     let poly = scaleAbout(base, scale)
-    if (twistRad) poly = rotatePolygon(poly, twistRad * i)
+    let hole = baseHole ? scaleAbout(baseHole, scale) : undefined
+    if (twistRad) { poly = rotatePolygon(poly, twistRad * i); if (hole) hole = rotatePolygon(hole, twistRad * i) }
     floors.push({
       index: i,
       label: i === 0 ? 'G' : `L${i}`,
       y: i * STOREY_HEIGHT + STOREY_HEIGHT / 2,
       height: STOREY_HEIGHT * 0.92, // small gap between slabs
       polygon: poly,
+      hole,
       built: i < builtCount,
       t,
     })
