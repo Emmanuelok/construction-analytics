@@ -210,13 +210,13 @@ export default function Sustainability() {
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-2">
                       <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', ACCENT[accentFor(l.id)].dot)} />
-                      <input value={l.name} onChange={(e) => set(l.id, { name: e.target.value })} className="w-40 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-emerald-500/40" />
+                      <input value={l.name} aria-label="Material name" onChange={(e) => set(l.id, { name: e.target.value })} className="w-40 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-emerald-500/40" />
                     </div>
                   </td>
                   <td className="px-3 py-2 text-right">
                     <div className="inline-flex items-center gap-1">
                       <NumCell value={l.quantity} onChange={(v) => set(l.id, { quantity: Math.max(0, v) })} />
-                      <input value={l.unit} onChange={(e) => set(l.id, { unit: e.target.value })} className="w-9 rounded bg-transparent text-[11px] text-slate-500 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-emerald-500/30" />
+                      <input value={l.unit} aria-label="Unit" onChange={(e) => set(l.id, { unit: e.target.value })} className="w-9 rounded bg-transparent text-[11px] text-slate-500 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-emerald-500/30" />
                     </div>
                   </td>
                   <td className="px-3 py-2 text-right">

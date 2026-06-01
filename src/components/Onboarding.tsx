@@ -89,7 +89,7 @@ export function Onboarding({ open, onClose }: { open: boolean; onClose: () => vo
                 <p className="text-xs text-slate-400">A few quick choices — your home, recommendations and search adapt instantly.</p>
               </div>
             </div>
-            <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-elevated hover:text-white">
+            <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-elevated hover:text-white" aria-label="Close">
               <X className="h-4 w-4" />
             </button>
           </div>

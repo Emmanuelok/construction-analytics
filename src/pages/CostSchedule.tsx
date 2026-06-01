@@ -178,7 +178,7 @@ export default function CostSchedule() {
                 return (
                   <tr key={row.id} className="hover:bg-elevated/30">
                     <td className="px-4 py-2">
-                      <input value={row.name} onChange={(e) => set(row.id, { name: e.target.value })} className="w-40 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-rose-500/40" />
+                      <input value={row.name} aria-label="Project name" onChange={(e) => set(row.id, { name: e.target.value })} className="w-40 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-rose-500/40" />
                       <div className="text-[10px] text-slate-600">{row.id}</div>
                     </td>
                     <NumCell value={row.bac} onChange={(v) => set(row.id, { bac: v })} fmt={(v) => formatMoney(v)} step={1e6} />

@@ -223,15 +223,15 @@ export default function DataCenter() {
             />
           </div>
           <div className="flex flex-wrap gap-2">
-            <select value={modality} onChange={(e) => setModality(e.target.value)} className="rounded-lg border border-edge/70 bg-elevated/50 px-3 py-2 text-sm text-slate-200 focus:outline-none">
+            <select aria-label="Filter by modality" value={modality} onChange={(e) => setModality(e.target.value)} className="rounded-lg border border-edge/70 bg-elevated/50 px-3 py-2 text-sm text-slate-200 focus:outline-none">
               <option value="All">All types</option>
               {MODALITIES.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
-            <select value={lic} onChange={(e) => setLic(e.target.value)} className="rounded-lg border border-edge/70 bg-elevated/50 px-3 py-2 text-sm text-slate-200 focus:outline-none">
+            <select aria-label="Filter by license" value={lic} onChange={(e) => setLic(e.target.value)} className="rounded-lg border border-edge/70 bg-elevated/50 px-3 py-2 text-sm text-slate-200 focus:outline-none">
               <option value="All">All licenses</option>
               {LICENSES.map((l) => <option key={l} value={l}>{l}</option>)}
             </select>
-            <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} className="rounded-lg border border-edge/70 bg-elevated/50 px-3 py-2 text-sm text-slate-200 focus:outline-none">
+            <select aria-label="Sort by" value={sort} onChange={(e) => setSort(e.target.value as Sort)} className="rounded-lg border border-edge/70 bg-elevated/50 px-3 py-2 text-sm text-slate-200 focus:outline-none">
               <option value="popular">Most popular</option>
               <option value="quality">Highest quality</option>
               <option value="newest">Newest</option>

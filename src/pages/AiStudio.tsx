@@ -181,7 +181,7 @@ export default function AiStudio() {
               {scored.map((d) => (
                 <tr key={d.id} className={cn('cursor-pointer hover:bg-elevated/30', d.id === selectedId && 'bg-fuchsia-500/[0.06]')} onClick={() => setSelectedId(d.id)}>
                   <td className="px-4 py-2">
-                    <input value={d.name} onClick={(e) => e.stopPropagation()} onChange={(e) => set(d.id, { name: e.target.value })} className="w-44 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                    <input value={d.name} aria-label="Dataset name" onClick={(e) => e.stopPropagation()} onChange={(e) => set(d.id, { name: e.target.value })} className="w-44 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
                     <div className="text-[10px] text-slate-600">{d.task}</div>
                   </td>
                   <NumCell value={d.examples} onChange={(v) => set(d.id, { examples: Math.max(0, v) })} fmt={(v) => formatNumber(v, { compact: true })} />
@@ -210,7 +210,7 @@ export default function AiStudio() {
                     )}
                   </td>
                   <td className="px-2 py-2 text-right">
-                    <button onClick={(e) => { e.stopPropagation(); removeRow(d.id) }} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                    <button onClick={(e) => { e.stopPropagation(); removeRow(d.id) }} aria-label={`Remove ${d.name}`} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
                   </td>
                 </tr>
               ))}

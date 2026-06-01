@@ -22,6 +22,8 @@ function ThemeToggle() {
           key={o.m}
           onClick={() => setMode(o.m)}
           title={`${o.label} theme`}
+          aria-label={`${o.label} theme`}
+          aria-pressed={mode === o.m}
           className={cn('grid h-7 w-7 place-items-center rounded-lg transition-colors', mode === o.m ? 'bg-surface text-brand-400 shadow-sm' : 'text-slate-500 hover:text-slate-200')}
         >
           <o.icon className="h-4 w-4" />
@@ -58,7 +60,7 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
 
   return (
     <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-edge/60 bg-base/80 px-4 backdrop-blur-xl sm:px-6">
-      <button onClick={onMenu} className="rounded-lg p-2 text-slate-400 hover:bg-elevated hover:text-white lg:hidden">
+      <button onClick={onMenu} aria-label="Open navigation menu" className="rounded-lg p-2 text-slate-400 hover:bg-elevated hover:text-white lg:hidden">
         <Menu className="h-5 w-5" />
       </button>
 
@@ -85,6 +87,7 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
 
         <button
           onClick={openPalette}
+          aria-label="Search or ask anything"
           className="grid h-9 w-9 place-items-center rounded-xl border border-edge/70 bg-elevated/50 text-violet-400 hover:border-violet-500/40 md:hidden"
         >
           <Sparkles className="h-4 w-4" />

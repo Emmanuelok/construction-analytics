@@ -262,11 +262,11 @@ export default function Procurement() {
                       </div>
                     </td>
                     <td className="px-3 py-2">
-                      <input value={s.name} onChange={(e) => set(s.id, { name: e.target.value })} className="w-40 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-lime-500/40" />
-                      <input value={s.category} onChange={(e) => set(s.id, { category: e.target.value })} className="block w-40 truncate rounded bg-transparent text-[11px] text-slate-500 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-lime-500/30" />
+                      <input value={s.name} aria-label="Supplier name" onChange={(e) => set(s.id, { name: e.target.value })} className="w-40 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-lime-500/40" />
+                      <input value={s.category} aria-label="Category" onChange={(e) => set(s.id, { category: e.target.value })} className="block w-40 truncate rounded bg-transparent text-[11px] text-slate-500 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-lime-500/30" />
                     </td>
                     <td className="px-3 py-2">
-                      <input value={s.region} onChange={(e) => set(s.id, { region: e.target.value })} className="w-16 rounded bg-transparent text-slate-300 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-lime-500/30" />
+                      <input value={s.region} aria-label="Region" onChange={(e) => set(s.id, { region: e.target.value })} className="w-16 rounded bg-transparent text-slate-300 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-lime-500/30" />
                     </td>
                     <NumCell value={s.onTime} onChange={(v) => set(s.id, { onTime: clampPct(v) })} fmt={(v) => `${v}%`} tone={s.onTime >= 90 ? 'good' : s.onTime >= 75 ? 'warn' : 'bad'} />
                     <NumCell value={s.quality} onChange={(v) => set(s.id, { quality: clampPct(v) })} fmt={(v) => `${v}%`} />

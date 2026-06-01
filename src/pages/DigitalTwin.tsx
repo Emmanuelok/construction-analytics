@@ -312,7 +312,7 @@ export default function DigitalTwin() {
                 return (
                   <tr key={a.id} className="hover:bg-elevated/30">
                     <td className="px-4 py-2">
-                      <input value={a.name} onChange={(e) => setAsset(a.id, { name: e.target.value })} className="w-32 truncate rounded bg-transparent font-medium text-slate-200 data-mono focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-violet-500/40" />
+                      <input value={a.name} aria-label="Asset name" onChange={(e) => setAsset(a.id, { name: e.target.value })} className="w-32 truncate rounded bg-transparent font-medium text-slate-200 data-mono focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-violet-500/40" />
                       <div className="text-[10px] text-slate-600">{a.type} · {a.location}</div>
                     </td>
                     <td className={cn('px-3 py-2 text-right', a.alarm ? 'text-rose-300' : 'text-slate-300')}>

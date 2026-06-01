@@ -250,9 +250,9 @@ export default function Bim() {
                   <tr key={p.id} className="hover:bg-elevated/30">
                     <td className="px-4 py-2">
                       <div className="flex items-center gap-1.5">
-                        <input value={p.a} onChange={(e) => set(p.id, { a: e.target.value })} className="w-20 rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-blue-500/40" />
+                        <input value={p.a} aria-label="Discipline A" onChange={(e) => set(p.id, { a: e.target.value })} className="w-20 rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-blue-500/40" />
                         <span className="text-slate-600">×</span>
-                        <input value={p.b} onChange={(e) => set(p.id, { b: e.target.value })} className="w-20 rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-blue-500/40" />
+                        <input value={p.b} aria-label="Discipline B" onChange={(e) => set(p.id, { b: e.target.value })} className="w-20 rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-blue-500/40" />
                       </div>
                     </td>
                     <td className="px-3 py-2 text-center">

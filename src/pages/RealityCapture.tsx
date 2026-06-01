@@ -194,8 +194,8 @@ export default function RealityCapture() {
                 return (
                   <tr key={z.id} className="hover:bg-elevated/30">
                     <td className="px-4 py-2">
-                      <input value={z.zone} onChange={(e) => set(z.id, { zone: e.target.value })} className="w-40 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-cyan-500/40" />
-                      <input value={z.unit} onChange={(e) => set(z.id, { unit: e.target.value })} className="block w-16 rounded bg-transparent text-[11px] text-slate-500 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-cyan-500/30" />
+                      <input value={z.zone} aria-label="Zone name" onChange={(e) => set(z.id, { zone: e.target.value })} className="w-40 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-cyan-500/40" />
+                      <input value={z.unit} aria-label="Unit" onChange={(e) => set(z.id, { unit: e.target.value })} className="block w-16 rounded bg-transparent text-[11px] text-slate-500 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-cyan-500/30" />
                     </td>
                     <NumCell value={z.plannedQty} onChange={(v) => set(z.id, { plannedQty: Math.max(0, v) })} />
                     <NumCell value={z.claimedQty} onChange={(v) => set(z.id, { claimedQty: Math.max(0, v) })} tone="warn" />

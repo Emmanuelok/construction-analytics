@@ -114,7 +114,7 @@ export default function Developer() {
           <CardHeader icon={Play} accent="violet" title="Request builder" subtitle="Compose a call to /api/datasets" />
           <div className="space-y-4 border-t border-edge/50 p-5">
             <Field label="Fetch by id (overrides filters)">
-              <select value={byId} onChange={(e) => setById(e.target.value)} className="w-full rounded-lg border border-edge/60 bg-elevated/50 px-3 py-1.5 text-sm text-slate-100 focus:outline-none">
+              <select aria-label="Fetch dataset by id" value={byId} onChange={(e) => setById(e.target.value)} className="w-full rounded-lg border border-edge/60 bg-elevated/50 px-3 py-1.5 text-sm text-slate-100 focus:outline-none">
                 <option value="">— list mode —</option>
                 {PUBLIC.map((d) => (<option key={d.id} value={d.id}>{d.id}</option>))}
               </select>
@@ -123,13 +123,13 @@ export default function Developer() {
               <Field label="search"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="e.g. carbon, drone, cost" className="w-full rounded-lg border border-edge/60 bg-elevated/50 px-3 py-1.5 text-sm text-slate-100 focus:outline-none" /></Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="category">
-                  <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full rounded-lg border border-edge/60 bg-elevated/50 px-3 py-1.5 text-sm text-slate-100 focus:outline-none">
+                  <select aria-label="Filter by category" value={category} onChange={(e) => setCategory(e.target.value)} className="w-full rounded-lg border border-edge/60 bg-elevated/50 px-3 py-1.5 text-sm text-slate-100 focus:outline-none">
                     <option value="">any</option>
                     {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
                   </select>
                 </Field>
                 <Field label="sort">
-                  <select value={sort} onChange={(e) => setSort(e.target.value)} className="w-full rounded-lg border border-edge/60 bg-elevated/50 px-3 py-1.5 text-sm text-slate-100 focus:outline-none">
+                  <select aria-label="Sort by" value={sort} onChange={(e) => setSort(e.target.value)} className="w-full rounded-lg border border-edge/60 bg-elevated/50 px-3 py-1.5 text-sm text-slate-100 focus:outline-none">
                     {['rating', 'downloads', 'records', 'price', 'updated', 'name'].map((s) => (<option key={s} value={s}>{s}</option>))}
                   </select>
                 </Field>
@@ -145,7 +145,7 @@ export default function Developer() {
 
         <Card>
           <CardHeader icon={Terminal} accent="cyan" title="Live response" subtitle="200 OK · application/json" action={<button onClick={() => copy(JSON.stringify(response, null, 2), 'res')} className="btn-ghost h-8 px-2 py-0 text-xs">{copied === 'res' ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />} JSON</button>} />
-          <pre className="max-h-[420px] overflow-auto border-t border-edge/50 p-4 text-[11.5px] leading-relaxed text-slate-300"><code className="font-mono">{JSON.stringify(response, null, 2)}</code></pre>
+          <pre tabIndex={0} role="region" aria-label="API response JSON" className="max-h-[420px] overflow-auto border-t border-edge/50 p-4 text-[11.5px] leading-relaxed text-slate-300 focus:outline-none focus-visible:ring-1 focus-visible:ring-violet-500/50"><code className="font-mono">{JSON.stringify(response, null, 2)}</code></pre>
         </Card>
       </div>
 

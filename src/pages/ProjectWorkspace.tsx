@@ -118,6 +118,7 @@ export default function ProjectWorkspace() {
             <select
               value={projectId}
               onChange={(e) => selectProject(e.target.value)}
+              aria-label="Select project"
               className="rounded-lg border border-edge/70 bg-elevated/60 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500/50 focus:outline-none"
             >
               {PROJECTS.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}

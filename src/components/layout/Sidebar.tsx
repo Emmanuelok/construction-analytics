@@ -25,12 +25,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <NavLink to="/welcome" onClick={onClose} aria-label="AEC Studio — landing page">
             <Wordmark />
           </NavLink>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-elevated hover:text-white lg:hidden">
+          <button onClick={onClose} aria-label="Close navigation menu" className="rounded-lg p-1.5 text-slate-400 hover:bg-elevated hover:text-white lg:hidden">
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <nav className="no-scrollbar flex-1 space-y-6 overflow-y-auto px-3 py-5">
+        <nav aria-label="Primary" className="no-scrollbar flex-1 space-y-6 overflow-y-auto px-3 py-5">
           {NAV_GROUPS.map((group) => (
             <div key={group}>
               <div className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">

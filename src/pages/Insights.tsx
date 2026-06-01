@@ -240,7 +240,7 @@ export default function Insights() {
                 return (
                   <tr key={p.id} className="hover:bg-elevated/30">
                     <td className="px-4 py-2">
-                      <input value={p.name} onChange={(e) => set(p.id, { name: e.target.value })} className="w-40 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-cyan-500/40" />
+                      <input value={p.name} aria-label="Project name" onChange={(e) => set(p.id, { name: e.target.value })} className="w-40 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-cyan-500/40" />
                       <div className="text-[10px] text-slate-600">{p.sector}</div>
                     </td>
                     <NumCell value={p.value} onChange={(v) => set(p.id, { value: Math.max(0, v) })} fmt={(v) => formatMoney(v)} />

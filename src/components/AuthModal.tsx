@@ -57,7 +57,7 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
               <p className="text-[11px] text-slate-500">AEC Data &amp; Intelligence Studio</p>
             </div>
           </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-elevated hover:text-white">
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-elevated hover:text-white" aria-label="Close">
             <X className="h-4 w-4" />
           </button>
         </div>

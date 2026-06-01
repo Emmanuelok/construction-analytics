@@ -24,10 +24,30 @@ import {
   YAxis,
   ZAxis,
 } from 'recharts'
+import { useEffect, useRef } from 'react'
 import { ACCENT, type Accent } from '@/lib/nav'
 
 const GRID = '#16203a'
 const AXIS = '#64748b'
+
+/* Charts are decorative companions to the data tables beside them, so we hide
+ * their internals from assistive tech (role="img" cells, etc.) via aria-hidden.
+ * Recharts also leaves a tabindex on its tooltip wrapper, which would make an
+ * aria-hidden subtree contain a focusable node — this frame strips any stray
+ * tabindex so the chart is fully inert to keyboard + screen-reader users. */
+function ChartFrame({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const strip = () => el.querySelectorAll('[tabindex]').forEach((n) => n.removeAttribute('tabindex'))
+    strip()
+    const mo = new MutationObserver(strip)
+    mo.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ['tabindex'] })
+    return () => mo.disconnect()
+  }, [])
+  return <div aria-hidden="true" ref={ref}>{children}</div>
+}
 
 export type Series = { key: string; name?: string; accent?: Accent }
 
@@ -79,6 +99,7 @@ export function AreaTrend({
   referenceY?: { y: number; label?: string }
 }) {
   return (
+    <ChartFrame>
     <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={data} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
         <defs>
@@ -123,6 +144,7 @@ export function AreaTrend({
         })}
       </AreaChart>
     </ResponsiveContainer>
+  </ChartFrame>
   )
 }
 
@@ -143,6 +165,7 @@ export function LineTrend({
   dashedKeys?: string[]
 }) {
   return (
+    <ChartFrame>
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false} />
@@ -168,6 +191,7 @@ export function LineTrend({
         })}
       </LineChart>
     </ResponsiveContainer>
+  </ChartFrame>
   )
 }
 
@@ -191,6 +215,7 @@ export function BarSeries({
 }) {
   const vertical = layout === 'vertical'
   return (
+    <ChartFrame>
     <ResponsiveContainer width="100%" height={height}>
       <BarChart
         data={data}
@@ -223,11 +248,13 @@ export function BarSeries({
               radius={vertical ? [0, 5, 5, 0] : [5, 5, 0, 0]}
               stackId={stacked ? 'a' : undefined}
               maxBarSize={vertical ? 22 : 48}
+              role="presentation"
             />
           )
         })}
       </BarChart>
     </ResponsiveContainer>
+  </ChartFrame>
   )
 }
 
@@ -246,6 +273,7 @@ export function Donut({
   valueFormatter?: (v: number) => string
 }) {
   return (
+    <ChartFrame>
     <ResponsiveContainer width="100%" height={height}>
       <PieChart>
         <Pie
@@ -264,6 +292,7 @@ export function Donut({
         <Tooltip content={<ChartTooltip valueFormatter={valueFormatter} />} />
       </PieChart>
     </ResponsiveContainer>
+  </ChartFrame>
   )
 }
 
@@ -278,6 +307,7 @@ export function RadarViz({
   height?: number
 }) {
   return (
+    <ChartFrame>
     <ResponsiveContainer width="100%" height={height}>
       <RadarChart data={data} outerRadius="72%">
         <PolarGrid stroke={GRID} />
@@ -301,6 +331,7 @@ export function RadarViz({
         })}
       </RadarChart>
     </ResponsiveContainer>
+  </ChartFrame>
   )
 }
 
@@ -326,6 +357,7 @@ export function ScatterViz({
 }) {
   const a = ACCENT[accent]
   return (
+    <ChartFrame>
     <ResponsiveContainer width="100%" height={height}>
       <ScatterChart margin={{ top: 8, right: 12, left: -8, bottom: 4 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
@@ -333,8 +365,9 @@ export function ScatterViz({
         <YAxis type="number" dataKey={yKey} name={yName ?? yKey} {...axisProps} width={48} />
         {zKey && <ZAxis type="number" dataKey={zKey} range={[60, 420]} />}
         <Tooltip content={<ChartTooltip />} cursor={{ strokeDasharray: '3 3', stroke: '#334155' }} />
-        <Scatter data={data} fill={a.hex} fillOpacity={0.7} />
+        <Scatter data={data} fill={a.hex} fillOpacity={0.7} role="presentation" />
       </ScatterChart>
     </ResponsiveContainer>
+  </ChartFrame>
   )
 }

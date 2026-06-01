@@ -255,7 +255,7 @@ export default function Governance() {
               {results.map((r) => (
                 <tr key={r.id} className="hover:bg-elevated/30">
                   <td className="px-4 py-2">
-                    <input value={r.name} onChange={(e) => set(r.id, { name: e.target.value })} className="w-44 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-teal-500/40" />
+                    <input value={r.name} aria-label="Dataset name" onChange={(e) => set(r.id, { name: e.target.value })} className="w-44 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-teal-500/40" />
                     <div className="text-[10px] text-slate-600">{r.id}</div>
                   </td>
                   <DimCell value={r.dimensions.completeness} onChange={(v) => setDim(r.id, 'completeness', v)} />

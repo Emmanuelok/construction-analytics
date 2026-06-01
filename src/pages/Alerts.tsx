@@ -117,34 +117,34 @@ export default function Alerts() {
                 return (
                   <tr key={r.id} className={cn('hover:bg-elevated/30', !r.enabled && 'opacity-50')}>
                     <td className="px-4 py-2">
-                      <button onClick={() => updateRule(r.id, { enabled: !r.enabled })} role="switch" aria-checked={r.enabled} className={cn('relative h-5 w-9 rounded-full transition-colors', r.enabled ? 'bg-rose-500/70' : 'bg-edge')}>
+                      <button onClick={() => updateRule(r.id, { enabled: !r.enabled })} role="switch" aria-checked={r.enabled} aria-label={`${r.name} rule, ${r.enabled ? 'on' : 'off'}`} className={cn('relative h-5 w-9 rounded-full transition-colors', r.enabled ? 'bg-rose-500/70' : 'bg-edge')}>
                         <span className={cn('absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform', r.enabled ? 'translate-x-4' : 'translate-x-0.5')} />
                       </button>
                     </td>
                     <td className="px-3 py-2">
-                      <input value={r.name} onChange={(e) => updateRule(r.id, { name: e.target.value })} className="w-36 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-rose-500/40" />
+                      <input value={r.name} aria-label="Rule name" onChange={(e) => updateRule(r.id, { name: e.target.value })} className="w-36 truncate rounded bg-transparent font-medium text-slate-200 focus:bg-elevated focus:px-1 focus:outline-none focus:ring-1 focus:ring-rose-500/40" />
                     </td>
                     <td className="px-3 py-2">
-                      <select value={r.metric} onChange={(e) => updateRule(r.id, { metric: e.target.value })} className="rounded-md border border-edge/60 bg-elevated/60 px-2 py-1 text-xs text-slate-200 focus:outline-none">
+                      <select aria-label="Metric" value={r.metric} onChange={(e) => updateRule(r.id, { metric: e.target.value })} className="rounded-md border border-edge/60 bg-elevated/60 px-2 py-1 text-xs text-slate-200 focus:outline-none">
                         {METRICS.map((m) => (<option key={m.key} value={m.key}>{m.label}</option>))}
                       </select>
                     </td>
                     <td className="px-3 py-2 text-center">
-                      <select value={r.op} onChange={(e) => updateRule(r.id, { op: e.target.value as typeof r.op })} className="rounded-md border border-edge/60 bg-elevated/60 px-2 py-1 text-center text-xs text-slate-200 focus:outline-none">
+                      <select aria-label="Operator" value={r.op} onChange={(e) => updateRule(r.id, { op: e.target.value as typeof r.op })} className="rounded-md border border-edge/60 bg-elevated/60 px-2 py-1 text-center text-xs text-slate-200 focus:outline-none">
                         {OPS.map((o) => (<option key={o} value={o}>{o}</option>))}
                       </select>
                     </td>
                     <td className="px-3 py-2 text-right">
-                      <input type="number" step="any" value={r.threshold} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) updateRule(r.id, { threshold: n }) }} className="w-24 rounded border border-edge/60 bg-elevated/60 px-1.5 py-1 text-right text-sm text-slate-100 data-mono focus:border-rose-500/50 focus:outline-none" />
+                      <input type="number" step="any" value={r.threshold} aria-label={`${r.name} threshold`} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) updateRule(r.id, { threshold: n }) }} className="w-24 rounded border border-edge/60 bg-elevated/60 px-1.5 py-1 text-right text-sm text-slate-100 data-mono focus:border-rose-500/50 focus:outline-none" />
                     </td>
                     <td className="px-3 py-2">
-                      <select value={r.severity} onChange={(e) => updateRule(r.id, { severity: e.target.value as Severity })} className="rounded-md border border-edge/60 bg-elevated/60 px-2 py-1 text-xs text-slate-200 focus:outline-none">
+                      <select aria-label="Severity" value={r.severity} onChange={(e) => updateRule(r.id, { severity: e.target.value as Severity })} className="rounded-md border border-edge/60 bg-elevated/60 px-2 py-1 text-xs text-slate-200 focus:outline-none">
                         {SEVERITIES.map((s) => (<option key={s} value={s}>{s}</option>))}
                       </select>
                     </td>
                     <td className={cn('px-3 py-2 text-right data-mono', breaches > 0 ? 'text-rose-300' : 'text-slate-600')}>{breaches}</td>
                     <td className="px-2 py-2 text-right">
-                      <button onClick={() => removeRule(r.id)} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => removeRule(r.id)} aria-label={`Delete ${r.name} rule`} className="text-slate-600 hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
                     </td>
                   </tr>
                 )

@@ -48,8 +48,16 @@ export function AppShell() {
 
   return (
     <div className="min-h-screen">
+      {/* Skip to content — first focusable element, visible only on keyboard focus. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-brand-500 focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white focus:shadow-xl"
+      >
+        Skip to content
+      </a>
+
       {/* Ambient background */}
-      <div className="pointer-events-none fixed inset-0 -z-10">
+      <div className="pointer-events-none fixed inset-0 -z-10" aria-hidden="true">
         <div className="absolute inset-0 grid-bg opacity-[0.5] mask-fade-b" />
       </div>
 
@@ -60,14 +68,14 @@ export function AppShell() {
         {fullBleed ? (
           /* Full-bleed routes (e.g. Flow Studio) own the whole viewport below the
              topbar — no max-width, padding or footer, so the canvas is the studio. */
-          <main key={pathname} className="h-[calc(100vh-4rem)] animate-fadeup overflow-hidden">
+          <main id="main-content" tabIndex={-1} key={pathname} className="h-[calc(100vh-4rem)] animate-fadeup overflow-hidden focus:outline-none">
             <Suspense fallback={<PageFallback />}>
               <Outlet />
             </Suspense>
           </main>
         ) : (
           <>
-            <main className="mx-auto max-w-[1400px] px-4 py-7 sm:px-6 lg:px-8">
+            <main id="main-content" tabIndex={-1} className="mx-auto max-w-[1400px] px-4 py-7 focus:outline-none sm:px-6 lg:px-8">
               <div key={pathname} className="animate-fadeup">
                 <Suspense fallback={<PageFallback />}>
                   <Outlet />

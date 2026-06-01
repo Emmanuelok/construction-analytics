@@ -91,7 +91,7 @@ export function ScenarioBar({
               className="w-44 rounded-lg border border-edge/70 bg-elevated/60 px-2.5 py-1 text-xs text-slate-100 focus:border-blue-500/50 focus:outline-none"
             />
             <button onClick={commit} className="inline-flex items-center gap-1 rounded-lg bg-blue-500/15 px-2 py-1 text-xs font-medium text-blue-200 ring-1 ring-inset ring-blue-500/30 hover:bg-blue-500/25"><Check className="h-3.5 w-3.5" /> Save</button>
-            <button onClick={() => { setNaming(false); setName('') }} className="text-slate-500 hover:text-slate-300"><X className="h-4 w-4" /></button>
+            <button onClick={() => { setNaming(false); setName('') }} aria-label="Cancel" className="text-slate-500 hover:text-slate-300"><X className="h-4 w-4" /></button>
           </div>
         ) : (
           <button onClick={() => setNaming(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white">
@@ -121,7 +121,7 @@ export function ScenarioBar({
             const sel = compare.includes(s.id)
             return (
               <span key={s.id} className={cn('group inline-flex items-center gap-1 rounded-lg border px-1.5 py-1 text-xs transition-colors', sel ? 'border-blue-500/50 bg-blue-500/10 text-blue-100' : 'border-edge/60 bg-elevated/40 text-slate-300')}>
-                <button onClick={() => toggleCompare(s.id)} title="Select to compare" className={cn('grid h-4 w-4 place-items-center rounded border', sel ? 'border-blue-400 bg-blue-500/40 text-white' : 'border-edge/70 text-transparent hover:border-slate-500')}>
+                <button onClick={() => toggleCompare(s.id)} title="Select to compare" aria-label={`Compare ${s.name}`} aria-pressed={sel} className={cn('grid h-4 w-4 place-items-center rounded border', sel ? 'border-blue-400 bg-blue-500/40 text-white' : 'border-edge/70 text-transparent hover:border-slate-500')}>
                   <Check className="h-2.5 w-2.5" />
                 </button>
                 <button onClick={() => onLoad(s)} title="Load this scenario" className="max-w-[140px] truncate font-medium hover:underline">{s.name}</button>

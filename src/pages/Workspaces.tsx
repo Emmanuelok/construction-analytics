@@ -55,7 +55,7 @@ function CreateModal({ open, onClose }: { open: boolean; onClose: () => void }) 
             </span>
             <h2 className="text-sm font-semibold text-slate-100">New workspace</h2>
           </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-elevated hover:text-white">
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-elevated hover:text-white" aria-label="Close">
             <X className="h-4 w-4" />
           </button>
         </div>
