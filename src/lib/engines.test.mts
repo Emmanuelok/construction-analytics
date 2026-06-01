@@ -23,6 +23,7 @@ import { parseMentions, makeComment, threadFor, addComment, removeComment, toggl
 import { toPublic, parseListQuery, listDatasets, findDataset, generateApiKey, isValidKeyFormat, extractApiKey, ok as apiOk, err as apiErr, type CatalogLike, type PublicDataset } from './apikit.ts'
 import { mentionNotifications, shareNotifications, alertNotifications, buildFeed, unreadCount, isUnread, timeAgo, parseReadIds, subjectName, type Notification } from './notifications.ts'
 import { buildMassing, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
+import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR } from './ifc-model.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -672,6 +673,48 @@ section('massing')
   ok('safety mode: high safety green', floorColor('safety', f0, 96) === '#22c55e')
   ok('carbon mode: high carbon red', floorColor('carbon', f0, 800) === '#ef4444')
   ok('status mode: high health green', floorColor('status', f0, 90) === '#22c55e')
+}
+
+// ── ifc-model (3D reconstruction from IFC counts) ────────────────────────────
+section('ifc-model')
+{
+  ok('gridFor: 12 → 4×3 (≥12)', (() => { const g = gridFor(12); return g.cols * g.rows >= 12 && g.cols === 4 })())
+  ok('gridFor: 9 → 3×3', (() => { const g = gridFor(9); return g.cols === 3 && g.rows === 3 })())
+  ok('gridFor: 0 → empty', gridFor(0).cols === 0)
+  ok('kindOf maps column/wall/slab/beam/mep', kindOf('IFCCOLUMN') === 'column' && kindOf('IFCWALLSTANDARDCASE') === 'wall' && kindOf('IFCSLAB') === 'slab' && kindOf('IFCBEAM') === 'beam' && kindOf('IFCPIPESEGMENT') === 'mep')
+  ok('kindOf unknown → null', kindOf('IFCPROJECT') === null)
+
+  // the bundled sample's real counts: 8 walls, 4 slabs, 12 columns, 8 beams, 3 duct + 4 pipe = 7 MEP, across 4 storeys
+  const counts = [
+    { type: 'IFCWALLSTANDARDCASE', count: 8 },
+    { type: 'IFCSLAB', count: 4 },
+    { type: 'IFCCOLUMN', count: 12 },
+    { type: 'IFCBEAM', count: 8 },
+    { type: 'IFCDUCTSEGMENT', count: 3 },
+    { type: 'IFCPIPESEGMENT', count: 4 },
+    { type: 'IFCDOOR', count: 5 }, // not placed (no geometry archetype) but counted as source? no
+  ]
+  const scene = buildIfcScene({ entityCounts: counts, storeys: 4 })
+  ok('reconstructs across the real storeys', scene.storeys === 4 && scene.totalHeight === 4 * scene.storeyHeight)
+  ok('places columns = file count (12)', scene.instances.filter((i) => i.kind === 'column').length === 12, scene.instances.filter((i) => i.kind === 'column').length)
+  ok('places beams = file count (8)', scene.instances.filter((i) => i.kind === 'beam').length === 8)
+  ok('places walls = file count (8)', scene.instances.filter((i) => i.kind === 'wall').length === 8)
+  ok('places one slab per storey (4)', scene.instances.filter((i) => i.kind === 'slab').length === 4)
+  ok('places MEP = duct+pipe (7)', scene.instances.filter((i) => i.kind === 'mep').length === 7, scene.instances.filter((i) => i.kind === 'mep').length)
+  ok('sourceElements counts real elements', scene.sourceElements === 8 + 4 + 12 + 8 + 7)
+  ok('every instance has a real ifcType + storey in range', scene.instances.every((i) => i.ifcType && i.storey >= 0 && i.storey < 4))
+  ok('columns carry struct discipline', scene.instances.filter((i) => i.kind === 'column').every((i) => i.discipline === 'struct'))
+  ok('walls carry arch discipline', scene.instances.filter((i) => i.kind === 'wall').every((i) => i.discipline === 'arch'))
+  ok('byDiscipline aggregates', scene.byDiscipline.find((d) => d.discipline === 'struct')!.count === 12 + 8 + 4)
+  ok('footprint > 0', scene.footprint > 0)
+  ok('instances within footprint bounds', scene.instances.filter((i) => i.kind !== 'beam').every((i) => Math.abs(i.x) <= scene.footprint && Math.abs(i.z) <= scene.footprint))
+
+  // empty / degenerate
+  const empty = buildIfcScene({ entityCounts: [], storeys: 1 })
+  ok('empty counts → no instances, no crash', empty.placed === 0 && empty.sourceElements === 0 && empty.footprint > 0)
+  ok('storeys floored to ≥1', buildIfcScene({ entityCounts: counts, storeys: 0 }).storeys === 1)
+
+  ok('discipline colours defined', DISCIPLINE_COLOR.struct.startsWith('#') && DISCIPLINE_COLOR.mep.startsWith('#'))
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)

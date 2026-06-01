@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useMemo, useRef, useState } from 'react'
 import {
   Boxes,
   Upload,
@@ -39,6 +39,8 @@ import { CollabBar } from '@/components/CollabBar'
 import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 import { parseIfc, type ParsedIfc } from '@/lib/ifc'
+import { buildIfcScene, DISCIPLINE_COLOR, DISCIPLINE_LABEL, type Discipline } from '@/lib/ifc-model'
+const IfcModelViewer = lazy(() => import('@/components/IfcModelViewer').then((m) => ({ default: m.IfcModelViewer })))
 import { SAMPLE_IFC } from '@/lib/ifc-sample'
 import {
   computeHealth,
@@ -397,6 +399,10 @@ function MiniStat({ label, value, accent }: { label: string; value: string; acce
 function ParsedModel({ data, onClear }: { data: ParsedIfc; onClear: () => void }) {
   const maxEntity = data.entityCounts[0]?.count ?? 1
   const indicativeTotal = data.quantities.reduce((s, q) => s + q.total * (KIND_RATE[q.kind] ?? 0), 0)
+  const [hidden, setHidden] = useState<Partial<Record<Discipline, boolean>>>({})
+  const sceneInput = { entityCounts: data.entityCounts, storeys: Math.max(1, data.storeys.length) }
+  const scene = buildIfcScene(sceneInput)
+  const toggle = (d: Discipline) => setHidden((h) => ({ ...h, [d]: !h[d] }))
   return (
     <Card>
       <CardHeader
@@ -417,6 +423,34 @@ function ParsedModel({ data, onClear }: { data: ParsedIfc; onClear: () => void }
           <MiniStat label="Distinct types" value={formatNumber(data.distinctTypes)} accent="violet" />
           <MiniStat label="Storeys" value={formatNumber(data.storeys.length)} accent="teal" />
         </div>
+
+        {/* 3D reconstruction from the file's real element counts + storeys */}
+        {scene.placed > 0 && (
+          <div className="overflow-hidden rounded-xl border border-edge/60">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-edge/60 bg-elevated/30 px-4 py-2.5">
+              <span className="flex items-center gap-2 text-sm font-medium text-slate-200"><Boxes className="h-4 w-4 text-blue-400" /> 3D model · {formatNumber(scene.placed)} elements across {scene.storeys} storeys</span>
+              <div className="flex flex-wrap gap-1.5">
+                {scene.byDiscipline.map((d) => (
+                  <button
+                    key={d.discipline}
+                    onClick={() => toggle(d.discipline)}
+                    aria-pressed={!hidden[d.discipline]}
+                    className={cn('inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors', hidden[d.discipline] ? 'text-slate-500 ring-edge/60' : 'text-slate-200 ring-edge/70 bg-elevated/60')}
+                  >
+                    <span className="h-2 w-2 rounded-sm" style={{ background: DISCIPLINE_COLOR[d.discipline] }} />
+                    {DISCIPLINE_LABEL[d.discipline]} <span className="text-slate-500">{d.count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
+              <IfcModelViewer input={sceneInput} hidden={hidden} height={460} />
+            </Suspense>
+            <p className="border-t border-edge/60 px-4 py-2 text-[11px] text-slate-500">
+              Reconstructed from the file's real element counts and storeys (columns on a grid, walls at the perimeter, slabs per floor, beams + MEP risers), coloured by discipline. IFC text carries no mesh geometry — drag to orbit, scroll to zoom, toggle disciplines above.
+            </p>
+          </div>
+        )}
 
         <div className="grid gap-6 lg:grid-cols-5">
           <div className="lg:col-span-3">
