@@ -17,12 +17,14 @@ export type ZoningInput = {
   proposedStoreys: number
   podium?: number // 0–1 fraction of storeys forming a full-plate podium base
   towerSetback?: number // 0–0.6 — the tower steps in by this much above the podium
+  skyBase?: number // metres — sky-exposure plane: the legal envelope steps in above this height
+  skyStep?: number // 0–0.6 — how much the envelope steps in above skyBase
 }
 
 /** A vertical slab of the proposed massing (podium or tower), metres. */
 export type MassingTier = { footprint: number; base: number; top: number }
 
-export type Compliance = { far: boolean; height: boolean; coverage: boolean; setback: boolean; overall: boolean }
+export type Compliance = { far: boolean; height: boolean; coverage: boolean; setback: boolean; skyPlane: boolean; overall: boolean }
 
 export type Zoning = {
   siteArea: number
@@ -35,6 +37,7 @@ export type Zoning = {
   envelopeVolume: number // maxFootprint × heightLimit (indicative legal volume)
   proposed: { footprint: number; height: number; coverage: number; far: number }
   tiers: MassingTier[] // podium + tower slabs (one tier when no podium)
+  envelopeTiers: MassingTier[] // legal envelope, stepped at the sky-exposure plane
   compliance: Compliance
   utilisation: number // proposedGFA ÷ maxGFA, %
 }
@@ -165,12 +168,26 @@ export function buildZoning(input: ZoningInput): Zoning {
   const coverage = siteArea > 0 ? (footprint / siteArea) * 100 : 0
   const pFar = siteArea > 0 ? proposedGFA / siteArea : 0
 
+  // Stepped legal envelope (sky-exposure plane): build to the setback up to
+  // skyBase, then the envelope steps in above it. The scheme must fit the upper
+  // (smaller) envelope wherever it rises past skyBase.
+  const skyBase = Math.max(0, input.skyBase ?? 0)
+  const skyStep = clamp(input.skyStep ?? 0, 0, 0.6)
+  const hasSky = skyBase > 0 && skyBase < maxHeight && skyStep > 0
+  const upperEnv = hasSky ? buildableArea * (1 - skyStep) ** 2 : buildableArea
+  const envelopeTiers: MassingTier[] = hasSky
+    ? [{ footprint: buildableArea, base: 0, top: skyBase }, { footprint: upperEnv, base: skyBase, top: maxHeight }]
+    : [{ footprint: buildableArea, base: 0, top: maxHeight }]
+  let aboveSky = 0
+  for (const t of tiers) if (t.top > skyBase + 1e-6) aboveSky = Math.max(aboveSky, t.footprint)
+
   const EPS = 1e-6
   const c = {
     far: proposedGFA <= maxGFA + EPS,
     height: height <= maxHeight + EPS,
     coverage: footprint <= coverageCap + EPS,
     setback: footprint <= buildableArea + EPS,
+    skyPlane: !hasSky || aboveSky <= upperEnv + EPS,
   }
   return {
     siteArea,
@@ -183,7 +200,8 @@ export function buildZoning(input: ZoningInput): Zoning {
     envelopeVolume: maxFootprint * maxHeight,
     proposed: { footprint, height, coverage, far: pFar },
     tiers,
-    compliance: { ...c, overall: c.far && c.height && c.coverage && c.setback },
+    envelopeTiers,
+    compliance: { ...c, overall: c.far && c.height && c.coverage && c.setback && c.skyPlane },
     utilisation: maxGFA > 0 ? (proposedGFA / maxGFA) * 100 : 0,
   }
 }

@@ -20,7 +20,7 @@ const PRESETS: { id: string; label: string; pts: Pt[] }[] = [
   { id: 'wedge', label: 'Wedge / through-lot', pts: [{ x: -40, z: -20 }, { x: 40, z: -28 }, { x: 30, z: 26 }, { x: -30, z: 22 }] },
 ]
 
-const DEFAULTS = { far: 4, heightLimit: 60, setback: 6, maxCoverage: 55, storeyHeight: 3.6, proposedGFA: 9000, proposedStoreys: 14, podium: 0.3, towerSetback: 0.35 }
+const DEFAULTS = { far: 4, heightLimit: 60, setback: 6, maxCoverage: 55, storeyHeight: 3.6, proposedGFA: 9000, proposedStoreys: 14, podium: 0.3, towerSetback: 0.35, skyBase: 24, skyStep: 0.3 }
 
 export default function SiteZoning() {
   const [boundary, setBoundary] = useState<Pt[]>(PRESETS[0].pts)
@@ -33,6 +33,8 @@ export default function SiteZoning() {
   const [proposedStoreys, setProposedStoreys] = useState(DEFAULTS.proposedStoreys)
   const [podium, setPodium] = useState(DEFAULTS.podium)
   const [towerSetback, setTowerSetback] = useState(DEFAULTS.towerSetback)
+  const [skyBase, setSkyBase] = useState(DEFAULTS.skyBase)
+  const [skyStep, setSkyStep] = useState(DEFAULTS.skyStep)
   const [geoText, setGeoText] = useState('')
   const [geoError, setGeoError] = useState<string | null>(null)
   // bumping this remounts the boundary editor so it refits its view after a
@@ -41,15 +43,15 @@ export default function SiteZoning() {
   const applyBoundary = (pts: Pt[]) => { setBoundary(pts); setBoundaryKey((k) => k + 1) }
 
   const z: Zoning = useMemo(
-    () => buildZoning({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback }),
-    [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback],
+    () => buildZoning({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback, skyBase, skyStep }),
+    [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback, skyBase, skyStep],
   )
 
   const reset = () => {
     applyBoundary(PRESETS[0].pts); setFar(DEFAULTS.far); setHeightLimit(DEFAULTS.heightLimit); setSetback(DEFAULTS.setback)
     setMaxCoverage(DEFAULTS.maxCoverage); setStoreyHeight(DEFAULTS.storeyHeight); setProposedGFA(DEFAULTS.proposedGFA)
     setProposedStoreys(DEFAULTS.proposedStoreys); setPodium(DEFAULTS.podium); setTowerSetback(DEFAULTS.towerSetback)
-    setGeoText(''); setGeoError(null)
+    setSkyBase(DEFAULTS.skyBase); setSkyStep(DEFAULTS.skyStep); setGeoText(''); setGeoError(null)
   }
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
@@ -80,10 +82,10 @@ export default function SiteZoning() {
       <div className="grid gap-4 lg:grid-cols-5">
         {/* 3D envelope */}
         <Card className="lg:col-span-3">
-          <CardHeader icon={MapIcon} accent={ACC} title="Massing envelope" subtitle="White = site boundary · amber dashed = setback · blue = legal envelope · solid = proposed podium + tower (green fits, red busts)" />
+          <CardHeader icon={MapIcon} accent={ACC} title="Massing envelope" subtitle="White = boundary · amber dashed = setback · blue = legal envelope (stepped at the sky plane) · solid = proposed podium + tower (green fits, red busts)" />
           <div className="border-t border-edge/50">
             <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-              <SiteZoningViewer boundary={boundary} buildable={z.buildable} maxHeight={z.maxHeight} tiers={z.tiers} proposedHeight={z.proposed.height} compliant={z.compliance.overall} height={460} />
+              <SiteZoningViewer boundary={boundary} buildable={z.buildable} maxHeight={z.maxHeight} tiers={z.tiers} envelopeTiers={z.envelopeTiers} proposedHeight={z.proposed.height} compliant={z.compliance.overall} height={460} />
             </Suspense>
             <p className="border-t border-edge/50 px-4 py-2 text-[11px] text-slate-500">Drag or arrow-keys to orbit · scroll to zoom. The proposed mass is sized to its footprint (GFA ÷ storeys) and nested in the setback line.</p>
           </div>
@@ -118,6 +120,8 @@ export default function SiteZoning() {
             </div>
             <Range label="Podium" value={podium} min={0} max={0.8} step={0.05} onChange={setPodium} fmt={(v) => (v === 0 ? 'none' : `${Math.round(v * 100)}% of storeys`)} />
             <Range label="Tower setback" value={towerSetback} min={0} max={0.6} step={0.02} onChange={setTowerSetback} fmt={(v) => `${Math.round(v * 100)}%`} />
+            <Range label="Sky-exposure base" unit="m" value={skyBase} min={0} max={120} step={2} onChange={setSkyBase} fmt={(v) => (v === 0 ? 'off' : `${v} m`)} />
+            <Range label="Sky-plane step-in" value={skyStep} min={0} max={0.6} step={0.02} onChange={setSkyStep} fmt={(v) => `${Math.round(v * 100)}%`} />
           </div>
         </Card>
       </div>
@@ -139,6 +143,9 @@ export default function SiteZoning() {
             <CheckRow ok={z.compliance.height} label="Height" detail={`${Math.round(z.proposed.height)} ≤ ${Math.round(z.maxHeight)} m`} />
             <CheckRow ok={z.compliance.coverage} label="Site coverage" detail={`${z.proposed.coverage.toFixed(0)}% ≤ ${maxCoverage}%`} />
             <CheckRow ok={z.compliance.setback} label="Footprint within setback" detail={`${formatNumber(Math.round(z.proposed.footprint))} ≤ ${formatNumber(Math.round(z.buildableArea))} m²`} />
+            {skyBase > 0 && z.envelopeTiers.length > 1 && (
+              <CheckRow ok={z.compliance.skyPlane} label={`Sky-exposure plane (${skyBase} m)`} detail={`${formatNumber(Math.round(z.tiers.reduce((m, t) => (t.top > skyBase ? Math.max(m, t.footprint) : m), 0)))} ≤ ${formatNumber(Math.round(z.envelopeTiers[1].footprint))} m² above`} />
+            )}
             <p className="pt-1 text-[13px] leading-relaxed text-slate-300">{narrative(z, proposedGFA)}</p>
           </div>
         </Card>
@@ -174,7 +181,8 @@ function narrative(z: Zoning, proposedGFA: number): string {
   if (!z.compliance.height) fails.push(`height is ${Math.round(z.proposed.height - z.maxHeight)} m over the limit`)
   if (!z.compliance.coverage) fails.push('footprint exceeds the coverage cap')
   if (!z.compliance.setback) fails.push('footprint spills past the setback line')
-  return `Non-compliant: ${fails.join('; ')}. Reduce GFA, add storeys to shrink the plate, or relax the rule that binds.`
+  if (!z.compliance.skyPlane) fails.push('the upper storeys breach the sky-exposure plane')
+  return `Non-compliant: ${fails.join('; ')}. Reduce GFA, add storeys to shrink the plate, set the podium to the sky-plane height, or relax the rule that binds.`
 }
 
 /* Top-down SVG plan: site boundary, setback polygon, proposed footprint. */

@@ -21,6 +21,7 @@ export function SiteZoningViewer({
   buildable,
   maxHeight,
   tiers,
+  envelopeTiers,
   proposedHeight,
   compliant,
   height = 460,
@@ -29,17 +30,18 @@ export function SiteZoningViewer({
   buildable: Pt[]
   maxHeight: number
   tiers: MassingTier[] // podium + tower slabs of the proposed scheme
+  envelopeTiers: MassingTier[] // legal envelope, stepped at the sky-exposure plane
   proposedHeight: number
   compliant: boolean
   height?: number
 }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
-  const propsRef = useRef({ boundary, buildable, maxHeight, tiers, proposedHeight, compliant })
-  propsRef.current = { boundary, buildable, maxHeight, tiers, proposedHeight, compliant }
+  const propsRef = useRef({ boundary, buildable, maxHeight, tiers, envelopeTiers, proposedHeight, compliant })
+  propsRef.current = { boundary, buildable, maxHeight, tiers, envelopeTiers, proposedHeight, compliant }
 
   const rebuildRef = useRef<(() => void) | null>(null)
-  useEffect(() => { rebuildRef.current?.() }, [boundary, buildable, maxHeight, tiers, proposedHeight, compliant])
+  useEffect(() => { rebuildRef.current?.() }, [boundary, buildable, maxHeight, tiers, envelopeTiers, proposedHeight, compliant])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -121,19 +123,25 @@ export function SiteZoningViewer({
 
     const build = () => {
       clear()
-      const { boundary: bnd, buildable: bld, maxHeight: mh, tiers: tr, proposedHeight: ph, compliant: ok } = propsRef.current
+      const { boundary: bnd, buildable: bld, maxHeight: mh, tiers: tr, envelopeTiers: env, proposedHeight: ph, compliant: ok } = propsRef.current
       if (bnd.length < 3) return
       const c = polygonCentroid(bnd)
 
       group.add(lineLoop(bnd, 0.05, '#e2e8f0')) // site boundary — white
       if (bld.length >= 3) group.add(lineLoop(bld, 0.06, '#fbbf24', true)) // setback — dashed amber
 
-      // legal envelope: extrude the buildable footprint to the height limit
+      // legal envelope — one translucent prism per tier (stepped at the sky plane)
       const envBase = bld.length >= 3 ? bld : bnd
-      if (mh > 0) {
-        const env = extrude(envBase, mh, envMat)
-        group.add(env)
-        group.add(lineLoop(envBase.map((p) => ({ x: p.x, z: p.z })), mh, '#38bdf8')) // roofline of the envelope
+      const envBaseArea = polygonArea(envBase)
+      for (const et of env) {
+        const k = envBaseArea > 0 ? Math.sqrt(Math.min(1, et.footprint / envBaseArea)) : 1
+        const poly = k < 0.999 ? scalePolygon(envBase, k, c) : envBase
+        const eh = et.top - et.base
+        if (eh <= 0) continue
+        const prism = extrude(poly, eh, envMat)
+        prism.position.y = et.base
+        group.add(prism)
+        group.add(lineLoop(poly, et.top, '#38bdf8')) // roofline of this tier
       }
 
       // proposed massing — one prism per tier (podium + tower), each sized to its
@@ -160,7 +168,7 @@ export function SiteZoningViewer({
       sc.left = -span; sc.right = span; sc.top = mh + span; sc.bottom = -span; sc.near = 0.1; sc.far = (mh + span) * 4
       sc.updateProjectionMatrix()
       applyCamera()
-      ;(mount as HTMLElement & { __zoning?: { envTop: number; massTop: number; compliant: boolean } }).__zoning = { envTop: mh, massTop: ph, compliant: ok }
+      ;(mount as HTMLElement & { __zoning?: { envTop: number; massTop: number; compliant: boolean; envTiers: number } }).__zoning = { envTop: mh, massTop: ph, compliant: ok, envTiers: env.length }
     }
     rebuildRef.current = build
 

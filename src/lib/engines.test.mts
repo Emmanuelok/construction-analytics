@@ -822,6 +822,15 @@ section('zoning')
   ok('podium+tower conserves GFA', near(pod.tiers[0].footprint * 4 + pod.tiers[1].footprint * 6, 3000, 1))
   ok('coverage binds on the larger podium plate', near(pod.proposed.footprint, pod.tiers[0].footprint, 1e-6))
 
+  // sky-exposure plane (stepped legal envelope)
+  ok('no sky plane → a single envelope tier to the height limit', z.envelopeTiers.length === 1 && z.compliance.skyPlane)
+  const sky = buildZoning({ boundary: site, far: 3, heightLimit: 40, setback: 5, maxCoverage: 90, storeyHeight: 3.5, proposedGFA: 3000, proposedStoreys: 10, skyBase: 10, skyStep: 0.4 })
+  ok('sky plane → two envelope tiers, upper stepped in above skyBase', sky.envelopeTiers.length === 2 && sky.envelopeTiers[1].base === 10 && sky.envelopeTiers[1].footprint < sky.envelopeTiers[0].footprint)
+  ok('upper envelope = buildable × (1−step)²', near(sky.envelopeTiers[1].footprint, 600 * 0.6 * 0.6, 0.01), sky.envelopeTiers[1].footprint)
+  ok('scheme busting the upper envelope fails the sky-plane check', !sky.compliance.skyPlane && !sky.compliance.overall) // 300 m² plate above 10 m > 216 m² upper env
+  const skyOk = buildZoning({ boundary: site, far: 3, heightLimit: 40, setback: 5, maxCoverage: 90, storeyHeight: 3.5, proposedGFA: 3000, proposedStoreys: 10, skyBase: 10, skyStep: 0.1 })
+  ok('a scheme within the upper envelope passes the sky-plane check', skyOk.compliance.skyPlane) // upper env 600×0.81=486 ≥ 300
+
   // GeoJSON import — metre ring + lon/lat ring + Feature wrapper
   const metres = parseGeoBoundary('[[0,0],[200,0],[200,150],[0,150]]')
   ok('parses a bare metre ring (area 30000)', !!metres && near(polygonArea(metres!), 30000, 1), metres && polygonArea(metres))
