@@ -24,6 +24,8 @@ import { toPublic, parseListQuery, listDatasets, findDataset, generateApiKey, is
 import { mentionNotifications, shareNotifications, alertNotifications, buildFeed, unreadCount, isUnread, timeAgo, parseReadIds, subjectName, type Notification } from './notifications.ts'
 import { buildMassing, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
 import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR } from './ifc-model.ts'
+import { extractGeometry } from './ifc-geometry.ts'
+import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -715,6 +717,33 @@ section('ifc-model')
   ok('storeys floored to ≥1', buildIfcScene({ entityCounts: counts, storeys: 0 }).storeys === 1)
 
   ok('discipline colours defined', DISCIPLINE_COLOR.struct.startsWith('#') && DISCIPLINE_COLOR.mep.startsWith('#'))
+}
+
+// ── ifc-geometry (real web-ifc tessellation of the bundled sample) ──────────────
+// Exercises the production extraction wrapper against SAMPLE_IFC_GEO end-to-end:
+// proves the WASM kernel tessellates our generated IFC into real meshes. The
+// WASM lives in node_modules; in CI the cwd is the repo root so this resolves.
+section('ifc-geometry')
+{
+  const bytes = new TextEncoder().encode(SAMPLE_IFC_GEO)
+  const res = await extractGeometry(bytes, { wasmPath: './node_modules/web-ifc/' })
+  // 4 storeys × (1 slab + 6 columns + 2 beams) + 2 walls on the lower 3 = 42 elements.
+  ok('tessellates every sample element (42 meshes)', res.meshes.length === 42, res.meshes.length)
+  ok('produces real vertices', res.vertexCount > 1000, res.vertexCount)
+  ok('produces real triangles', res.triangleCount > 300, res.triangleCount)
+  ok('every mesh has positions, normals and indices', res.meshes.every((m) => m.positions.length > 0 && m.normals.length === m.positions.length && m.indices.length > 0))
+  ok('positions and normals are xyz triples', res.meshes.every((m) => m.positions.length % 3 === 0))
+  ok('indices form whole triangles', res.meshes.every((m) => m.indices.length % 3 === 0))
+  ok('each mesh carries a 4x4 placement matrix', res.meshes.every((m) => m.matrix.length === 16))
+  ok('each mesh carries an RGBA colour', res.meshes.every((m) => 'r' in m.color && 'a' in m.color))
+  ok('classifies discipline from real IFC type (36 struct, 6 arch)',
+    res.meshes.filter((m) => m.discipline === 'struct').length === 36 && res.meshes.filter((m) => m.discipline === 'arch').length === 6,
+    res.meshes.reduce<Record<string, number>>((a, m) => ({ ...a, [m.discipline]: (a[m.discipline] ?? 0) + 1 }), {}))
+  ok('bbox spans the four storeys vertically (~14m, Y-up)', !!res.bbox && near(res.bbox.max[1] - res.bbox.min[1], 14, 0.5), res.bbox)
+  ok('bbox plan width ~16m', !!res.bbox && near(res.bbox.max[0] - res.bbox.min[0], 16, 0.5), res.bbox)
+  // Robustness: garbage / empty bytes never throw, just yield an empty result.
+  const junk = await extractGeometry(new TextEncoder().encode('not an ifc file'))
+  ok('invalid input → empty result, no throw', junk.meshes.length === 0 && junk.bbox === null)
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)

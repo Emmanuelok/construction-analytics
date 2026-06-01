@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Boxes,
   Upload,
@@ -40,8 +40,11 @@ import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 import { parseIfc, type ParsedIfc } from '@/lib/ifc'
 import { buildIfcScene, DISCIPLINE_COLOR, DISCIPLINE_LABEL, type Discipline } from '@/lib/ifc-model'
+import type { IfcMesh } from '@/lib/ifc-geometry'
+import { locateWasm } from '@/lib/ifc-wasm-url'
 const IfcModelViewer = lazy(() => import('@/components/IfcModelViewer').then((m) => ({ default: m.IfcModelViewer })))
 import { SAMPLE_IFC } from '@/lib/ifc-sample'
+import { SAMPLE_IFC_GEO } from '@/lib/ifc-sample-geo'
 import {
   computeHealth,
   clashNarrative,
@@ -79,6 +82,7 @@ export default function Bim() {
   // ---- real in-browser IFC parser (kept) ----
   const fileRef = useRef<HTMLInputElement>(null)
   const [parsed, setParsed] = useState<ParsedIfc | null>(null)
+  const [source, setSource] = useState<string | null>(null) // raw text → web-ifc tessellation
   const [parsing, setParsing] = useState(false)
   const [parseError, setParseError] = useState<string | null>(null)
 
@@ -89,8 +93,10 @@ export default function Bim() {
       const result = parseIfc(text, fileName)
       if (result.totalInstances === 0) throw new Error('No IFC instances found — is this a STEP/IFC file?')
       setParsed(result)
+      setSource(text)
     } catch (err) {
       setParsed(null)
+      setSource(null)
       setParseError(err instanceof Error ? err.message : 'Failed to parse file')
     } finally {
       setParsing(false)
@@ -155,8 +161,11 @@ export default function Bim() {
             <button onClick={() => fileRef.current?.click()} className="btn-ghost">
               <Upload className="h-4 w-4" /> Upload IFC
             </button>
-            <button onClick={() => runParse(SAMPLE_IFC, 'MeridianTower-Sample.ifc')} className="btn-primary" disabled={parsing}>
-              {parsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />} Parse sample
+            <button onClick={() => runParse(SAMPLE_IFC, 'MeridianTower-Sample.ifc')} className="btn-ghost" disabled={parsing}>
+              <ScanSearch className="h-4 w-4" /> Parse sample
+            </button>
+            <button onClick={() => runParse(SAMPLE_IFC_GEO, 'MeridianTower-Geometry.ifc')} className="btn-primary" disabled={parsing}>
+              {parsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Boxes className="h-4 w-4" />} Sample with geometry
             </button>
             <input ref={fileRef} type="file" accept=".ifc,.step,.stp,.txt,text/plain" className="hidden" onChange={onFile} />
           </>
@@ -170,7 +179,7 @@ export default function Bim() {
         </div>
       )}
 
-      {parsed && <ParsedModel data={parsed} onClear={() => setParsed(null)} />}
+      {parsed && <ParsedModel data={parsed} source={source ?? ''} onClear={() => { setParsed(null); setSource(null) }} />}
 
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
@@ -396,13 +405,41 @@ function MiniStat({ label, value, accent }: { label: string; value: string; acce
   )
 }
 
-function ParsedModel({ data, onClear }: { data: ParsedIfc; onClear: () => void }) {
+const DISCIPLINES: Discipline[] = ['struct', 'arch', 'mep', 'other']
+
+function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: string; onClear: () => void }) {
   const maxEntity = data.entityCounts[0]?.count ?? 1
   const indicativeTotal = data.quantities.reduce((s, q) => s + q.total * (KIND_RATE[q.kind] ?? 0), 0)
   const [hidden, setHidden] = useState<Partial<Record<Discipline, boolean>>>({})
   const sceneInput = { entityCounts: data.entityCounts, storeys: Math.max(1, data.storeys.length) }
   const scene = buildIfcScene(sceneInput)
   const toggle = (d: Discipline) => setHidden((h) => ({ ...h, [d]: !h[d] }))
+
+  // Tessellate the real file with web-ifc (lazy + async). On success we render the
+  // actual triangulated solids; otherwise we keep the count-based reconstruction.
+  const [meshes, setMeshes] = useState<IfcMesh[] | null>(null)
+  const [geoState, setGeoState] = useState<'loading' | 'real' | 'recon'>('loading')
+  useEffect(() => {
+    let cancelled = false
+    setMeshes(null); setGeoState('loading'); setHidden({})
+    if (!source) { setGeoState('recon'); return }
+    import('@/lib/ifc-geometry')
+      .then(({ extractGeometry }) => extractGeometry(new TextEncoder().encode(source), { locateFile: locateWasm }))
+      .then((res) => {
+        if (cancelled) return
+        if (res.meshes.length) { setMeshes(res.meshes); setGeoState('real') }
+        else { setMeshes(null); setGeoState('recon') }
+      })
+      .catch(() => { if (!cancelled) { setMeshes(null); setGeoState('recon') } })
+    return () => { cancelled = true }
+  }, [source])
+
+  const real = geoState === 'real' && meshes !== null
+  const disciplines = real
+    ? DISCIPLINES.map((d) => ({ discipline: d, count: meshes!.filter((m) => m.discipline === d).length })).filter((d) => d.count > 0)
+    : scene.byDiscipline
+  const elementCount = real ? meshes!.length : scene.placed
+  const hasModel = real || scene.placed > 0
   return (
     <Card>
       <CardHeader
@@ -424,13 +461,24 @@ function ParsedModel({ data, onClear }: { data: ParsedIfc; onClear: () => void }
           <MiniStat label="Storeys" value={formatNumber(data.storeys.length)} accent="teal" />
         </div>
 
-        {/* 3D reconstruction from the file's real element counts + storeys */}
-        {scene.placed > 0 && (
+        {/* 3D model — real web-ifc tessellation when the file carries geometry,
+            otherwise a reconstruction from the file's element counts + storeys */}
+        {hasModel && (
           <div className="overflow-hidden rounded-xl border border-edge/60">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-edge/60 bg-elevated/30 px-4 py-2.5">
-              <span className="flex items-center gap-2 text-sm font-medium text-slate-200"><Boxes className="h-4 w-4 text-blue-400" /> 3D model · {formatNumber(scene.placed)} elements across {scene.storeys} storeys</span>
+              <span className="flex items-center gap-2 text-sm font-medium text-slate-200">
+                <Boxes className="h-4 w-4 text-blue-400" />
+                {real
+                  ? <>Tessellated geometry · {formatNumber(elementCount)} solids</>
+                  : <>3D model · {formatNumber(elementCount)} elements across {scene.storeys} storeys</>}
+                {real
+                  ? <Badge variant="success">web-ifc</Badge>
+                  : geoState === 'loading'
+                    ? <span className="inline-flex items-center gap-1 text-[11px] text-slate-400"><Loader2 className="h-3 w-3 animate-spin" /> tessellating…</span>
+                    : <Badge variant="neutral">reconstruction</Badge>}
+              </span>
               <div className="flex flex-wrap gap-1.5">
-                {scene.byDiscipline.map((d) => (
+                {disciplines.map((d) => (
                   <button
                     key={d.discipline}
                     onClick={() => toggle(d.discipline)}
@@ -444,10 +492,12 @@ function ParsedModel({ data, onClear }: { data: ParsedIfc; onClear: () => void }
               </div>
             </div>
             <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-              <IfcModelViewer input={sceneInput} hidden={hidden} height={460} />
+              <IfcModelViewer input={sceneInput} meshes={real ? meshes! : undefined} hidden={hidden} height={460} />
             </Suspense>
             <p className="border-t border-edge/60 px-4 py-2 text-[11px] text-slate-500">
-              Reconstructed from the file's real element counts and storeys (columns on a grid, walls at the perimeter, slabs per floor, beams + MEP risers), coloured by discipline. IFC text carries no mesh geometry — drag to orbit, scroll to zoom, toggle disciplines above.
+              {real
+                ? <>Real triangulated geometry tessellated from the IFC file by the web-ifc WASM kernel, coloured by discipline. Drag to orbit, scroll to zoom, toggle disciplines above.</>
+                : <>This file carries no mesh geometry, so the model is reconstructed from its real element counts and storeys (columns on a grid, walls at the perimeter, slabs per floor, beams + MEP risers). Drag to orbit, scroll to zoom, toggle disciplines above.</>}
             </p>
           </div>
         )}

@@ -19,8 +19,10 @@ let failures = 0
 for (const r of ROUTES) {
   const page = await browser.newPage()
   try {
-    await page.goto(BASE + r, { waitUntil: 'networkidle0', timeout: 30000 })
-    await new Promise((x) => setTimeout(x, 300))
+    // domcontentloaded (not networkidle0): pages with a continuous WebGL rAF loop
+    // — /project's massing model, the BIM viewer — never reach network idle.
+    await page.goto(BASE + r, { waitUntil: 'domcontentloaded', timeout: 30000 })
+    await new Promise((x) => setTimeout(x, 600))
     const res = await new AxePuppeteer(page).withTags(['wcag2a', 'wcag2aa']).analyze()
     const bad = res.violations.filter((v) => (v.impact === 'serious' || v.impact === 'critical') && !IGNORE.has(v.id))
     if (bad.length) {

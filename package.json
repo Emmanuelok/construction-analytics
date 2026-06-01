@@ -25,7 +25,8 @@
     "recharts": "^2.13.3",
     "stripe": "^22.2.0",
     "tailwind-merge": "^2.5.4",
-    "three": "^0.169.0"
+    "three": "^0.169.0",
+    "web-ifc": "^0.0.57"
   },
   "devDependencies": {
     "@axe-core/puppeteer": "^4.11.3",
