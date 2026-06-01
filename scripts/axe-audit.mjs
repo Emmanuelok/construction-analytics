@@ -10,7 +10,7 @@ const BASE = process.env.AXE_BASE || 'http://localhost:5173/construction-analyti
 const ROUTES = [
   '/welcome', '/overview', '/project', '/alerts', '/notifications', '/developer',
   '/cost-schedule', '/procurement', '/field', '/reality-capture', '/digital-twin',
-  '/bim', '/sustainability', '/insights', '/governance', '/documents', '/ai-studio',
+  '/bim', '/site-zoning', '/sustainability', '/insights', '/governance', '/documents', '/ai-studio',
 ]
 const IGNORE = new Set(['color-contrast']) // tracked separately (theme tokens)
 

@@ -26,6 +26,7 @@ import {
   Building,
   Bell,
   Code2,
+  Map,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -70,6 +71,7 @@ export const NAV: NavItem[] = [
   // Intelligence engines (supporting analytics)
   { path: '/insights', label: 'Executive Insights', blurb: 'Portfolio KPIs, risk & decisions', icon: Gauge, accent: 'cyan', group: 'Intelligence' },
   { path: '/bim', label: 'BIM Intelligence', blurb: 'Parse, classify, clash & quantify models', icon: Boxes, accent: 'blue', group: 'Intelligence' },
+  { path: '/site-zoning', label: 'Site & Zoning', blurb: 'Site boundary, FAR/height/setback envelope & live compliance', icon: Map, accent: 'teal', group: 'Intelligence', tag: 'NEW' },
   { path: '/documents', label: 'Document Intelligence', blurb: 'Drawings, specs, contracts, RFIs', icon: FileText, accent: 'amber', group: 'Intelligence' },
   { path: '/cost-schedule', label: 'Cost & Schedule', blurb: 'Forecast overruns, delays & earned value', icon: CalendarClock, accent: 'rose', group: 'Intelligence' },
   { path: '/procurement', label: 'Procurement', blurb: 'Supplier scoring, bids & lead-time risk', icon: Truck, accent: 'lime', group: 'Intelligence' },

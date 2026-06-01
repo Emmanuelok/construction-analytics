@@ -26,6 +26,7 @@ import { buildMassing, deriveStoreys, floorColor, type FloorSpec } from './massi
 import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, type SelectedElement } from './ifc-model.ts'
 import { extractGeometry } from './ifc-geometry.ts'
 import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
+import { buildZoning, insetPolygon, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -752,6 +753,38 @@ section('ifc-geometry')
   // Robustness: garbage / empty bytes never throw, just yield an empty result.
   const junk = await extractGeometry(new TextEncoder().encode('not an ifc file'))
   ok('invalid input → empty result, no throw', junk.meshes.length === 0 && junk.bbox === null)
+}
+
+// ── zoning (site boundary + envelope + compliance) ──────────────────────────────
+section('zoning')
+{
+  const site = rectSite(40, 30)
+  ok('rect site area / perimeter / centroid', polygonArea(site) === 1200 && polygonPerimeter(site) === 140 && near(polygonCentroid(site).x, 0) && near(polygonCentroid(site).z, 0))
+  const inset = insetPolygon(site, 5)
+  ok('inset by 5 → 30×20 (area 600)', inset.length === 4 && near(polygonArea(inset), 600, 0.001), polygonArea(inset))
+  ok('inset larger than the site collapses to empty', insetPolygon(site, 25).length === 0)
+  ok('scalePolygon halves area by k²', near(polygonArea(scalePolygon(site, 0.5)), 300, 0.001))
+
+  const z = buildZoning({ boundary: site, far: 3, heightLimit: 40, setback: 5, maxCoverage: 50, storeyHeight: 3.5, proposedGFA: 3000, proposedStoreys: 10 })
+  ok('site area 1200, maxGFA = FAR×area = 3600', z.siteArea === 1200 && z.maxGFA === 3600)
+  ok('buildable = inset area 600; coverage cap 600 → maxFootprint 600', near(z.buildableArea, 600, 0.001) && near(z.maxFootprint, 600, 0.001))
+  ok('proposed footprint = GFA/storeys = 300, height = 35', near(z.proposed.footprint, 300) && near(z.proposed.height, 35))
+  ok('compliant scheme passes all checks', z.compliance.overall && z.compliance.far && z.compliance.height && z.compliance.coverage && z.compliance.setback)
+  ok('utilisation = 3000/3600 ≈ 83.3%', near(z.utilisation, 83.33, 0.1), z.utilisation)
+
+  const over = buildZoning({ boundary: site, far: 3, heightLimit: 40, setback: 5, maxCoverage: 50, storeyHeight: 3.5, proposedGFA: 5000, proposedStoreys: 10 })
+  ok('over-FAR scheme fails FAR + overall', !over.compliance.far && !over.compliance.overall)
+  const tall = buildZoning({ boundary: site, far: 10, heightLimit: 20, setback: 5, maxCoverage: 90, storeyHeight: 3.5, proposedGFA: 4000, proposedStoreys: 10 })
+  ok('over-height scheme fails height (35 > 20)', !tall.compliance.height && !tall.compliance.overall)
+
+  // GeoJSON import — metre ring + lon/lat ring + Feature wrapper
+  const metres = parseGeoBoundary('[[0,0],[200,0],[200,150],[0,150]]')
+  ok('parses a bare metre ring (area 30000)', !!metres && near(polygonArea(metres!), 30000, 1), metres && polygonArea(metres))
+  const feat = parseGeoBoundary(JSON.stringify({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[0, 0], [300, 0], [300, 200], [0, 200], [0, 0]]] } }))
+  ok('parses a GeoJSON Feature polygon, drops closing vertex (4 pts, area 60000)', !!feat && feat!.length === 4 && near(polygonArea(feat!), 60000, 1))
+  const ll = parseGeoBoundary('[[-0.0005,-0.0005],[0.0005,-0.0005],[0.0005,0.0005],[-0.0005,0.0005]]')
+  ok('projects a lon/lat ring to metres (~12,300 m²)', !!ll && polygonArea(ll!) > 11000 && polygonArea(ll!) < 13500, ll && polygonArea(ll))
+  ok('rejects non-JSON input', parseGeoBoundary('not json') === null)
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)

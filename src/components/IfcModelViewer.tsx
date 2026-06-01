@@ -341,6 +341,7 @@ export function IfcModelViewer({
       ref={mountRef}
       style={{ height }}
       tabIndex={0}
+      role="application"
       aria-label={`${content}. Use arrow keys to orbit, plus and minus to zoom, Home to reset the view.`}
       className="w-full overflow-hidden rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
     />

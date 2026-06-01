@@ -25,6 +25,7 @@ const Lakehouse = lazy(() => import('@/pages/Lakehouse'))
 const AiStudio = lazy(() => import('@/pages/AiStudio'))
 const Governance = lazy(() => import('@/pages/Governance'))
 const Bim = lazy(() => import('@/pages/Bim'))
+const SiteZoning = lazy(() => import('@/pages/SiteZoning'))
 const Documents = lazy(() => import('@/pages/Documents'))
 const CostSchedule = lazy(() => import('@/pages/CostSchedule'))
 const Procurement = lazy(() => import('@/pages/Procurement'))
@@ -80,6 +81,7 @@ export const router = createBrowserRouter(
         { path: 'governance', element: <Governance /> },
         { path: 'developer', element: <Developer /> },
         { path: 'bim', element: <Bim /> },
+        { path: 'site-zoning', element: <SiteZoning /> },
         { path: 'documents', element: <Documents /> },
         { path: 'cost-schedule', element: <CostSchedule /> },
         { path: 'procurement', element: <Procurement /> },
