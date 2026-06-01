@@ -420,9 +420,11 @@ function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: strin
   const [meshes, setMeshes] = useState<IfcMesh[] | null>(null)
   const [geoState, setGeoState] = useState<'loading' | 'real' | 'recon'>('loading')
   const [selected, setSelected] = useState<SelectedElement | null>(null)
+  const [explode, setExplode] = useState(0)
+  const [resetNonce, setResetNonce] = useState(0)
   useEffect(() => {
     let cancelled = false
-    setMeshes(null); setGeoState('loading'); setHidden({}); setSelected(null)
+    setMeshes(null); setGeoState('loading'); setHidden({}); setSelected(null); setExplode(0)
     if (!source) { setGeoState('recon'); return }
     import('@/lib/ifc-geometry')
       .then(({ extractGeometry }) => extractGeometry(new TextEncoder().encode(source), { locateFile: locateWasm }))
@@ -492,9 +494,19 @@ function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: strin
                 ))}
               </div>
             </div>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-edge/60 bg-elevated/20 px-4 py-2 text-xs">
+              <label className="flex items-center gap-2 text-slate-400">
+                <span>Explode</span>
+                <input type="range" min={0} max={1} step={0.02} value={explode} onChange={(e) => setExplode(Number(e.target.value))} className="h-1 w-32 cursor-pointer accent-blue-500" aria-label="Explode model by height" />
+              </label>
+              <button onClick={() => { setExplode(0); setSelected(null); setResetNonce((n) => n + 1) }} className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 font-medium text-slate-300 ring-1 ring-inset ring-edge/70 hover:bg-elevated/60">
+                <RotateCcw className="h-3.5 w-3.5" /> Reset view
+              </button>
+              <span className="text-slate-500">Drag to orbit · scroll to zoom · click to inspect</span>
+            </div>
             <div className="relative">
               <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-                <IfcModelViewer input={sceneInput} meshes={real ? meshes! : undefined} hidden={hidden} selectedKey={selected?.key ?? null} onSelect={setSelected} height={460} />
+                <IfcModelViewer input={sceneInput} meshes={real ? meshes! : undefined} hidden={hidden} selectedKey={selected?.key ?? null} onSelect={setSelected} explode={explode} resetNonce={resetNonce} height={460} />
               </Suspense>
               {selected && (
                 <div className="absolute left-3 top-3 w-60 rounded-lg border border-edge/70 bg-base/90 p-3 text-xs shadow-xl backdrop-blur" role="status" aria-label={describeSelection(selected)}>

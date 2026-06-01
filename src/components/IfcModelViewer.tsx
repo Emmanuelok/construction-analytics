@@ -21,12 +21,17 @@ function webglAvailable(): boolean {
  * inspect: a click raycasts to the element under the cursor, reports it via
  * onSelect, and the matching `selectedKey` is outlined. Falls back to a text
  * summary where WebGL is unavailable. */
+const DEFAULT_AZIMUTH = Math.PI * 0.28
+const DEFAULT_POLAR = Math.PI * 0.34
+
 export function IfcModelViewer({
   input,
   meshes,
   hidden = {},
   selectedKey = null,
   onSelect,
+  explode = 0,
+  resetNonce = 0,
   height = 460,
 }: {
   input: IfcSceneInput
@@ -34,19 +39,26 @@ export function IfcModelViewer({
   hidden?: Partial<Record<Discipline, boolean>>
   selectedKey?: string | null
   onSelect?: (el: SelectedElement | null) => void
+  explode?: number // 0 = assembled; >0 spreads elements apart vertically
+  resetNonce?: number // bump to recentre + reframe the camera
   height?: number
 }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
-  const propsRef = useRef({ input, meshes, hidden, selectedKey, onSelect })
-  propsRef.current = { input, meshes, hidden, selectedKey, onSelect }
+  const propsRef = useRef({ input, meshes, hidden, selectedKey, onSelect, explode })
+  propsRef.current = { input, meshes, hidden, selectedKey, onSelect, explode }
 
   const rebuildRef = useRef<(() => void) | null>(null)
   useEffect(() => { rebuildRef.current?.() }, [input.entityCounts, input.storeys, meshes, hidden.struct, hidden.arch, hidden.mep, hidden.other])
 
-  // Highlight is cheap and independent of geometry, so it gets its own effect.
+  // Highlight, explode and reset are cheap and independent of geometry, so each
+  // gets its own effect (no full scene rebuild).
   const highlightRef = useRef<((key: string | null) => void) | null>(null)
   useEffect(() => { highlightRef.current?.(selectedKey ?? null) }, [selectedKey])
+  const explodeRef = useRef<((f: number) => void) | null>(null)
+  useEffect(() => { explodeRef.current?.(explode) }, [explode])
+  const resetRef = useRef<(() => void) | null>(null)
+  useEffect(() => { if (resetNonce) resetRef.current?.() }, [resetNonce])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -98,8 +110,9 @@ export function IfcModelViewer({
     let geometries: THREE.BufferGeometry[] = []
     const objects: THREE.Mesh[] = []
     let boxHelper: THREE.BoxHelper | null = null
+    let minBaseY = 0 // lowest element, for the explode spread
 
-    const orbit = { azimuth: Math.PI * 0.28, polar: Math.PI * 0.34, radius: 60, target: new THREE.Vector3(0, 0, 0) }
+    const orbit = { azimuth: DEFAULT_AZIMUTH, polar: DEFAULT_POLAR, radius: 60, target: new THREE.Vector3(0, 0, 0) }
     const applyCamera = () => {
       const { azimuth, polar, radius, target } = orbit
       camera.position.set(
@@ -144,6 +157,22 @@ export function IfcModelViewer({
       applyCamera()
     }
 
+    // Spread elements apart vertically (assembled at f=0). baseY is each object's
+    // un-exploded height; higher elements travel further so floors separate.
+    const applyExplode = (f: number) => {
+      for (const o of objects) {
+        const baseY = (o.userData as { baseY?: number }).baseY ?? o.position.y
+        o.position.y = baseY + (baseY - minBaseY) * f
+      }
+      boxHelper?.update()
+      const b = new THREE.Box3().setFromObject(group) // debug hook: current vertical span
+      ;(mount as HTMLElement & { __spanY?: number }).__spanY = b.isEmpty() ? 0 : b.max.y - b.min.y
+    }
+    explodeRef.current = applyExplode
+
+    const resetView = () => { orbit.azimuth = DEFAULT_AZIMUTH; orbit.polar = DEFAULT_POLAR; frameToGroup() }
+    resetRef.current = resetView
+
     const buildReal = (list: IfcMesh[], hid: Partial<Record<Discipline, boolean>>) => {
       list.forEach((m, i) => {
         if (hid[m.discipline]) return
@@ -177,9 +206,12 @@ export function IfcModelViewer({
 
     const build = () => {
       clear()
-      const { input: inp, meshes: ms, hidden: hid, selectedKey: sk } = propsRef.current
+      const { input: inp, meshes: ms, hidden: hid, selectedKey: sk, explode: ex } = propsRef.current
       if (ms && ms.length) buildReal(ms, hid)
       else buildRecon(inp, hid)
+      for (const o of objects) (o.userData as { baseY?: number }).baseY = o.position.y
+      minBaseY = objects.length ? Math.min(...objects.map((o) => o.position.y)) : 0
+      applyExplode(ex ?? 0)
       frameToGroup()
       applyHighlight(sk ?? null)
       ;(mount as HTMLElement & { __meshCount?: number }).__meshCount = objects.length
