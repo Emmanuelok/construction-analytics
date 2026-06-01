@@ -77,14 +77,11 @@ export function BuildingViewer({
     scene.add(new THREE.AmbientLight('#94a3b8', 0.55))
     scene.add(new THREE.HemisphereLight('#cbd5e1', '#0a0f1c', 0.5))
     const key = new THREE.DirectionalLight('#ffffff', 1.4)
-    key.position.set(14, 26, 16)
     key.castShadow = true
     key.shadow.mapSize.set(1024, 1024)
-    key.shadow.camera.near = 1
-    key.shadow.camera.far = 90
-    const sc = key.shadow.camera as THREE.OrthographicCamera
-    sc.left = -30; sc.right = 30; sc.top = 30; sc.bottom = -30
+    const sc = key.shadow.camera as THREE.OrthographicCamera // position + frustum sized per-build
     scene.add(key)
+    scene.add(key.target)
 
     // ── ground ────────────────────────────────────────────────────────────────
     const ground = new THREE.Mesh(
@@ -116,7 +113,6 @@ export function BuildingViewer({
 
       const { input: inp, mode: md, metric: mt, selected: sel } = propsRef.current
       const massing = buildMassing(inp)
-      const yOffset = massing.totalHeight / 2 // centre the building on the origin
 
       for (const f of massing.floors as FloorSpec[]) {
         const geo = new THREE.BoxGeometry(f.halfW * 2, f.height, f.halfD * 2)
@@ -132,7 +128,7 @@ export function BuildingViewer({
           emissiveIntensity: isSel ? 0.5 : 0,
         })
         const mesh = new THREE.Mesh(geo, mat)
-        mesh.position.y = f.y - yOffset
+        mesh.position.y = f.y // floor 0 sits on the ground (y=0), tower rises up
         mesh.castShadow = true
         mesh.receiveShadow = true
         mesh.userData.index = f.index
@@ -152,14 +148,23 @@ export function BuildingViewer({
       // both short fit-outs and tall towers are fully visible.
       const h = massing.totalHeight
       const span = Math.max(h, massing.footprint * 2)
-      orbit.target.set(0, 0, 0)
+      const centre = h / 2 // building sits on the ground, so orbit around its mid-height
+      orbit.target.set(0, centre, 0)
       orbit.radius = Math.max(14, span * 1.5)
       scene.fog = new THREE.Fog('#0a0f1c', orbit.radius * 0.6, orbit.radius * 2.4)
       ground.scale.setScalar(Math.max(1, span / 24))
       grid.scale.setScalar(Math.max(1, span / 24))
+      // size the key light + shadow frustum to the building so tall towers are lit/shadowed
+      key.position.set(span * 0.8, h + span * 0.8, span * 0.6)
+      key.target.position.set(0, centre, 0)
+      sc.left = -span; sc.right = span; sc.top = h + span; sc.bottom = -span; sc.near = 0.1; sc.far = (h + span) * 3
+      sc.updateProjectionMatrix()
       applyCamera()
-      // debug hook for tests/automation — how many floor meshes are in the scene
-      ;(mount as HTMLElement & { __floorCount?: number }).__floorCount = floorMeshes.length
+      // debug hooks for tests/automation — floor count + the building's base height
+      // (lowest floor's underside; must be ≥0 so nothing dips below the ground)
+      const f0 = massing.floors[0]
+      ;(mount as HTMLElement & { __floorCount?: number; __baseY?: number }).__floorCount = floorMeshes.length
+      ;(mount as HTMLElement & { __baseY?: number }).__baseY = f0 ? f0.y - f0.height / 2 : 0
     }
     rebuildRef.current = buildFloors
 
