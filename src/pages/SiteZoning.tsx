@@ -19,7 +19,7 @@ const PRESETS: { id: string; label: string; pts: Pt[] }[] = [
   { id: 'wedge', label: 'Wedge / through-lot', pts: [{ x: -40, z: -20 }, { x: 40, z: -28 }, { x: 30, z: 26 }, { x: -30, z: 22 }] },
 ]
 
-const DEFAULTS = { far: 4, heightLimit: 60, setback: 6, maxCoverage: 55, storeyHeight: 3.6, proposedGFA: 9000, proposedStoreys: 14 }
+const DEFAULTS = { far: 4, heightLimit: 60, setback: 6, maxCoverage: 55, storeyHeight: 3.6, proposedGFA: 9000, proposedStoreys: 14, podium: 0.3, towerSetback: 0.35 }
 
 export default function SiteZoning() {
   const [boundary, setBoundary] = useState<Pt[]>(PRESETS[0].pts)
@@ -30,18 +30,21 @@ export default function SiteZoning() {
   const [storeyHeight, setStoreyHeight] = useState(DEFAULTS.storeyHeight)
   const [proposedGFA, setProposedGFA] = useState(DEFAULTS.proposedGFA)
   const [proposedStoreys, setProposedStoreys] = useState(DEFAULTS.proposedStoreys)
+  const [podium, setPodium] = useState(DEFAULTS.podium)
+  const [towerSetback, setTowerSetback] = useState(DEFAULTS.towerSetback)
   const [geoText, setGeoText] = useState('')
   const [geoError, setGeoError] = useState<string | null>(null)
 
   const z: Zoning = useMemo(
-    () => buildZoning({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys }),
-    [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys],
+    () => buildZoning({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback }),
+    [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback],
   )
 
   const reset = () => {
     setBoundary(PRESETS[0].pts); setFar(DEFAULTS.far); setHeightLimit(DEFAULTS.heightLimit); setSetback(DEFAULTS.setback)
     setMaxCoverage(DEFAULTS.maxCoverage); setStoreyHeight(DEFAULTS.storeyHeight); setProposedGFA(DEFAULTS.proposedGFA)
-    setProposedStoreys(DEFAULTS.proposedStoreys); setGeoText(''); setGeoError(null)
+    setProposedStoreys(DEFAULTS.proposedStoreys); setPodium(DEFAULTS.podium); setTowerSetback(DEFAULTS.towerSetback)
+    setGeoText(''); setGeoError(null)
   }
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
@@ -72,10 +75,10 @@ export default function SiteZoning() {
       <div className="grid gap-4 lg:grid-cols-5">
         {/* 3D envelope */}
         <Card className="lg:col-span-3">
-          <CardHeader icon={MapIcon} accent={ACC} title="Massing envelope" subtitle="White = site boundary · amber dashed = setback · blue = legal envelope · solid = proposed (green fits, red busts)" />
+          <CardHeader icon={MapIcon} accent={ACC} title="Massing envelope" subtitle="White = site boundary · amber dashed = setback · blue = legal envelope · solid = proposed podium + tower (green fits, red busts)" />
           <div className="border-t border-edge/50">
             <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-              <SiteZoningViewer boundary={boundary} buildable={z.buildable} maxHeight={z.maxHeight} proposedFootprint={z.proposed.footprint} proposedHeight={z.proposed.height} compliant={z.compliance.overall} height={460} />
+              <SiteZoningViewer boundary={boundary} buildable={z.buildable} maxHeight={z.maxHeight} tiers={z.tiers} proposedHeight={z.proposed.height} compliant={z.compliance.overall} height={460} />
             </Suspense>
             <p className="border-t border-edge/50 px-4 py-2 text-[11px] text-slate-500">Drag or arrow-keys to orbit · scroll to zoom. The proposed mass is sized to its footprint (GFA ÷ storeys) and nested in the setback line.</p>
           </div>
@@ -107,6 +110,8 @@ export default function SiteZoning() {
               <Num label="Storeys" value={proposedStoreys} step={1} onChange={(v) => setProposedStoreys(Math.max(1, Math.round(v)))} />
               <Num label="Storey height" unit="m" value={storeyHeight} step={0.1} onChange={(v) => setStoreyHeight(Math.max(2, v))} />
             </div>
+            <Range label="Podium" value={podium} min={0} max={0.8} step={0.05} onChange={setPodium} fmt={(v) => (v === 0 ? 'none' : `${Math.round(v * 100)}% of storeys`)} />
+            <Range label="Tower setback" value={towerSetback} min={0} max={0.6} step={0.02} onChange={setTowerSetback} fmt={(v) => `${Math.round(v * 100)}%`} />
           </div>
         </Card>
       </div>

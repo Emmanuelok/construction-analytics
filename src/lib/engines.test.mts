@@ -799,6 +799,14 @@ section('zoning')
   const tall = buildZoning({ boundary: site, far: 10, heightLimit: 20, setback: 5, maxCoverage: 90, storeyHeight: 3.5, proposedGFA: 4000, proposedStoreys: 10 })
   ok('over-height scheme fails height (35 > 20)', !tall.compliance.height && !tall.compliance.overall)
 
+  // podium + tower massing (GFA-conserving, stepped)
+  ok('no podium → a single tier spanning the full height', z.tiers.length === 1 && z.tiers[0].base === 0 && near(z.tiers[0].top, 35))
+  const pod = buildZoning({ boundary: site, far: 3, heightLimit: 40, setback: 5, maxCoverage: 90, storeyHeight: 3.5, proposedGFA: 3000, proposedStoreys: 10, podium: 0.4, towerSetback: 0.4 })
+  ok('podium → two tiers, podium plate larger than tower', pod.tiers.length === 2 && pod.tiers[0].footprint > pod.tiers[1].footprint)
+  ok('tiers stack base→top to the full height', pod.tiers[0].base === 0 && near(pod.tiers[0].top, 14) && near(pod.tiers[1].top, 35))
+  ok('podium+tower conserves GFA', near(pod.tiers[0].footprint * 4 + pod.tiers[1].footprint * 6, 3000, 1))
+  ok('coverage binds on the larger podium plate', near(pod.proposed.footprint, pod.tiers[0].footprint, 1e-6))
+
   // GeoJSON import — metre ring + lon/lat ring + Feature wrapper
   const metres = parseGeoBoundary('[[0,0],[200,0],[200,150],[0,150]]')
   ok('parses a bare metre ring (area 30000)', !!metres && near(polygonArea(metres!), 30000, 1), metres && polygonArea(metres))

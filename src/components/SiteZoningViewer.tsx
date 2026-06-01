@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Map as MapIcon } from 'lucide-react'
-import { polygonArea, polygonCentroid, scalePolygon, type Pt } from '@/lib/zoning'
+import { polygonArea, polygonCentroid, scalePolygon, type Pt, type MassingTier } from '@/lib/zoning'
 
 function webglAvailable(): boolean {
   try {
@@ -20,7 +20,7 @@ export function SiteZoningViewer({
   boundary,
   buildable,
   maxHeight,
-  proposedFootprint,
+  tiers,
   proposedHeight,
   compliant,
   height = 460,
@@ -28,18 +28,18 @@ export function SiteZoningViewer({
   boundary: Pt[]
   buildable: Pt[]
   maxHeight: number
-  proposedFootprint: number
+  tiers: MassingTier[] // podium + tower slabs of the proposed scheme
   proposedHeight: number
   compliant: boolean
   height?: number
 }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
-  const propsRef = useRef({ boundary, buildable, maxHeight, proposedFootprint, proposedHeight, compliant })
-  propsRef.current = { boundary, buildable, maxHeight, proposedFootprint, proposedHeight, compliant }
+  const propsRef = useRef({ boundary, buildable, maxHeight, tiers, proposedHeight, compliant })
+  propsRef.current = { boundary, buildable, maxHeight, tiers, proposedHeight, compliant }
 
   const rebuildRef = useRef<(() => void) | null>(null)
-  useEffect(() => { rebuildRef.current?.() }, [boundary, buildable, maxHeight, proposedFootprint, proposedHeight, compliant])
+  useEffect(() => { rebuildRef.current?.() }, [boundary, buildable, maxHeight, tiers, proposedHeight, compliant])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -121,7 +121,7 @@ export function SiteZoningViewer({
 
     const build = () => {
       clear()
-      const { boundary: bnd, buildable: bld, maxHeight: mh, proposedFootprint: pf, proposedHeight: ph, compliant: ok } = propsRef.current
+      const { boundary: bnd, buildable: bld, maxHeight: mh, tiers: tr, proposedHeight: ph, compliant: ok } = propsRef.current
       if (bnd.length < 3) return
       const c = polygonCentroid(bnd)
 
@@ -136,12 +136,15 @@ export function SiteZoningViewer({
         group.add(lineLoop(envBase.map((p) => ({ x: p.x, z: p.z })), mh, '#38bdf8')) // roofline of the envelope
       }
 
-      // proposed massing nested inside, sized to the proposed footprint
+      // proposed massing — one prism per tier (podium + tower), each sized to its
+      // footprint and nested in the setback shape; stacked base→top
       const baseArea = polygonArea(envBase)
-      const k = baseArea > 0 ? Math.sqrt(Math.min(1, pf / baseArea)) : 0
-      if (k > 0 && ph > 0) {
-        const poly = scalePolygon(envBase, k, c)
-        const massing = extrude(poly, ph, ok ? greenMat : redMat)
+      for (const tier of tr) {
+        const k = baseArea > 0 ? Math.sqrt(Math.min(1, tier.footprint / baseArea)) : 0
+        const th = tier.top - tier.base
+        if (k <= 0 || th <= 0) continue
+        const massing = extrude(scalePolygon(envBase, k, c), th, ok ? greenMat : redMat)
+        massing.position.y = tier.base
         massing.castShadow = true; massing.receiveShadow = true
         group.add(massing)
       }

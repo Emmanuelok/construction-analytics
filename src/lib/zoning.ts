@@ -15,7 +15,12 @@ export type ZoningInput = {
   storeyHeight: number // metres
   proposedGFA: number // m²
   proposedStoreys: number
+  podium?: number // 0–1 fraction of storeys forming a full-plate podium base
+  towerSetback?: number // 0–0.6 — the tower steps in by this much above the podium
 }
+
+/** A vertical slab of the proposed massing (podium or tower), metres. */
+export type MassingTier = { footprint: number; base: number; top: number }
 
 export type Compliance = { far: boolean; height: boolean; coverage: boolean; setback: boolean; overall: boolean }
 
@@ -29,6 +34,7 @@ export type Zoning = {
   maxHeight: number
   envelopeVolume: number // maxFootprint × heightLimit (indicative legal volume)
   proposed: { footprint: number; height: number; coverage: number; far: number }
+  tiers: MassingTier[] // podium + tower slabs (one tier when no podium)
   compliance: Compliance
   utilisation: number // proposedGFA ÷ maxGFA, %
 }
@@ -134,8 +140,28 @@ export function buildZoning(input: ZoningInput): Zoning {
 
   const proposedGFA = Math.max(0, input.proposedGFA)
   const proposedStoreys = Math.max(1, Math.round(input.proposedStoreys))
-  const footprint = proposedGFA / proposedStoreys
   const height = proposedStoreys * storeyHeight
+
+  // Split the scheme into a podium + tower (GFA-conserving): with a setback the
+  // tower plate is (1−setback) of the podium plate, so the podium is the binding
+  // (largest) footprint for coverage. No podium → a single uniform tier.
+  const podiumFrac = clamp(input.podium ?? 0, 0, 1)
+  const towerSetback = clamp(input.towerSetback ?? 0, 0, 0.6)
+  const podiumStoreys = Math.round(podiumFrac * proposedStoreys)
+  const towerStoreys = proposedStoreys - podiumStoreys
+  const hasTower = podiumStoreys > 0 && towerStoreys > 0 && towerSetback > 0
+  let footprint: number
+  let tiers: MassingTier[]
+  if (hasTower) {
+    const podiumPlate = proposedGFA / (podiumStoreys + (1 - towerSetback) * towerStoreys)
+    const towerPlate = podiumPlate * (1 - towerSetback)
+    const podiumTop = podiumStoreys * storeyHeight
+    tiers = [{ footprint: podiumPlate, base: 0, top: podiumTop }, { footprint: towerPlate, base: podiumTop, top: height }]
+    footprint = podiumPlate // the larger, binding plate
+  } else {
+    footprint = proposedGFA / proposedStoreys
+    tiers = [{ footprint, base: 0, top: height }]
+  }
   const coverage = siteArea > 0 ? (footprint / siteArea) * 100 : 0
   const pFar = siteArea > 0 ? proposedGFA / siteArea : 0
 
@@ -156,6 +182,7 @@ export function buildZoning(input: ZoningInput): Zoning {
     maxHeight,
     envelopeVolume: maxFootprint * maxHeight,
     proposed: { footprint, height, coverage, far: pFar },
+    tiers,
     compliance: { ...c, overall: c.far && c.height && c.coverage && c.setback },
     utilisation: maxGFA > 0 ? (proposedGFA / maxGFA) * 100 : 0,
   }
