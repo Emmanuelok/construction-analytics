@@ -5,13 +5,17 @@
  * so it's deterministic and testable — no Three.js, no DOM. Scene units are
  * metres / a fixed scale; the viewer just draws boxes at these coordinates. */
 
+import { type Pt } from './zoning'
+import { unitShape, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, type ShapeKind } from './shapes'
+export type { ShapeKind } from './shapes'
+export { SHAPE_KINDS } from './shapes'
+
 export type FloorSpec = {
   index: number // 0 = ground floor
   label: string // 'G', 'L1', …
   y: number // centre height (scene units)
   height: number // storey height
-  halfW: number // half-width (x) of the floor plate
-  halfD: number // half-depth (z)
+  polygon: Pt[] // floor plate outline (plan, scene units) — any shape, not just a box
   built: boolean // completed at the current % progress (bottom-up)
   t: number // 0..1 position up the building (for gradients)
 }
@@ -21,7 +25,7 @@ export type Massing = {
   storeys: number
   storeyHeight: number
   totalHeight: number
-  footprint: number // plate side length (scene units) at the base
+  footprint: number // base plate extent (scene units) — for camera framing
   builtCount: number
   builtPct: number // actual built fraction realized by whole floors, 0–100
 }
@@ -30,14 +34,19 @@ export type MassingInput = {
   gfa: number // gross floor area, m²
   progress: number // % complete, 0–100
   storeys?: number // explicit storey count; otherwise derived from GFA
+  shape?: ShapeKind // footprint form (default rectangle)
+  aspect?: number // plan aspect ratio (x ÷ z), 0.3–3
   taper?: number // 0 = none, up to ~0.6 = upper floors shrink (tower taper)
+  podium?: number // 0–1 fraction of storeys forming a full-plate podium base
+  towerSetback?: number // 0–0.6 — above the podium the tower steps in by this much
+  twist?: number // degrees of rotation added per floor (twisting tower)
 }
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 const round1 = (n: number) => Math.round(n * 10) / 10
 
 const STOREY_HEIGHT = 1 // scene units per storey
-const PLATE_SCALE = 0.16 // metres → scene units for the plate side (keeps plates ~proportional to height)
+const PLATE_SCALE = 0.16 // metres → scene units (plate area scales by PLATE_SCALE²)
 
 /** Derive a plausible storey count from GFA when none is given. */
 export function deriveStoreys(gfa: number): number {
@@ -46,32 +55,42 @@ export function deriveStoreys(gfa: number): number {
   return clamp(Math.round(gfa / 2500), 3, 40)
 }
 
-/** Build the floor stack for a project. */
+/** Build the floor stack for a project — a real form (shape + taper + podium/tower
+ *  setback + twist), one polygon per floor, with a built/planned split. */
 export function buildMassing(input: MassingInput): Massing {
   const gfa = Math.max(0, input.gfa)
   const storeys = Math.max(1, Math.round(input.storeys ?? deriveStoreys(gfa)))
   const progress = clamp(input.progress, 0, 100)
+  const shape = input.shape ?? 'rect'
+  const aspect = clamp(input.aspect ?? 1, 0.3, 3)
   const taper = clamp(input.taper ?? 0, 0, 0.6)
+  const podiumFrac = clamp(input.podium ?? 0, 0, 1)
+  const towerSetback = clamp(input.towerSetback ?? 0, 0, 0.6)
+  const twistRad = ((input.twist ?? 0) * Math.PI) / 180
 
+  // base plate area in scene units, from GFA per storey
   const plateArea = gfa > 0 ? gfa / storeys : 0
-  // side length of a square plate, in metres, mapped to scene units
-  const baseSide = Math.max(1, Math.sqrt(Math.max(1, plateArea)) * PLATE_SCALE)
+  const sceneArea = Math.max(1, plateArea) * PLATE_SCALE * PLATE_SCALE
+  const base = scaleToArea(unitShape(shape, aspect), sceneArea)
+  const ext = shapeExtent(base)
 
-  // whole floors completed, bottom-up, at this progress
   const builtCount = clamp(Math.round((progress / 100) * storeys), 0, storeys)
+  const podiumFloors = Math.round(podiumFrac * storeys)
+  const hasTower = podiumFloors > 0 && podiumFloors < storeys
 
   const floors: FloorSpec[] = []
   for (let i = 0; i < storeys; i++) {
     const t = storeys > 1 ? i / (storeys - 1) : 0
-    const shrink = 1 - taper * t // upper floors get smaller when tapered
-    const side = baseSide * shrink
+    const step = hasTower && i >= podiumFloors ? 1 - towerSetback : 1 // tower steps in above the podium
+    const scale = (1 - taper * t) * step
+    let poly = scaleAbout(base, scale)
+    if (twistRad) poly = rotatePolygon(poly, twistRad * i)
     floors.push({
       index: i,
       label: i === 0 ? 'G' : `L${i}`,
       y: i * STOREY_HEIGHT + STOREY_HEIGHT / 2,
       height: STOREY_HEIGHT * 0.92, // small gap between slabs
-      halfW: side / 2,
-      halfD: side / 2,
+      polygon: poly,
       built: i < builtCount,
       t,
     })
@@ -82,7 +101,7 @@ export function buildMassing(input: MassingInput): Massing {
     storeys,
     storeyHeight: STOREY_HEIGHT,
     totalHeight: storeys * STOREY_HEIGHT,
-    footprint: round1(baseSide),
+    footprint: round1(Math.max(ext.width, ext.depth)),
     builtCount,
     builtPct: round1((builtCount / storeys) * 100),
   }

@@ -17,7 +17,7 @@ import {
 import { PageHeader, Card, CardHeader, StatTile, Badge } from '@/components/ui'
 import { RadarViz } from '@/components/charts'
 const BuildingViewer = lazy(() => import('@/components/BuildingViewer').then((m) => ({ default: m.BuildingViewer })))
-import { COLOR_MODES, type ColorMode } from '@/lib/massing'
+import { COLOR_MODES, SHAPE_KINDS, type ColorMode, type ShapeKind } from '@/lib/massing'
 import { PROJECTS, type Project } from '@/data/platform'
 import { deriveProjectModel, projectNarrative, type ProjectVitals, type ProjectModel } from '@/lib/project-model'
 import { formatMoney } from '@/lib/evm'
@@ -78,6 +78,13 @@ export default function ProjectWorkspace() {
 
   const [colorMode, setColorMode] = useState<ColorMode>('progress')
   const [selectedFloor, setSelectedFloor] = useState<number | null>(null)
+  // massing form — real shapes + vertical articulation, not just a square stack
+  const [shape, setShape] = useState<ShapeKind>('rect')
+  const [aspect, setAspect] = useState(1)
+  const [taper, setTaper] = useState(0.2)
+  const [podium, setPodium] = useState(0)
+  const [towerSetback, setTowerSetback] = useState(0.35)
+  const [twist, setTwist] = useState(0)
   const m = useMemo(() => deriveProjectModel(vitals), [vitals])
 
   // the project-level metric the 3D model colours floors by, per mode
@@ -190,27 +197,34 @@ export default function ProjectWorkspace() {
         />
         <div className="grid gap-0 border-t border-edge/50 lg:grid-cols-[1.6fr_1fr]">
           <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-            <BuildingViewer input={{ gfa: vitals.gfa, progress: vitals.progress, taper: 0.35 }} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />
+            <BuildingViewer input={{ gfa: vitals.gfa, progress: vitals.progress, shape, aspect, taper, podium, towerSetback, twist }} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />
           </Suspense>
-          <div className="flex flex-col justify-center gap-3 border-t border-edge/50 p-5 lg:border-l lg:border-t-0">
+          <div className="flex flex-col gap-3 border-t border-edge/50 p-4 lg:border-l lg:border-t-0">
             <div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">Massing</div>
-              <div className="mt-1 text-sm text-slate-300">{Math.max(1, Math.round(vitals.gfa / 2500))} storeys · {formatNumber(vitals.gfa)} m² GFA</div>
+              <div className="mb-1.5 text-[11px] uppercase tracking-wide text-slate-500">Footprint shape</div>
+              <div className="flex flex-wrap gap-1.5">
+                {SHAPE_KINDS.map((s) => (
+                  <button key={s.id} onClick={() => setShape(s.id)} aria-pressed={shape === s.id}
+                    className={cn('rounded-lg px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors', shape === s.id ? 'bg-blue-500/15 text-blue-200 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50 hover:text-slate-200')}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">Construction (4D)</div>
-              <div className="mt-1 text-sm"><span className="font-semibold text-emerald-300">{vitals.progress}%</span> <span className="text-slate-400">complete — lower floors built first</span></div>
-            </div>
+            <Slider label="Aspect ratio" value={aspect} min={0.4} max={2.5} step={0.05} onChange={setAspect} fmt={(v) => `${v.toFixed(2)}:1`} />
+            <Slider label="Taper" value={taper} min={0} max={0.6} step={0.02} onChange={setTaper} fmt={(v) => `${Math.round(v * 100)}%`} />
+            <Slider label="Podium" value={podium} min={0} max={0.8} step={0.05} onChange={setPodium} fmt={(v) => (v === 0 ? 'none' : `${Math.round(v * 100)}%`)} />
+            <Slider label="Tower setback" value={towerSetback} min={0} max={0.6} step={0.02} onChange={setTowerSetback} fmt={(v) => `${Math.round(v * 100)}%`} />
+            <Slider label="Twist / floor" value={twist} min={0} max={8} step={0.5} onChange={setTwist} fmt={(v) => `${v}°`} />
             {selectedFloor !== null && (
-              <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-3">
-                <div className="text-[11px] uppercase tracking-wide text-blue-300/80">Selected floor</div>
-                <div className="mt-0.5 text-sm font-semibold text-slate-100">{selectedFloor === 0 ? 'Ground floor' : `Level ${selectedFloor}`}</div>
+              <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-2.5">
+                <div className="text-[11px] uppercase tracking-wide text-blue-300/80">Selected floor · {selectedFloor === 0 ? 'Ground' : `Level ${selectedFloor}`}</div>
                 <div className="text-xs text-slate-400">{selectedFloor < Math.round((vitals.progress / 100) * Math.max(1, Math.round(vitals.gfa / 2500))) ? 'Built' : 'Planned'}</div>
               </div>
             )}
-            <p className="text-[11px] leading-relaxed text-slate-500">
-              Data-driven massing from project metrics. Full IFC mesh geometry (from an uploaded model) renders in BIM Intelligence.
-            </p>
+            <div className="mt-auto text-[11px] leading-relaxed text-slate-500">
+              {Math.max(1, Math.round(vitals.gfa / 2500))} storeys · {formatNumber(vitals.gfa)} m² · {vitals.progress}% built. Full IFC mesh geometry renders in BIM Intelligence.
+            </div>
           </div>
         </div>
       </Card>
@@ -298,6 +312,18 @@ export default function ProjectWorkspace() {
 }
 
 const clamp = (n: number) => Math.max(0, Math.min(100, n))
+
+function Slider({ label, value, min, max, step, onChange, fmt }: { label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void; fmt?: (v: number) => string }) {
+  return (
+    <label className="block">
+      <div className="mb-1 flex items-center justify-between text-xs">
+        <span className="text-slate-300">{label}</span>
+        <span className="data-mono text-slate-200">{fmt ? fmt(value) : value}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-1 w-full cursor-pointer accent-blue-500" aria-label={label} />
+    </label>
+  )
+}
 
 function Param({ label, unit, value, onChange, step = 1 }: { label: string; unit: string; value: number; onChange: (v: number) => void; step?: number }) {
   return (

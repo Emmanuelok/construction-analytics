@@ -23,6 +23,7 @@ import { parseMentions, makeComment, threadFor, addComment, removeComment, toggl
 import { toPublic, parseListQuery, listDatasets, findDataset, generateApiKey, isValidKeyFormat, extractApiKey, ok as apiOk, err as apiErr, type CatalogLike, type PublicDataset } from './apikit.ts'
 import { mentionNotifications, shareNotifications, alertNotifications, buildFeed, unreadCount, isUnread, timeAgo, parseReadIds, subjectName, type Notification } from './notifications.ts'
 import { buildMassing, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
+import { unitShape, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, SHAPE_KINDS } from './shapes.ts'
 import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, type SelectedElement } from './ifc-model.ts'
 import { extractGeometry } from './ifc-geometry.ts'
 import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
@@ -658,15 +659,24 @@ section('massing')
   ok('footprint > 0 for real GFA', m.footprint > 0)
   ok('builtPct reflects whole floors', m.builtPct === Math.round((m.builtCount / 25) * 1000) / 10)
 
-  // taper shrinks upper plates
+  // taper shrinks upper plates (by polygon area now)
   const tap = buildMassing({ gfa: 100_000, progress: 50, storeys: 10, taper: 0.5 })
-  ok('taper shrinks top vs bottom plate', tap.floors[9].halfW < tap.floors[0].halfW)
-  ok('no taper → uniform plate', buildMassing({ gfa: 100_000, progress: 50, storeys: 10 }).floors.every((f, _i, arr) => Math.abs(f.halfW - arr[0].halfW) < 1e-9))
+  ok('taper shrinks top vs bottom plate', polygonArea(tap.floors[9].polygon) < polygonArea(tap.floors[0].polygon))
+  ok('no taper → uniform plate', buildMassing({ gfa: 100_000, progress: 50, storeys: 10 }).floors.every((f, _i, arr) => Math.abs(polygonArea(f.polygon) - polygonArea(arr[0].polygon)) < 1e-6))
+
+  // sophisticated forms: shape, podium/tower setback, twist
+  ok('default shape is a rectangle (4-pt plate)', m.floors[0].polygon.length === 4)
+  ok('shape selection changes the plate (cross = 12 pts, cylinder = 48)', buildMassing({ gfa: 80_000, progress: 0, storeys: 8, shape: 'cross' }).floors[0].polygon.length === 12 && buildMassing({ gfa: 80_000, progress: 0, storeys: 8, shape: 'cylinder' }).floors[0].polygon.length === 48)
+  const pt = buildMassing({ gfa: 120_000, progress: 0, storeys: 12, podium: 0.5, towerSetback: 0.4 })
+  ok('podium floors keep the base plate', Math.abs(polygonArea(pt.floors[0].polygon) - polygonArea(pt.floors[5].polygon)) < 1e-6)
+  ok('tower steps in above the podium (smaller plate)', polygonArea(pt.floors[6].polygon) < polygonArea(pt.floors[5].polygon))
+  const tw = buildMassing({ gfa: 90_000, progress: 0, storeys: 10, shape: 'rect', twist: 6 })
+  ok('twist rotates upper floors (plate orientation differs, area preserved)', Math.abs(tw.floors[5].polygon[0].x - tw.floors[0].polygon[0].x) > 1e-3 && Math.abs(polygonArea(tw.floors[5].polygon) - polygonArea(tw.floors[0].polygon)) < 1e-6)
 
   // progress extremes
   ok('0% → nothing built', buildMassing({ gfa: 50_000, progress: 0, storeys: 12 }).builtCount === 0)
   ok('100% → all built', buildMassing({ gfa: 50_000, progress: 100, storeys: 12 }).builtCount === 12)
-  ok('zero GFA safe (no NaN)', (() => { const z = buildMassing({ gfa: 0, progress: 50 }); return z.floors.every((f) => Number.isFinite(f.halfW) && Number.isFinite(f.y)) })())
+  ok('zero GFA safe (no NaN)', (() => { const z = buildMassing({ gfa: 0, progress: 50 }); return z.floors.every((f) => f.polygon.every((p) => Number.isFinite(p.x) && Number.isFinite(p.z)) && Number.isFinite(f.y)) })())
 
   // colour mapping
   const f0 = m.floors[0], fTop = m.floors[24]
@@ -753,6 +763,18 @@ section('ifc-geometry')
   // Robustness: garbage / empty bytes never throw, just yield an empty result.
   const junk = await extractGeometry(new TextEncoder().encode('not an ifc file'))
   ok('invalid input → empty result, no throw', junk.meshes.length === 0 && junk.bbox === null)
+}
+
+// ── shapes (footprint geometry library) ─────────────────────────────────────────
+section('shapes')
+{
+  ok('all SHAPE_KINDS generate ≥3-point polygons', SHAPE_KINDS.every((s) => unitShape(s.id).length >= 3))
+  ok('rect=4, l=6, u=8, cross=12, cylinder=48 points', unitShape('rect').length === 4 && unitShape('l').length === 6 && unitShape('u').length === 8 && unitShape('cross').length === 12 && unitShape('cylinder').length === 48)
+  ok('scaleToArea hits the target area', near(polygonArea(scaleToArea(unitShape('l'), 500)), 500, 0.01))
+  ok('scaleAbout shrinks area by k²', near(polygonArea(scaleAbout(unitShape('rect'), 0.5)), polygonArea(unitShape('rect')) * 0.25, 1e-6))
+  ok('rotatePolygon preserves area', near(polygonArea(rotatePolygon(unitShape('cross'), 0.7)), polygonArea(unitShape('cross')), 1e-9))
+  ok('aspect stretches width but holds area ~constant', (() => { const a = polygonArea(unitShape('rect', 2)), b = polygonArea(unitShape('rect', 1)); return near(a, b, 0.02) && shapeExtent(unitShape('rect', 2)).width > shapeExtent(unitShape('rect', 1)).width })())
+  ok('cross is non-convex (extent wider than a same-area rect arm)', shapeExtent(unitShape('cross')).width > 0)
 }
 
 // ── zoning (site boundary + envelope + compliance) ──────────────────────────────
