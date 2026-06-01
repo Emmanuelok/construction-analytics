@@ -22,6 +22,7 @@ import { editLabel, removeLabel, actionLabel, percentValueText, toggleLabel } fr
 import { parseMentions, makeComment, threadFor, addComment, removeComment, toggleResolved, summarizeThread, encodeShareToken, decodeShareToken, shareUrl, logActivity, parseComments, subjectLabel, type Comment as CollabComment, type Author, type Activity } from './collab.ts'
 import { toPublic, parseListQuery, listDatasets, findDataset, generateApiKey, isValidKeyFormat, extractApiKey, ok as apiOk, err as apiErr, type CatalogLike, type PublicDataset } from './apikit.ts'
 import { mentionNotifications, shareNotifications, alertNotifications, buildFeed, unreadCount, isUnread, timeAgo, parseReadIds, subjectName, type Notification } from './notifications.ts'
+import { buildMassing, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -632,6 +633,45 @@ section('notifications')
   ok('timeAgo minutes', timeAgo(new Date(Date.now() - 5 * 60000).toISOString()) === '5m')
   ok('timeAgo hours', timeAgo(new Date(Date.now() - 3 * 3600000).toISOString()) === '3h')
   ok('timeAgo seconds', /\ds$/.test(timeAgo(new Date(Date.now() - 5000).toISOString())))
+}
+
+// ── massing (3D building geometry) ───────────────────────────────────────────
+section('massing')
+{
+  ok('deriveStoreys scales with GFA', deriveStoreys(30000) === 12) // 30000/2500
+  ok('deriveStoreys clamps low', deriveStoreys(500) === 3)
+  ok('deriveStoreys clamps high', deriveStoreys(5_000_000) === 40)
+  ok('deriveStoreys zero → 1', deriveStoreys(0) === 1)
+
+  const m = buildMassing({ gfa: 142_000, progress: 64, storeys: 25 })
+  ok('respects explicit storeys', m.storeys === 25 && m.floors.length === 25)
+  ok('floors stack upward (increasing y)', m.floors.every((f, i) => i === 0 || f.y > m.floors[i - 1].y))
+  ok('ground floor labelled G', m.floors[0].label === 'G' && m.floors[1].label === 'L1')
+  ok('totalHeight = storeys × storeyHeight', m.totalHeight === 25 * m.storeyHeight)
+  ok('built floors are bottom-up = round(progress×storeys)', m.builtCount === Math.round(0.64 * 25))
+  ok('built flag matches builtCount', m.floors.filter((f) => f.built).length === m.builtCount)
+  ok('lowest floors are the built ones', m.floors.slice(0, m.builtCount).every((f) => f.built) && m.floors.slice(m.builtCount).every((f) => !f.built))
+  ok('footprint > 0 for real GFA', m.footprint > 0)
+  ok('builtPct reflects whole floors', m.builtPct === Math.round((m.builtCount / 25) * 1000) / 10)
+
+  // taper shrinks upper plates
+  const tap = buildMassing({ gfa: 100_000, progress: 50, storeys: 10, taper: 0.5 })
+  ok('taper shrinks top vs bottom plate', tap.floors[9].halfW < tap.floors[0].halfW)
+  ok('no taper → uniform plate', buildMassing({ gfa: 100_000, progress: 50, storeys: 10 }).floors.every((f, _i, arr) => Math.abs(f.halfW - arr[0].halfW) < 1e-9))
+
+  // progress extremes
+  ok('0% → nothing built', buildMassing({ gfa: 50_000, progress: 0, storeys: 12 }).builtCount === 0)
+  ok('100% → all built', buildMassing({ gfa: 50_000, progress: 100, storeys: 12 }).builtCount === 12)
+  ok('zero GFA safe (no NaN)', (() => { const z = buildMassing({ gfa: 0, progress: 50 }); return z.floors.every((f) => Number.isFinite(f.halfW) && Number.isFinite(f.y)) })())
+
+  // colour mapping
+  const f0 = m.floors[0], fTop = m.floors[24]
+  ok('progress mode: built green, planned slate', floorColor('progress', f0, 0) === '#22c55e' && floorColor('progress', fTop, 0) === '#334155')
+  ok('risk mode: low risk green', floorColor('risk', f0, 20) === '#22c55e')
+  ok('risk mode: high risk red', floorColor('risk', f0, 85) === '#ef4444')
+  ok('safety mode: high safety green', floorColor('safety', f0, 96) === '#22c55e')
+  ok('carbon mode: high carbon red', floorColor('carbon', f0, 800) === '#ef4444')
+  ok('status mode: high health green', floorColor('status', f0, 90) === '#22c55e')
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)

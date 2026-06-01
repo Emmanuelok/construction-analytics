@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Building,
@@ -16,6 +16,8 @@ import {
 } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge } from '@/components/ui'
 import { RadarViz } from '@/components/charts'
+const BuildingViewer = lazy(() => import('@/components/BuildingViewer').then((m) => ({ default: m.BuildingViewer })))
+import { COLOR_MODES, type ColorMode } from '@/lib/massing'
 import { PROJECTS, type Project } from '@/data/platform'
 import { deriveProjectModel, projectNarrative, type ProjectVitals, type ProjectModel } from '@/lib/project-model'
 import { formatMoney } from '@/lib/evm'
@@ -74,7 +76,17 @@ export default function ProjectWorkspace() {
   const setV = (patch: Partial<ProjectVitals>) => { setVitals((v) => ({ ...v, ...patch })); setEdited(true) }
   const reset = () => { setVitals(toVitals(baseProject)); setEdited(false) }
 
+  const [colorMode, setColorMode] = useState<ColorMode>('progress')
+  const [selectedFloor, setSelectedFloor] = useState<number | null>(null)
   const m = useMemo(() => deriveProjectModel(vitals), [vitals])
+
+  // the project-level metric the 3D model colours floors by, per mode
+  const colorMetric =
+    colorMode === 'risk' ? vitals.risk
+    : colorMode === 'safety' ? vitals.safety
+    : colorMode === 'carbon' ? vitals.carbon
+    : colorMode === 'status' ? m.health
+    : 0
 
   const summary: KPI[] = [
     { label: 'Composite health', value: m.health },
@@ -154,6 +166,54 @@ export default function ProjectWorkspace() {
         <StatTile label="Forecast (EAC)" value={formatMoney(m.evm.eac)} icon={Wallet} accent={m.evm.vac < 0 ? 'rose' : 'emerald'} sub={`VAC ${formatMoney(m.evm.vac)}`} />
         <StatTile label="Embodied carbon" value={`${formatNumber(m.carbonIntensity)}`} icon={Leaf} accent={m.carbonRating === 'A' || m.carbonRating === 'B' ? 'emerald' : m.carbonRating === 'C' ? 'amber' : 'rose'} sub={`kgCO₂e/m² · rating ${m.carbonRating}`} />
       </div>
+
+      {/* real 3D building model — driven by GFA / storeys / % complete, coloured by analytics */}
+      <Card className="overflow-hidden">
+        <CardHeader
+          icon={Boxes}
+          accent={ACCENT_NAME}
+          title="3D building model"
+          subtitle="Orbit · scroll to zoom · click a floor. Colour shows the selected analytics layer; in 4D mode, solid floors are built and ghosted floors are planned."
+          action={
+            <div className="flex flex-wrap gap-1.5">
+              {COLOR_MODES.map((cm) => (
+                <button
+                  key={cm.id}
+                  onClick={() => setColorMode(cm.id)}
+                  className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', colorMode === cm.id ? 'bg-blue-500/15 text-blue-200 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50 hover:text-slate-200')}
+                >
+                  {cm.label}
+                </button>
+              ))}
+            </div>
+          }
+        />
+        <div className="grid gap-0 border-t border-edge/50 lg:grid-cols-[1.6fr_1fr]">
+          <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
+            <BuildingViewer input={{ gfa: vitals.gfa, progress: vitals.progress, taper: 0.35 }} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />
+          </Suspense>
+          <div className="flex flex-col justify-center gap-3 border-t border-edge/50 p-5 lg:border-l lg:border-t-0">
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">Massing</div>
+              <div className="mt-1 text-sm text-slate-300">{Math.max(1, Math.round(vitals.gfa / 2500))} storeys · {formatNumber(vitals.gfa)} m² GFA</div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">Construction (4D)</div>
+              <div className="mt-1 text-sm"><span className="font-semibold text-emerald-300">{vitals.progress}%</span> <span className="text-slate-400">complete — lower floors built first</span></div>
+            </div>
+            {selectedFloor !== null && (
+              <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-3">
+                <div className="text-[11px] uppercase tracking-wide text-blue-300/80">Selected floor</div>
+                <div className="mt-0.5 text-sm font-semibold text-slate-100">{selectedFloor === 0 ? 'Ground floor' : `Level ${selectedFloor}`}</div>
+                <div className="text-xs text-slate-400">{selectedFloor < Math.round((vitals.progress / 100) * Math.max(1, Math.round(vitals.gfa / 2500))) ? 'Built' : 'Planned'}</div>
+              </div>
+            )}
+            <p className="text-[11px] leading-relaxed text-slate-500">
+              Data-driven massing from project metrics. Full IFC mesh geometry (from an uploaded model) renders in BIM Intelligence.
+            </p>
+          </div>
+        </div>
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-5">
         {/* editable vitals */}
