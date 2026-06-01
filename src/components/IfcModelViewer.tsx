@@ -31,6 +31,7 @@ export function IfcModelViewer({
   selectedKey = null,
   onSelect,
   explode = 0,
+  section = 1,
   resetNonce = 0,
   height = 460,
 }: {
@@ -40,13 +41,14 @@ export function IfcModelViewer({
   selectedKey?: string | null
   onSelect?: (el: SelectedElement | null) => void
   explode?: number // 0 = assembled; >0 spreads elements apart vertically
+  section?: number // 1 = whole model; <1 cuts away everything above that height
   resetNonce?: number // bump to recentre + reframe the camera
   height?: number
 }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
-  const propsRef = useRef({ input, meshes, hidden, selectedKey, onSelect, explode })
-  propsRef.current = { input, meshes, hidden, selectedKey, onSelect, explode }
+  const propsRef = useRef({ input, meshes, hidden, selectedKey, onSelect, explode, section })
+  propsRef.current = { input, meshes, hidden, selectedKey, onSelect, explode, section }
 
   const rebuildRef = useRef<(() => void) | null>(null)
   useEffect(() => { rebuildRef.current?.() }, [input.entityCounts, input.storeys, meshes, hidden.struct, hidden.arch, hidden.mep, hidden.other])
@@ -57,6 +59,8 @@ export function IfcModelViewer({
   useEffect(() => { highlightRef.current?.(selectedKey ?? null) }, [selectedKey])
   const explodeRef = useRef<((f: number) => void) | null>(null)
   useEffect(() => { explodeRef.current?.(explode) }, [explode])
+  const sectionRef = useRef<((f: number) => void) | null>(null)
+  useEffect(() => { sectionRef.current?.(section) }, [section])
   const resetRef = useRef<(() => void) | null>(null)
   useEffect(() => { if (resetNonce) resetRef.current?.() }, [resetNonce])
 
@@ -77,6 +81,7 @@ export function IfcModelViewer({
     renderer.setSize(width, height)
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    renderer.localClippingEnabled = true // for the section plane
     mount.appendChild(renderer.domElement)
     renderer.domElement.style.cursor = 'grab'
     renderer.domElement.setAttribute('aria-hidden', 'true')
@@ -104,13 +109,16 @@ export function IfcModelViewer({
     const unitBox = new THREE.BoxGeometry(1, 1, 1)
     const mats: Partial<Record<Discipline, THREE.MeshStandardMaterial>> = {}
     const matFor = (disc: Discipline) =>
-      (mats[disc] ??= new THREE.MeshStandardMaterial({ color: new THREE.Color(DISCIPLINE_COLOR[disc]), roughness: 0.55, metalness: 0.1 }))
+      (mats[disc] ??= new THREE.MeshStandardMaterial({ color: new THREE.Color(DISCIPLINE_COLOR[disc]), roughness: 0.55, metalness: 0.1, clipShadows: true }))
 
     // Per-build disposables (real-geometry BufferGeometries) + the live object list.
     let geometries: THREE.BufferGeometry[] = []
     const objects: THREE.Mesh[] = []
     let boxHelper: THREE.BoxHelper | null = null
     let minBaseY = 0 // lowest element, for the explode spread
+    // Horizontal section: normal points down, so fragments above `constant` are clipped.
+    const sectionPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e6)
+    let curSection = 1
 
     const orbit = { azimuth: DEFAULT_AZIMUTH, polar: DEFAULT_POLAR, radius: 60, target: new THREE.Vector3(0, 0, 0) }
     const applyCamera = () => {
@@ -167,8 +175,21 @@ export function IfcModelViewer({
       boxHelper?.update()
       const b = new THREE.Box3().setFromObject(group) // debug hook: current vertical span
       ;(mount as HTMLElement & { __spanY?: number }).__spanY = b.isEmpty() ? 0 : b.max.y - b.min.y
+      applySection(curSection) // keep the cut at the right height as the model spreads
     }
     explodeRef.current = applyExplode
+
+    // Cut the model at a fraction of its current height; f≥1 disables the plane.
+    const applySection = (f: number) => {
+      curSection = f
+      const enabled = f < 0.999
+      const b = new THREE.Box3().setFromObject(group)
+      sectionPlane.constant = b.isEmpty() ? 1e6 : b.min.y + f * (b.max.y - b.min.y)
+      const planes = enabled ? [sectionPlane] : []
+      for (const m of Object.values(mats)) if (m) m.clippingPlanes = planes
+      ;(mount as HTMLElement & { __sectioned?: boolean }).__sectioned = enabled
+    }
+    sectionRef.current = applySection
 
     const resetView = () => { orbit.azimuth = DEFAULT_AZIMUTH; orbit.polar = DEFAULT_POLAR; frameToGroup() }
     resetRef.current = resetView
@@ -206,13 +227,14 @@ export function IfcModelViewer({
 
     const build = () => {
       clear()
-      const { input: inp, meshes: ms, hidden: hid, selectedKey: sk, explode: ex } = propsRef.current
+      const { input: inp, meshes: ms, hidden: hid, selectedKey: sk, explode: ex, section: sec } = propsRef.current
       if (ms && ms.length) buildReal(ms, hid)
       else buildRecon(inp, hid)
       for (const o of objects) (o.userData as { baseY?: number }).baseY = o.position.y
       minBaseY = objects.length ? Math.min(...objects.map((o) => o.position.y)) : 0
       applyExplode(ex ?? 0)
       frameToGroup()
+      applySection(sec ?? 1)
       applyHighlight(sk ?? null)
       ;(mount as HTMLElement & { __meshCount?: number }).__meshCount = objects.length
     }
