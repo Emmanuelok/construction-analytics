@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Bell, ChevronRight, Globe, Menu, Search, Sparkles, LogOut, Library, UploadCloud, ChevronDown, LogIn, Sun, Moon, Monitor, Users } from 'lucide-react'
+import { ChevronRight, Globe, Menu, Search, Sparkles, LogOut, Library, UploadCloud, ChevronDown, LogIn, Sun, Moon, Monitor, Users } from 'lucide-react'
 import { NAV } from '@/lib/nav'
 import { useAuth } from '@/store/auth'
-import { useAlerts } from '@/store/alerts'
 import { useTheme, type ThemeMode } from '@/store/theme'
+import { NotificationBell } from '@/components/NotificationBell'
 import { AuthModal } from '@/components/AuthModal'
 import { cn } from '@/lib/cn'
 
@@ -42,7 +42,6 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
   const current = NAV.find((n) => n.path === pathname) ?? NAV[0]
   const openPalette = () => window.dispatchEvent(new CustomEvent('aec:command'))
   const { user, signOut, mode } = useAuth()
-  const { summary } = useAlerts()
   const [authOpen, setAuthOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -93,14 +92,7 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
 
         <ThemeToggle />
 
-        <Link to="/alerts" aria-label={`Alerts (${summary.total})`} title={`${summary.total} active alerts`} className="relative grid h-9 w-9 place-items-center rounded-xl border border-edge/70 bg-elevated/50 text-slate-400 hover:text-white">
-          <Bell className="h-4 w-4" />
-          {summary.total > 0 && (
-            <span className={cn('absolute -right-1.5 -top-1.5 grid h-4 min-w-[16px] place-items-center rounded-full px-1 text-[9px] font-bold text-white', summary.high > 0 ? 'bg-rose-500' : 'bg-amber-500')}>
-              {summary.total}
-            </span>
-          )}
-        </Link>
+        <NotificationBell />
 
         {user ? (
           <div className="relative" ref={menuRef}>

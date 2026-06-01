@@ -34,6 +34,7 @@ const Sustainability = lazy(() => import('@/pages/Sustainability'))
 const DigitalTwin = lazy(() => import('@/pages/DigitalTwin'))
 const ProjectWorkspace = lazy(() => import('@/pages/ProjectWorkspace'))
 const Alerts = lazy(() => import('@/pages/Alerts'))
+const Notifications = lazy(() => import('@/pages/Notifications'))
 const ShareRedirect = lazy(() => import('@/pages/ShareRedirect'))
 const Developer = lazy(() => import('@/pages/Developer'))
 const ScenarioShare = lazy(() => import('@/pages/ScenarioShare'))
@@ -55,6 +56,7 @@ export const router = createBrowserRouter(
         { path: 'overview', element: <Overview /> },
         { path: 'project', element: <ProjectWorkspace /> },
         { path: 'alerts', element: <Alerts /> },
+        { path: 'notifications', element: <Notifications /> },
         { path: 'share/scenario/:token', element: <ScenarioShare /> },
         { path: 'share/:token', element: <ShareRedirect /> },
         // Pillars

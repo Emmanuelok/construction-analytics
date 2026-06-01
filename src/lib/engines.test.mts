@@ -17,10 +17,11 @@ import { makeScenario, upsert, removeById, renameScenario, forModule, diff, pars
 import { buildReportHtml, tableToCsv, kpiToItem, esc, type ReportSpec } from './report.ts'
 import { deriveProjectModel, projectNarrative, type ProjectVitals } from './project-model.ts'
 import { SCHEMAS, autoMap, coerceField, validateImport, recordsToCsv } from './ingest.ts'
-import { compare, evaluate, summarize as summarizeAlerts, metricsForVitals, makeRule, parseRules, DEFAULT_RULES, type Subject } from './alerts.ts'
+import { compare, evaluate, summarize as summarizeAlerts, metricsForVitals, makeRule, parseRules, DEFAULT_RULES, type Subject, type Alert } from './alerts.ts'
 import { editLabel, removeLabel, actionLabel, percentValueText, toggleLabel } from './a11y.ts'
-import { parseMentions, makeComment, threadFor, addComment, removeComment, toggleResolved, summarizeThread, encodeShareToken, decodeShareToken, shareUrl, logActivity, parseComments, subjectLabel, type Comment as CollabComment, type Author } from './collab.ts'
+import { parseMentions, makeComment, threadFor, addComment, removeComment, toggleResolved, summarizeThread, encodeShareToken, decodeShareToken, shareUrl, logActivity, parseComments, subjectLabel, type Comment as CollabComment, type Author, type Activity } from './collab.ts'
 import { toPublic, parseListQuery, listDatasets, findDataset, generateApiKey, isValidKeyFormat, extractApiKey, ok as apiOk, err as apiErr, type CatalogLike, type PublicDataset } from './apikit.ts'
+import { mentionNotifications, shareNotifications, alertNotifications, buildFeed, unreadCount, isUnread, timeAgo, parseReadIds, subjectName, type Notification } from './notifications.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -572,6 +573,65 @@ section('apikit')
   ok('ok wraps array as data', (apiOk(all.slice(0, 1)).body as { ok: boolean; data: unknown[] }).data.length === 1)
   ok('ok merges object + extra', (apiOk({ meta: 1 }, { request_id: 'r' }).body as { request_id: string }).request_id === 'r')
   ok('err shape', (() => { const e = apiErr(404, 'nope', 'not_found'); return e.status === 404 && (e.body as { ok: boolean; code: string }).ok === false && (e.body as { code: string }).code === 'not_found' })())
+}
+
+// ── notifications (unified inbox) ────────────────────────────────────────────
+section('notifications')
+{
+  const alice: Author = { id: 'u1', name: 'Alice' }
+  const bob: Author = { id: 'u2', name: 'Bob' }
+  const comments: CollabComment[] = [
+    makeComment('cost-schedule', alice, 'CPI off — @bob take a look'),
+    makeComment('procurement', bob, 'no mention here'),
+    makeComment('bim', alice, 'clashes spiking, @bob @carol'),
+  ]
+  // mentions for bob
+  const mentions = mentionNotifications(comments, 'bob')
+  ok('mentionNotifications finds @bob comments', mentions.length === 2 && mentions.every((m) => m.kind === 'mention'))
+  ok('mention title names the author', mentions[0].title === 'Alice mentioned you')
+  ok('mention carries subject for deep-link', mentions.some((m) => m.subject === 'cost-schedule'))
+  ok('mention id is stable', mentions[0].id.startsWith('mention:'))
+  ok('no mentions for unknown handle', mentionNotifications(comments, 'zoe').length === 0)
+
+  // shares (from others only)
+  const activity: Activity[] = [
+    logActivity([], bob, 'shared', 'insights')[0],
+    logActivity([], alice, 'shared', 'cost-schedule')[0],
+    logActivity([], bob, 'commented on', 'bim')[0],
+  ]
+  const shares = shareNotifications(activity, 'u1') // self = alice
+  ok('shareNotifications excludes self + non-shares', shares.length === 1 && shares[0].kind === 'share' && /Bob shared/.test(shares[0].title))
+
+  // alerts
+  const alerts: Alert[] = [
+    { ruleId: 'r-cpi', ruleName: 'Cost overrun', severity: 'High', subjectId: 'PRJ-1290', subjectName: 'Riverside', metric: 'cpi', metricLabel: 'CPI', value: 0.81, op: '<', threshold: 0.9 },
+    { ruleId: 'r-slip', ruleName: 'Major delay', severity: 'High', subjectId: 'PRJ-1290', subjectName: 'Riverside', metric: 'scheduleSlip', metricLabel: 'Schedule slip', value: 96, op: '>', threshold: 30 },
+  ]
+  const an = alertNotifications(alerts, '2026-06-01T00:00:00.000Z')
+  ok('alertNotifications maps breaches', an.length === 2 && an[0].kind === 'alert' && an[0].severity === 'High')
+  ok('alert subject deep-links to the project', an[0].subject === 'project:PRJ-1290')
+  ok('alert id dedupes per rule×subject', an[0].id === 'alert:r-cpi:PRJ-1290')
+
+  // feed merge + dedup + sort
+  const feed = buildFeed([mentions, shares, an])
+  ok('buildFeed merges all sources', feed.length === mentions.length + shares.length + an.length)
+  ok('buildFeed dedups by id', buildFeed([an, an]).length === an.length)
+  ok('buildFeed newest-first', feed.every((n, i) => i === 0 || feed[i - 1].at >= n.at))
+
+  // unread tracking
+  ok('unreadCount all unread', unreadCount(feed, []) === feed.length)
+  const someRead = [feed[0].id, feed[1].id]
+  ok('unreadCount subtracts read', unreadCount(feed, someRead) === feed.length - 2)
+  ok('isUnread reflects read set', !isUnread(feed[0], someRead) && isUnread(feed[2], someRead))
+  ok('parseReadIds round-trips', parseReadIds(JSON.stringify(['a', 'b'])).length === 2)
+  ok('parseReadIds bad → []', parseReadIds('nope').length === 0 && parseReadIds(null).length === 0)
+
+  // helpers
+  ok('subjectName labels slug', subjectName('cost-schedule') === 'Cost & Schedule')
+  ok('subjectName labels project', subjectName('project:PRJ-1042') === 'Project PRJ-1042')
+  ok('timeAgo minutes', timeAgo(new Date(Date.now() - 5 * 60000).toISOString()) === '5m')
+  ok('timeAgo hours', timeAgo(new Date(Date.now() - 3 * 3600000).toISOString()) === '3h')
+  ok('timeAgo seconds', /\ds$/.test(timeAgo(new Date(Date.now() - 5000).toISOString())))
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)
