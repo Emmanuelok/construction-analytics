@@ -41,6 +41,37 @@ the same GitHub repository:
 
 ---
 
+## Quick checklist (studio)
+
+Tick these top-to-bottom for a clean first deploy:
+
+- [ ] **Import** the repo at vercel.com → Add New… → Project (Root Directory `.`).
+- [ ] Confirm preset **Vite**, build `npm run build`, output `dist` (from `vercel.json`).
+- [ ] **Deploy** with **no env vars** first — confirm the app loads in demo mode.
+- [ ] (Optional) Add Supabase vars → sign-up/sign-in + cloud sync go live.
+- [ ] (Optional) Add Stripe vars **and** create a webhook at
+      `https://<studio>/api/stripe-webhook` (event `checkout.session.completed`)
+      → card payments + license grants go live.
+- [ ] (Optional) Add `ANTHROPIC_API_KEY` → the Ask/Workspace copilot + Flow
+      "Diagram it" planner answer via Claude.
+- [ ] (Optional) Add `API_KEYS` → the public `GET /api/datasets` requires a key.
+- [ ] **Redeploy** after adding any env vars (Vercel injects them at build time).
+
+### Verify it's live
+
+```bash
+# Public dataset API (open unless API_KEYS is set):
+curl "https://<studio>.vercel.app/api/datasets?pageSize=3"
+
+# Copilot probe — returns { "enabled": true } once ANTHROPIC_API_KEY is set:
+curl "https://<studio>.vercel.app/api/copilot"
+```
+
+In the app: **/developer** runs the same API live; **/welcome** is the landing;
+the topbar **bell** shows notifications; every workbench can **Export** a brief.
+
+---
+
 ## Result
 
 - **Landing page:** `https://<landing-project>.vercel.app` — share this.
