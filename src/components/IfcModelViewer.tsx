@@ -129,6 +129,7 @@ export function IfcModelViewer({
         target.z + radius * Math.sin(polar) * Math.cos(azimuth),
       )
       camera.lookAt(target)
+      ;(mount as HTMLElement & { __cam?: { azimuth: number; polar: number; radius: number } }).__cam = { azimuth: orbit.azimuth, polar: orbit.polar, radius: orbit.radius }
     }
 
     const clearHighlight = () => {
@@ -272,12 +273,33 @@ export function IfcModelViewer({
       onSel({ key: ud.key, source: ud.source, ifcType: ud.ifcType, discipline: ud.discipline, expressID: ud.expressID, storey: ud.storey, size: { x: sizeV.x, y: sizeV.y, z: sizeV.z }, triangles: tri })
     }
 
+    // keyboard control — the canvas itself is decorative (aria-hidden); the
+    // focusable container handles arrow-orbit / +- zoom / Home reset so the model
+    // is operable without a mouse.
+    const clampPolar = (p: number) => Math.max(0.1, Math.min(Math.PI / 2 - 0.04, p))
+    const onKeyDown = (e: KeyboardEvent) => {
+      let handled = true
+      switch (e.key) {
+        case 'ArrowLeft': orbit.azimuth += 0.12; break
+        case 'ArrowRight': orbit.azimuth -= 0.12; break
+        case 'ArrowUp': orbit.polar = clampPolar(orbit.polar - 0.12); break
+        case 'ArrowDown': orbit.polar = clampPolar(orbit.polar + 0.12); break
+        case '+': case '=': orbit.radius = Math.max(6, orbit.radius - 4); break
+        case '-': case '_': orbit.radius = Math.min(800, orbit.radius + 4); break
+        case 'Home': resetView(); break
+        default: handled = false
+      }
+      if (!handled) return
+      e.preventDefault(); spin = false; applyCamera()
+    }
+
     const el = renderer.domElement
     el.addEventListener('pointerdown', onDown)
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     el.addEventListener('wheel', onWheel, { passive: false })
     el.addEventListener('click', onClick)
+    mount.addEventListener('keydown', onKeyDown)
 
     const onResize = () => { const w = mount.clientWidth || 600; camera.aspect = w / height; camera.updateProjectionMatrix(); renderer.setSize(w, height) }
     const ro = new ResizeObserver(onResize); ro.observe(mount)
@@ -292,6 +314,7 @@ export function IfcModelViewer({
       cancelAnimationFrame(raf); ro.disconnect()
       el.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); el.removeEventListener('click', onClick)
+      mount.removeEventListener('keydown', onKeyDown)
       clearHighlight()
       for (const g of geometries) g.dispose()
       unitBox.dispose(); Object.values(mats).forEach((m) => m?.dispose())
@@ -312,6 +335,14 @@ export function IfcModelViewer({
       </div>
     )
   }
-  const label = meshes && meshes.length ? 'Tessellated 3D geometry from the IFC file' : 'Reconstructed 3D model from the IFC file'
-  return <div ref={mountRef} style={{ height }} className="w-full overflow-hidden rounded-xl" role="img" aria-label={label} />
+  const content = meshes && meshes.length ? 'Tessellated 3D geometry from the IFC file' : 'Reconstructed 3D model from the IFC file'
+  return (
+    <div
+      ref={mountRef}
+      style={{ height }}
+      tabIndex={0}
+      aria-label={`${content}. Use arrow keys to orbit, plus and minus to zoom, Home to reset the view.`}
+      className="w-full overflow-hidden rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+    />
+  )
 }

@@ -507,7 +507,7 @@ function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: strin
               <button onClick={() => { setExplode(0); setSection(1); setSelected(null); setResetNonce((n) => n + 1) }} className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 font-medium text-slate-300 ring-1 ring-inset ring-edge/70 hover:bg-elevated/60">
                 <RotateCcw className="h-3.5 w-3.5" /> Reset view
               </button>
-              <span className="text-slate-500">Drag to orbit · scroll to zoom · click to inspect</span>
+              <span className="text-slate-500">Drag or arrow-keys to orbit · scroll to zoom · click to inspect</span>
             </div>
             <div className="relative">
               <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
