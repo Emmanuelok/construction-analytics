@@ -1,9 +1,17 @@
 import {
+  Home,
   LayoutDashboard,
+  FolderKanban,
+  Workflow,
+  Table2,
+  Users,
   Gauge,
   Sparkles,
   Database,
   Store,
+  Microscope,
+  UploadCloud,
+  Library,
   BrainCircuit,
   ShieldCheck,
   Boxes,
@@ -15,6 +23,9 @@ import {
   Leaf,
   Building2,
   Flame,
+  Building,
+  Bell,
+  Code2,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -41,144 +52,43 @@ export type NavItem = {
 }
 
 export const NAV: NavItem[] = [
-  // Core
-  {
-    path: '/',
-    label: 'Overview',
-    blurb: 'The unified studio for the built environment',
-    icon: LayoutDashboard,
-    accent: 'blue',
-    group: 'Core',
-  },
-  {
-    path: '/insights',
-    label: 'Executive Insights',
-    blurb: 'Portfolio KPIs, risk & cross-project decisions',
-    icon: Gauge,
-    accent: 'cyan',
-    group: 'Core',
-  },
-  {
-    path: '/ask',
-    label: 'Ask AEC',
-    blurb: 'Natural-language analytics over every dataset',
-    icon: Sparkles,
-    accent: 'violet',
-    group: 'Core',
-    tag: 'AI',
-  },
-  // Data platform
-  {
-    path: '/lakehouse',
-    label: 'Data Lakehouse',
-    blurb: 'Ingest, ETL, standardize, score & store',
-    icon: Database,
-    accent: 'sky',
-    group: 'Data Platform',
-  },
-  {
-    path: '/marketplace',
-    label: 'Data Marketplace',
-    blurb: 'Discover, license & exchange AEC datasets',
-    icon: Store,
-    accent: 'emerald',
-    group: 'Data Platform',
-  },
-  {
-    path: '/ai-studio',
-    label: 'AI Training Studio',
-    blurb: 'Curate, label, anonymize & version datasets',
-    icon: BrainCircuit,
-    accent: 'fuchsia',
-    group: 'Data Platform',
-    tag: 'AI',
-  },
-  {
-    path: '/governance',
-    label: 'Governance & Trust',
-    blurb: 'Permissions, lineage, licensing & audit',
-    icon: ShieldCheck,
-    accent: 'teal',
-    group: 'Data Platform',
-  },
-  // Intelligence engines
-  {
-    path: '/bim',
-    label: 'BIM Intelligence',
-    blurb: 'Parse, classify, clash & quantify models',
-    icon: Boxes,
-    accent: 'blue',
-    group: 'Intelligence Engines',
-  },
-  {
-    path: '/documents',
-    label: 'Document Intelligence',
-    blurb: 'Drawings, specs, contracts, RFIs & submittals',
-    icon: FileText,
-    accent: 'amber',
-    group: 'Intelligence Engines',
-  },
-  {
-    path: '/cost-schedule',
-    label: 'Cost & Schedule',
-    blurb: 'Forecast overruns, delays & earned value',
-    icon: CalendarClock,
-    accent: 'rose',
-    group: 'Intelligence Engines',
-  },
-  {
-    path: '/procurement',
-    label: 'Procurement',
-    blurb: 'Supplier scoring, bids & lead-time risk',
-    icon: Truck,
-    accent: 'lime',
-    group: 'Intelligence Engines',
-  },
-  {
-    path: '/field',
-    label: 'Construction Analytics',
-    blurb: 'Field progress, productivity, safety & quality',
-    icon: HardHat,
-    accent: 'amber',
-    group: 'Intelligence Engines',
-  },
-  {
-    path: '/reality-capture',
-    label: 'Reality Capture',
-    blurb: 'Computer vision over photos, drones & scans',
-    icon: ScanEye,
-    accent: 'cyan',
-    group: 'Intelligence Engines',
-  },
-  {
-    path: '/sustainability',
-    label: 'Sustainability & ESG',
-    blurb: 'Embodied carbon, energy, waste & lifecycle',
-    icon: Leaf,
-    accent: 'emerald',
-    group: 'Intelligence Engines',
-  },
-  {
-    path: '/digital-twin',
-    label: 'Digital Twin',
-    blurb: 'Connect design, build & operations data',
-    icon: Building2,
-    accent: 'violet',
-    group: 'Intelligence Engines',
-  },
+  // Studio — the three functional pillars + entry points
+  { path: '/', label: 'For You', blurb: 'Your personalized home — picks, insights & shortcuts', icon: Home, accent: 'blue', group: 'Studio', tag: 'NEW' },
+  { path: '/overview', label: 'Platform Overview', blurb: 'The unified studio for the built environment', icon: LayoutDashboard, accent: 'sky', group: 'Studio' },
+  { path: '/project', label: 'Project Workspace', blurb: 'One project, every lens — edit vitals, watch all engines recompute', icon: Building, accent: 'blue', group: 'Studio', tag: 'NEW' },
+  { path: '/data', label: 'Data Center', blurb: 'Browse, preview & download AEC datasets', icon: Store, accent: 'emerald', group: 'Studio' },
+  { path: '/workbench', label: 'Data Workbench', blurb: 'Open data in a grid — edit, sort, filter & derive', icon: Table2, accent: 'cyan', group: 'Studio', tag: 'NEW' },
+  { path: '/analyze', label: 'Analysis Studio', blurb: 'Bring data, profile it, chart & ask AI', icon: Microscope, accent: 'violet', group: 'Studio', tag: 'AI' },
+  { path: '/workspaces', label: 'Workspaces', blurb: 'Frame a problem → assemble, analyze, decide & ship', icon: FolderKanban, accent: 'violet', group: 'Studio', tag: 'NEW' },
+  { path: '/flow', label: 'Flow Studio', blurb: 'Node canvas — wire & run a data flow, agent-diagrammed', icon: Workflow, accent: 'fuchsia', group: 'Studio', tag: 'NEW' },
+  { path: '/teams', label: 'Teams', blurb: 'Collaborate — invite members & share workspaces', icon: Users, accent: 'cyan', group: 'Studio', tag: 'NEW' },
+  { path: '/sell', label: 'Seller Studio', blurb: 'Upload, auto-tag, price & publish data', icon: UploadCloud, accent: 'lime', group: 'Studio' },
+  { path: '/library', label: 'My Library', blurb: 'Cart, licenses & downloads', icon: Library, accent: 'cyan', group: 'Studio' },
+  { path: '/ask', label: 'Ask AEC', blurb: 'Natural-language analytics over everything', icon: Sparkles, accent: 'violet', group: 'Studio', tag: 'AI' },
+  { path: '/alerts', label: 'Alerts', blurb: 'Set thresholds; get notified when projects cross the line', icon: Bell, accent: 'rose', group: 'Studio', tag: 'NEW' },
+
+  // Intelligence engines (supporting analytics)
+  { path: '/insights', label: 'Executive Insights', blurb: 'Portfolio KPIs, risk & decisions', icon: Gauge, accent: 'cyan', group: 'Intelligence' },
+  { path: '/bim', label: 'BIM Intelligence', blurb: 'Parse, classify, clash & quantify models', icon: Boxes, accent: 'blue', group: 'Intelligence' },
+  { path: '/documents', label: 'Document Intelligence', blurb: 'Drawings, specs, contracts, RFIs', icon: FileText, accent: 'amber', group: 'Intelligence' },
+  { path: '/cost-schedule', label: 'Cost & Schedule', blurb: 'Forecast overruns, delays & earned value', icon: CalendarClock, accent: 'rose', group: 'Intelligence' },
+  { path: '/procurement', label: 'Procurement', blurb: 'Supplier scoring, bids & lead-time risk', icon: Truck, accent: 'lime', group: 'Intelligence' },
+  { path: '/field', label: 'Construction Analytics', blurb: 'Field progress, productivity & safety', icon: HardHat, accent: 'amber', group: 'Intelligence' },
+  { path: '/reality-capture', label: 'Reality Capture', blurb: 'Computer vision over photos & scans', icon: ScanEye, accent: 'cyan', group: 'Intelligence' },
+  { path: '/sustainability', label: 'Sustainability & ESG', blurb: 'Embodied carbon, energy & lifecycle', icon: Leaf, accent: 'emerald', group: 'Intelligence' },
+  { path: '/digital-twin', label: 'Digital Twin', blurb: 'Connect design, build & operations data', icon: Building2, accent: 'violet', group: 'Intelligence' },
+
+  // Platform infrastructure
+  { path: '/lakehouse', label: 'Data Lakehouse', blurb: 'Ingest, ETL, standardize, score & store', icon: Database, accent: 'sky', group: 'Platform' },
+  { path: '/ai-studio', label: 'AI Training Studio', blurb: 'Curate, label, anonymize & version', icon: BrainCircuit, accent: 'fuchsia', group: 'Platform', tag: 'AI' },
+  { path: '/governance', label: 'Governance & Trust', blurb: 'Permissions, lineage, licensing & audit', icon: ShieldCheck, accent: 'teal', group: 'Platform' },
+  { path: '/developer', label: 'Developer & API', blurb: 'Public dataset API — keys, docs & a live playground', icon: Code2, accent: 'violet', group: 'Platform', tag: 'NEW' },
+
   // Research
-  {
-    path: '/pain-points',
-    label: 'Unsolved Pain Points',
-    blurb: 'The industry gaps we exist to close',
-    icon: Flame,
-    accent: 'rose',
-    group: 'Research',
-    tag: 'NEW',
-  },
+  { path: '/pain-points', label: 'Unsolved Pain Points', blurb: 'The industry gaps we exist to close', icon: Flame, accent: 'rose', group: 'Research', tag: 'NEW' },
 ]
 
-export const NAV_GROUPS = ['Core', 'Data Platform', 'Intelligence Engines', 'Research'] as const
+export const NAV_GROUPS = ['Studio', 'Intelligence', 'Platform', 'Research'] as const
 
 /** Tailwind class fragments keyed by accent for consistent theming. */
 export const ACCENT: Record<

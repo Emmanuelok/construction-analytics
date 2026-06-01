@@ -11,9 +11,28 @@ models** and an **intelligent analytics platform** for every project stakeholder
 
 ## 🌐 View it online
 
-Once GitHub Pages is enabled for this repo (Settings → Pages → Source: **GitHub Actions**), the
-studio is published automatically on every push by the workflow in
-[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
+The app is **host-aware** — the same codebase deploys correctly whether it's served at a domain
+root (Vercel / Netlify) or a project sub-path (GitHub Pages). The base path is resolved at build
+time, so no manual config is needed per host.
+
+### Option A — Vercel (recommended, auto-deploys on every push)
+
+1. Go to **[vercel.com/new](https://vercel.com/new)** and **Import** the `construction-analytics` repo.
+2. Framework preset auto-detects **Vite** (build `npm run build`, output `dist`). Click **Deploy**.
+3. Every push to the connected branch then redeploys automatically, with preview URLs per commit.
+
+Config lives in [`vercel.json`](vercel.json) (SPA rewrites). No environment variables required —
+Vercel sets `VERCEL=1`, which switches the base path to `/`.
+
+### Option B — Netlify
+
+Import the repo at **[app.netlify.com](https://app.netlify.com)**. Build settings come from
+[`netlify.toml`](netlify.toml) (`npm run build` → `dist`, with SPA redirects).
+
+### Option C — GitHub Pages
+
+Enable once: repo **Settings → Pages → Source: GitHub Actions**. The workflow in
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) then publishes on every push to:
 
 **https://emmanuelok.github.io/construction-analytics/**
 

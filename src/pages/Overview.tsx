@@ -13,6 +13,9 @@ import {
   Cpu,
   FileStack,
   Network,
+  Store,
+  Microscope,
+  UploadCloud,
 } from 'lucide-react'
 import { Card, IconBadge, Badge } from '@/components/ui'
 import { CORE_MODULES, DOMAIN_AREAS, STAKEHOLDERS, PLATFORM_KPIS } from '@/data/platform'
@@ -38,6 +41,12 @@ const PIPELINE = [
   { icon: ShieldCheck, label: 'Govern', desc: 'Quality scoring, anonymization, lineage', accent: 'teal' as const },
   { icon: Cpu, label: 'Analyze', desc: 'Forecasting, CV, NL querying, twins', accent: 'violet' as const },
   { icon: Layers, label: 'License', desc: 'Marketplace, clean rooms, AI training', accent: 'emerald' as const },
+]
+
+const PILLARS = [
+  { to: '/data', icon: Store, title: 'Data Center', desc: 'Browse, preview & download standardized AEC datasets across the whole lifecycle — or license premium data.', cta: 'Browse data', accent: 'emerald' as const },
+  { to: '/analyze', icon: Microscope, title: 'Analysis Studio', desc: 'Bring any dataset, profile it, build charts and ask AI. Your own analyst workspace, not a fixed dashboard.', cta: 'Open studio', accent: 'violet' as const },
+  { to: '/sell', icon: UploadCloud, title: 'Seller Studio', desc: 'Upload files, auto-tag & quality-score them, set a license and price, then publish — and earn from your data.', cta: 'Start selling', accent: 'lime' as const },
 ]
 
 export default function Overview() {
@@ -90,6 +99,37 @@ export default function Overview() {
               </span>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* ===================================================== Pillars */}
+      <section>
+        <div className="text-center">
+          <div className="section-label">A functional data exchange</div>
+          <h2 className="mx-auto mt-3 max-w-2xl text-2xl font-bold text-slate-100 sm:text-3xl">Three studios, one platform</h2>
+          <p className="mx-auto mt-3 max-w-2xl text-sm text-slate-400">
+            Find and download data, analyze it in your own workspace, and sell what you produce — all over one
+            governed, neutral data layer.
+          </p>
+        </div>
+        <div className="mt-8 grid gap-4 md:grid-cols-3">
+          {PILLARS.map((p) => {
+            const a = ACCENT[p.accent]
+            return (
+              <Link key={p.to} to={p.to} className="group">
+                <Card className="flex h-full flex-col p-6" hover>
+                  <span className={cn('grid h-12 w-12 place-items-center rounded-2xl ring-1', a.bg, a.ring)}>
+                    <p.icon className={cn('h-6 w-6', a.text)} />
+                  </span>
+                  <h3 className="mt-4 text-lg font-semibold text-slate-100">{p.title}</h3>
+                  <p className="mt-1.5 flex-1 text-sm leading-relaxed text-slate-400">{p.desc}</p>
+                  <span className={cn('mt-4 inline-flex items-center gap-1 text-sm font-semibold', a.text)}>
+                    {p.cta} <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                </Card>
+              </Link>
+            )
+          })}
         </div>
       </section>
 

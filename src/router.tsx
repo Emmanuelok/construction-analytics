@@ -1,36 +1,84 @@
-import { createBrowserRouter } from 'react-router-dom'
+import { lazy } from 'react'
+import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
+import Landing from '@/pages/Landing'
+import ForYou from '@/pages/ForYou'
 import Overview from '@/pages/Overview'
-import Insights from '@/pages/Insights'
-import Ask from '@/pages/Ask'
-import Lakehouse from '@/pages/Lakehouse'
-import Marketplace from '@/pages/Marketplace'
-import AiStudio from '@/pages/AiStudio'
-import Governance from '@/pages/Governance'
-import Bim from '@/pages/Bim'
-import Documents from '@/pages/Documents'
-import CostSchedule from '@/pages/CostSchedule'
-import Procurement from '@/pages/Procurement'
-import Field from '@/pages/Field'
-import RealityCapture from '@/pages/RealityCapture'
-import Sustainability from '@/pages/Sustainability'
-import DigitalTwin from '@/pages/DigitalTwin'
-import PainPoints from '@/pages/PainPoints'
 import NotFound from '@/pages/NotFound'
+
+// Code-split heavier pages so the landing paints fast and charting libraries
+// only load when a data module is opened.
+const DataCenter = lazy(() => import('@/pages/DataCenter'))
+const DatasetDetail = lazy(() => import('@/pages/DatasetDetail'))
+const AnalysisStudio = lazy(() => import('@/pages/AnalysisStudio'))
+const SellerStudio = lazy(() => import('@/pages/SellerStudio'))
+const Library = lazy(() => import('@/pages/Library'))
+const Workspaces = lazy(() => import('@/pages/Workspaces'))
+const WorkspaceDetail = lazy(() => import('@/pages/WorkspaceDetail'))
+const Teams = lazy(() => import('@/pages/Teams'))
+const TeamDetail = lazy(() => import('@/pages/TeamDetail'))
+const FlowStudio = lazy(() => import('@/pages/FlowStudio'))
+const DataWorkbench = lazy(() => import('@/pages/DataWorkbench'))
+const Insights = lazy(() => import('@/pages/Insights'))
+const Ask = lazy(() => import('@/pages/Ask'))
+const Lakehouse = lazy(() => import('@/pages/Lakehouse'))
+const AiStudio = lazy(() => import('@/pages/AiStudio'))
+const Governance = lazy(() => import('@/pages/Governance'))
+const Bim = lazy(() => import('@/pages/Bim'))
+const Documents = lazy(() => import('@/pages/Documents'))
+const CostSchedule = lazy(() => import('@/pages/CostSchedule'))
+const Procurement = lazy(() => import('@/pages/Procurement'))
+const Field = lazy(() => import('@/pages/Field'))
+const RealityCapture = lazy(() => import('@/pages/RealityCapture'))
+const Sustainability = lazy(() => import('@/pages/Sustainability'))
+const DigitalTwin = lazy(() => import('@/pages/DigitalTwin'))
+const ProjectWorkspace = lazy(() => import('@/pages/ProjectWorkspace'))
+const Alerts = lazy(() => import('@/pages/Alerts'))
+const Notifications = lazy(() => import('@/pages/Notifications'))
+const ShareRedirect = lazy(() => import('@/pages/ShareRedirect'))
+const Developer = lazy(() => import('@/pages/Developer'))
+const ScenarioShare = lazy(() => import('@/pages/ScenarioShare'))
+const PainPoints = lazy(() => import('@/pages/PainPoints'))
+
+// Match the router base to however the app is hosted (root on Vercel/Netlify,
+// a project sub-path on GitHub Pages). Vite injects the resolved base here.
+const rawBase = import.meta.env.BASE_URL
+const basename = rawBase.length > 1 ? rawBase.replace(/\/+$/, '') : '/'
 
 export const router = createBrowserRouter(
   [
+    { path: '/welcome', element: <Landing /> },
     {
       path: '/',
       element: <AppShell />,
       children: [
-        { index: true, element: <Overview /> },
+        { index: true, element: <ForYou /> },
+        { path: 'overview', element: <Overview /> },
+        { path: 'project', element: <ProjectWorkspace /> },
+        { path: 'alerts', element: <Alerts /> },
+        { path: 'notifications', element: <Notifications /> },
+        { path: 'share/scenario/:token', element: <ScenarioShare /> },
+        { path: 'share/:token', element: <ShareRedirect /> },
+        // Pillars
+        { path: 'data', element: <DataCenter /> },
+        { path: 'data/:id', element: <DatasetDetail /> },
+        { path: 'analyze', element: <AnalysisStudio /> },
+        { path: 'sell', element: <SellerStudio /> },
+        { path: 'library', element: <Library /> },
+        { path: 'workspaces', element: <Workspaces /> },
+        { path: 'workspaces/:id', element: <WorkspaceDetail /> },
+        { path: 'flow', element: <FlowStudio /> },
+        { path: 'workbench', element: <DataWorkbench /> },
+        { path: 'teams', element: <Teams /> },
+        { path: 'teams/:id', element: <TeamDetail /> },
+        { path: 'marketplace', element: <Navigate to="/data" replace /> },
+        // Intelligence + platform
         { path: 'insights', element: <Insights /> },
         { path: 'ask', element: <Ask /> },
         { path: 'lakehouse', element: <Lakehouse /> },
-        { path: 'marketplace', element: <Marketplace /> },
         { path: 'ai-studio', element: <AiStudio /> },
         { path: 'governance', element: <Governance /> },
+        { path: 'developer', element: <Developer /> },
         { path: 'bim', element: <Bim /> },
         { path: 'documents', element: <Documents /> },
         { path: 'cost-schedule', element: <CostSchedule /> },
@@ -44,5 +92,5 @@ export const router = createBrowserRouter(
       ],
     },
   ],
-  { basename: '/construction-analytics' },
+  { basename },
 )

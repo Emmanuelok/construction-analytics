@@ -1,8 +1,10 @@
 name: Deploy AEC Studio to GitHub Pages
 
+# Vercel is the primary deployment path (see DEPLOY.md). This GitHub Pages
+# workflow is opt-in only — run it by hand from the Actions tab after enabling
+# Pages (Settings → Pages → Source: GitHub Actions). It no longer runs on push,
+# so it can't fail the branch/PR before Pages is configured.
 on:
-  push:
-    branches: ['claude/hopeful-goldberg-pJxiO', 'main']
   workflow_dispatch:
 
 # Allow the workflow to publish to GitHub Pages.

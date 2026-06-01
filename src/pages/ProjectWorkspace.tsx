@@ -1,0 +1,318 @@
+import { lazy, Suspense, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
+import {
+  Building,
+  Gauge,
+  Wallet,
+  Timer,
+  Leaf,
+  RotateCcw,
+  Sparkles,
+  ArrowRight,
+  CalendarClock,
+  HardHat,
+  Boxes,
+  ShieldAlert,
+} from 'lucide-react'
+import { PageHeader, Card, CardHeader, StatTile, Badge } from '@/components/ui'
+import { RadarViz } from '@/components/charts'
+const BuildingViewer = lazy(() => import('@/components/BuildingViewer').then((m) => ({ default: m.BuildingViewer })))
+import { COLOR_MODES, type ColorMode } from '@/lib/massing'
+import { PROJECTS, type Project } from '@/data/platform'
+import { deriveProjectModel, projectNarrative, type ProjectVitals, type ProjectModel } from '@/lib/project-model'
+import { formatMoney } from '@/lib/evm'
+import { ACCENT, type Accent } from '@/lib/nav'
+import { cn } from '@/lib/cn'
+import { formatNumber } from '@/lib/format'
+import { useScenarios } from '@/store/scenarios'
+import { ScenarioBar } from '@/components/ScenarioBar'
+import { ExportMenu } from '@/components/ExportMenu'
+import { CollabBar } from '@/components/CollabBar'
+import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
+import type { KPI } from '@/lib/scenarios'
+
+const ACCENT_NAME: Accent = 'blue'
+const SEL_KEY = 'aec-active-project'
+
+const toVitals = (p: Project): ProjectVitals => ({
+  id: p.id, name: p.name, sector: p.sector, location: p.location,
+  value: p.value, gfa: p.gfa, progress: p.progress,
+  costVariance: p.costVariance, scheduleVariance: p.scheduleVariance,
+  risk: p.risk, safety: p.safety, quality: p.quality, carbon: p.carbon,
+  rfis: p.rfis, clashes: p.clashes,
+})
+
+const STATUS: Record<ProjectModel['status'], { label: string; variant: 'success' | 'warn' | 'danger'; accent: Accent }> = {
+  healthy: { label: 'On track', variant: 'success', accent: 'emerald' },
+  watch: { label: 'On watch', variant: 'warn', accent: 'amber' },
+  'at-risk': { label: 'At risk', variant: 'danger', accent: 'rose' },
+}
+
+const LENSES: { to: string; label: string; icon: typeof CalendarClock; accent: Accent }[] = [
+  { to: '/cost-schedule', label: 'Cost & Schedule', icon: CalendarClock, accent: 'rose' },
+  { to: '/sustainability', label: 'Sustainability', icon: Leaf, accent: 'emerald' },
+  { to: '/field', label: 'Construction Analytics', icon: HardHat, accent: 'amber' },
+  { to: '/bim', label: 'BIM Intelligence', icon: Boxes, accent: 'blue' },
+  { to: '/insights', label: 'Executive Insights', icon: Gauge, accent: 'cyan' },
+]
+
+const DIM_TARGET = 90
+
+export default function ProjectWorkspace() {
+  const initialId = (() => { try { return localStorage.getItem(SEL_KEY) || PROJECTS[0].id } catch { return PROJECTS[0].id } })()
+  const [projectId, setProjectId] = useState(initialId)
+  const baseProject = useMemo(() => PROJECTS.find((p) => p.id === projectId) ?? PROJECTS[0], [projectId])
+  const [vitals, setVitals] = useState<ProjectVitals>(() => toVitals(PROJECTS.find((p) => p.id === initialId) ?? PROJECTS[0]))
+  const [edited, setEdited] = useState(false)
+  const { scenarios, save, remove, importRaw } = useScenarios('project')
+
+  const selectProject = (id: string) => {
+    const p = PROJECTS.find((x) => x.id === id) ?? PROJECTS[0]
+    setProjectId(id)
+    setVitals(toVitals(p))
+    setEdited(false)
+    try { localStorage.setItem(SEL_KEY, id) } catch { /* ignore */ }
+  }
+  const setV = (patch: Partial<ProjectVitals>) => { setVitals((v) => ({ ...v, ...patch })); setEdited(true) }
+  const reset = () => { setVitals(toVitals(baseProject)); setEdited(false) }
+
+  const [colorMode, setColorMode] = useState<ColorMode>('progress')
+  const [selectedFloor, setSelectedFloor] = useState<number | null>(null)
+  const m = useMemo(() => deriveProjectModel(vitals), [vitals])
+
+  // the project-level metric the 3D model colours floors by, per mode
+  const colorMetric =
+    colorMode === 'risk' ? vitals.risk
+    : colorMode === 'safety' ? vitals.safety
+    : colorMode === 'carbon' ? vitals.carbon
+    : colorMode === 'status' ? m.health
+    : 0
+
+  const summary: KPI[] = [
+    { label: 'Composite health', value: m.health },
+    { label: 'CPI', value: m.evm.cpi },
+    { label: 'Forecast EAC', value: m.evm.eac, unit: '$' },
+    { label: 'Carbon intensity', value: m.carbonIntensity },
+  ]
+  const radar = [
+    { metric: 'Cost', score: m.dims.cost, target: DIM_TARGET },
+    { metric: 'Schedule', score: m.dims.schedule, target: DIM_TARGET },
+    { metric: 'Risk', score: m.dims.risk, target: DIM_TARGET },
+    { metric: 'Safety', score: m.dims.safety, target: DIM_TARGET },
+    { metric: 'Quality', score: m.dims.quality, target: DIM_TARGET },
+    { metric: 'Carbon', score: m.dims.carbon, target: DIM_TARGET },
+  ]
+  const reportTable: ReportTable = {
+    title: 'Performance scorecard',
+    columns: ['Dimension', 'Score (0–100)'],
+    rows: [['Cost', m.dims.cost], ['Schedule', m.dims.schedule], ['Risk', m.dims.risk], ['Safety', m.dims.safety], ['Quality', m.dims.quality], ['Carbon', m.dims.carbon]],
+  }
+  const reportSpec: ReportSpec = {
+    title: `${vitals.name} — Project Brief`,
+    subtitle: `${vitals.sector} · ${vitals.location}`,
+    module: 'project',
+    kpis: summary.map(kpiToItem),
+    narrative: projectNarrative(m),
+    table: reportTable,
+  }
+  const st = STATUS[m.status]
+
+  return (
+    <div className="space-y-8">
+      <PageHeader
+        icon={Building}
+        accent={ACCENT_NAME}
+        eyebrow="Studio"
+        title="Project Workspace"
+        description="One project, every lens. Pick a project and edit its vitals — earned value, the six-dimension health scorecard and the carbon rating recompute together, from one coherent dataset. Then open any workbench to go deeper."
+        actions={
+          <>
+            <select
+              value={projectId}
+              onChange={(e) => selectProject(e.target.value)}
+              aria-label="Select project"
+              className="rounded-lg border border-edge/70 bg-elevated/60 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500/50 focus:outline-none"
+            >
+              {PROJECTS.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+            </select>
+            {edited && <button onClick={reset} className="btn-ghost"><RotateCcw className="h-4 w-4" /> Reset</button>}
+            <Badge variant={st.variant} dot>{st.label}</Badge>
+          </>
+        }
+      />
+
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <ScenarioBar
+            onImport={importRaw}
+            module="project"
+            accent={ACCENT_NAME}
+            scenarios={scenarios}
+            onSave={(name) => save(name, { projectId, vitals }, summary)}
+            onLoad={(s) => { const d = s.data as { projectId?: string; vitals?: ProjectVitals }; if (d.projectId) setProjectId(d.projectId); if (d.vitals) { setVitals(d.vitals); setEdited(true) } }}
+            onRemove={remove}
+          />
+        </div>
+        <ExportMenu accent={ACCENT_NAME} spec={reportSpec} csv={reportTable} />
+      </div>
+
+      <CollabBar subject={`project:${projectId}`} accent={ACCENT_NAME} />
+
+      {/* unified KPIs */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        <StatTile label="Composite health" value={`${m.health}`} icon={Gauge} accent={st.accent} sub={`${st.label} · exposure ${formatMoney(m.exposure)}`} />
+        <StatTile label="Cost index (CPI)" value={m.evm.cpi.toFixed(2)} icon={Wallet} accent={m.evm.cpi >= 1 ? 'emerald' : 'rose'} sub={m.evm.cpi >= 1 ? 'under budget' : 'over budget'} />
+        <StatTile label="Schedule index (SPI)" value={m.evm.spi.toFixed(2)} icon={Timer} accent={m.evm.spi >= 1 ? 'emerald' : 'amber'} sub={m.evm.spi >= 1 ? 'ahead' : 'behind'} />
+        <StatTile label="Forecast (EAC)" value={formatMoney(m.evm.eac)} icon={Wallet} accent={m.evm.vac < 0 ? 'rose' : 'emerald'} sub={`VAC ${formatMoney(m.evm.vac)}`} />
+        <StatTile label="Embodied carbon" value={`${formatNumber(m.carbonIntensity)}`} icon={Leaf} accent={m.carbonRating === 'A' || m.carbonRating === 'B' ? 'emerald' : m.carbonRating === 'C' ? 'amber' : 'rose'} sub={`kgCO₂e/m² · rating ${m.carbonRating}`} />
+      </div>
+
+      {/* real 3D building model — driven by GFA / storeys / % complete, coloured by analytics */}
+      <Card className="overflow-hidden">
+        <CardHeader
+          icon={Boxes}
+          accent={ACCENT_NAME}
+          title="3D building model"
+          subtitle="Orbit · scroll to zoom · click a floor. Colour shows the selected analytics layer; in 4D mode, solid floors are built and ghosted floors are planned."
+          action={
+            <div className="flex flex-wrap gap-1.5">
+              {COLOR_MODES.map((cm) => (
+                <button
+                  key={cm.id}
+                  onClick={() => setColorMode(cm.id)}
+                  className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', colorMode === cm.id ? 'bg-blue-500/15 text-blue-200 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50 hover:text-slate-200')}
+                >
+                  {cm.label}
+                </button>
+              ))}
+            </div>
+          }
+        />
+        <div className="grid gap-0 border-t border-edge/50 lg:grid-cols-[1.6fr_1fr]">
+          <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
+            <BuildingViewer input={{ gfa: vitals.gfa, progress: vitals.progress, taper: 0.35 }} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />
+          </Suspense>
+          <div className="flex flex-col justify-center gap-3 border-t border-edge/50 p-5 lg:border-l lg:border-t-0">
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">Massing</div>
+              <div className="mt-1 text-sm text-slate-300">{Math.max(1, Math.round(vitals.gfa / 2500))} storeys · {formatNumber(vitals.gfa)} m² GFA</div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">Construction (4D)</div>
+              <div className="mt-1 text-sm"><span className="font-semibold text-emerald-300">{vitals.progress}%</span> <span className="text-slate-400">complete — lower floors built first</span></div>
+            </div>
+            {selectedFloor !== null && (
+              <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-3">
+                <div className="text-[11px] uppercase tracking-wide text-blue-300/80">Selected floor</div>
+                <div className="mt-0.5 text-sm font-semibold text-slate-100">{selectedFloor === 0 ? 'Ground floor' : `Level ${selectedFloor}`}</div>
+                <div className="text-xs text-slate-400">{selectedFloor < Math.round((vitals.progress / 100) * Math.max(1, Math.round(vitals.gfa / 2500))) ? 'Built' : 'Planned'}</div>
+              </div>
+            )}
+            <p className="text-[11px] leading-relaxed text-slate-500">
+              Data-driven massing from project metrics. Full IFC mesh geometry (from an uploaded model) renders in BIM Intelligence.
+            </p>
+          </div>
+        </div>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-5">
+        {/* editable vitals */}
+        <Card className="lg:col-span-3">
+          <CardHeader icon={Building} accent={ACCENT_NAME} title="Project vitals — editable" subtitle="Edit any driver; every lens above and the scorecard recompute live" />
+          <div className="grid grid-cols-2 gap-5 border-t border-edge/50 p-5 sm:grid-cols-3">
+            <Param label="Budget (value)" unit="$" value={vitals.value} step={10_000_000} onChange={(v) => setV({ value: Math.max(0, v) })} />
+            <Param label="GFA" unit="m²" value={vitals.gfa} step={1000} onChange={(v) => setV({ gfa: Math.max(0, v) })} />
+            <Param label="% complete" unit="0–100" value={vitals.progress} step={1} onChange={(v) => setV({ progress: clamp(v) })} />
+            <Param label="Cost variance" unit="%" value={vitals.costVariance} step={0.5} onChange={(v) => setV({ costVariance: v })} />
+            <Param label="Schedule slip" unit="days" value={vitals.scheduleVariance} step={1} onChange={(v) => setV({ scheduleVariance: v })} />
+            <Param label="Embodied carbon" unit="kgCO₂e/m²" value={vitals.carbon} step={10} onChange={(v) => setV({ carbon: Math.max(0, v) })} />
+            <Param label="Risk index" unit="0–100" value={vitals.risk} step={1} onChange={(v) => setV({ risk: clamp(v) })} />
+            <Param label="Safety" unit="0–100" value={vitals.safety} step={1} onChange={(v) => setV({ safety: clamp(v) })} />
+            <Param label="Quality" unit="0–100" value={vitals.quality} step={1} onChange={(v) => setV({ quality: clamp(v) })} />
+          </div>
+        </Card>
+
+        {/* scorecard */}
+        <Card className="lg:col-span-2">
+          <CardHeader icon={Gauge} accent={ACCENT_NAME} title="Performance scorecard" subtitle="Six dimensions vs a 90 target" />
+          <div className="px-3 pb-5 pt-2">
+            <RadarViz data={radar} series={[{ key: 'score', name: vitals.name, accent: 'blue' }, { key: 'target', name: 'Target', accent: 'violet' }]} height={300} />
+          </div>
+        </Card>
+      </div>
+
+      {/* earned value detail */}
+      <Card>
+        <CardHeader icon={Wallet} accent="rose" title="Earned value detail" subtitle="Computed from budget, % complete and variances" />
+        <div className="grid grid-cols-2 gap-px border-t border-edge/50 bg-edge/40 sm:grid-cols-3 lg:grid-cols-6">
+          {[
+            { k: 'Planned value', v: formatMoney(m.evm.pv) },
+            { k: 'Earned value', v: formatMoney(m.evm.ev) },
+            { k: 'Actual cost', v: formatMoney(m.evm.ac) },
+            { k: 'Cost variance', v: formatMoney(m.evm.cv) },
+            { k: 'Schedule variance', v: formatMoney(m.evm.sv) },
+            { k: 'TCPI', v: m.evm.tcpi.toFixed(2) },
+          ].map((x) => (
+            <div key={x.k} className="bg-panel/80 p-4">
+              <div className="text-lg font-bold text-slate-50 data-mono">{x.v}</div>
+              <div className="mt-1 text-xs text-slate-500">{x.k}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* open in workbench */}
+      <Card className="p-5">
+        <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-300"><ArrowRight className="h-4 w-4 text-blue-400" /> Go deeper in a workbench</div>
+        <div className="flex flex-wrap gap-2.5">
+          {LENSES.map((l) => {
+            const a = ACCENT[l.accent]
+            return (
+              <Link key={l.to} to={l.to} className={cn('inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-medium transition-colors', 'border-edge/60 bg-elevated/40 text-slate-200 hover:bg-elevated/70')}>
+                <span className={cn('grid h-6 w-6 place-items-center rounded-lg', a.bg)}><l.icon className={cn('h-3.5 w-3.5', a.text)} /></span>
+                {l.label}
+                <ArrowRight className="h-3.5 w-3.5 text-slate-500" />
+              </Link>
+            )
+          })}
+        </div>
+      </Card>
+
+      {/* read-out */}
+      <Card className="relative overflow-hidden">
+        <div className="pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full bg-blue-500/20 opacity-20 blur-3xl" />
+        <CardHeader icon={Sparkles} accent={ACCENT_NAME} title="Project read-out" subtitle="Computed from the current vitals" />
+        <div className="space-y-2.5 border-t border-edge/50 p-5">
+          <p className="text-[15px] leading-relaxed text-slate-300">{projectNarrative(m)}</p>
+          {(vitals.rfis > 1500 || vitals.clashes > 60 || m.status === 'at-risk') && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {m.status === 'at-risk' && <span className="inline-flex items-center gap-1 rounded-md bg-rose-500/10 px-2 py-0.5 text-[11px] text-rose-300"><ShieldAlert className="h-3 w-3" /> Composite health {m.health} — recovery review</span>}
+              {vitals.rfis > 1500 && <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300">{vitals.rfis.toLocaleString()} open RFIs</span>}
+              {vitals.clashes > 60 && <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300">{vitals.clashes} clashes</span>}
+            </div>
+          )}
+        </div>
+      </Card>
+    </div>
+  )
+}
+
+const clamp = (n: number) => Math.max(0, Math.min(100, n))
+
+function Param({ label, unit, value, onChange, step = 1 }: { label: string; unit: string; value: number; onChange: (v: number) => void; step?: number }) {
+  return (
+    <label className="block">
+      <div className="mb-1.5 flex items-baseline justify-between">
+        <span className="text-sm font-medium text-slate-200">{label}</span>
+        <span className="text-[11px] text-slate-500">{unit}</span>
+      </div>
+      <input
+        type="number"
+        step={step}
+        value={value}
+        onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) onChange(n) }}
+        className="w-full rounded-lg border border-edge/60 bg-elevated/40 px-3 py-1.5 text-sm text-slate-100 data-mono focus:border-blue-500/50 focus:outline-none focus:ring-1 focus:ring-blue-500/30"
+      />
+    </label>
+  )
+}

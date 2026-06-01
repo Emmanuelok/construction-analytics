@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check (the gate)
+        run: npm run typecheck
+
+      - name: Engine unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Accessibility audit (axe, WCAG 2 A/AA)
+        run: |
+          npx vite preview --port 5173 &
+          PREVIEW_PID=$!
+          npx --yes wait-on -t 60000 http://localhost:5173/construction-analytics/
+          npm run axe
+          kill $PREVIEW_PID

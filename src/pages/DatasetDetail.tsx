@@ -1,0 +1,442 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import {
+  ArrowLeft,
+  Download,
+  Lock,
+  Star,
+  ShoppingCart,
+  Check,
+  Microscope,
+  Table2,
+  ShieldCheck,
+  Fingerprint,
+  GitBranch,
+  FileText,
+  Database,
+  Calendar,
+  HardDrive,
+  Server,
+  Sparkles,
+  ChevronDown,
+  Compass,
+  Target,
+} from 'lucide-react'
+import { Card, CardHeader, Badge, RingProgress, KeyValue, IconBadge } from '@/components/ui'
+import { useStudio } from '@/store/studio'
+import { useAuth } from '@/store/auth'
+import { useProfile } from '@/store/profile'
+import type { CatalogDataset, DatasetFile, License } from '@/data/catalog'
+import { parseAny, profile, tableToFormat, alternateFormats } from '@/lib/parse'
+import { downloadDatasetFile, downloadText } from '@/lib/download'
+import { datasetGuidance } from '@/lib/guidance'
+import { similarTo } from '@/lib/intelligence'
+import { ACCENT } from '@/lib/nav'
+import { cn } from '@/lib/cn'
+import { formatCurrency, formatNumber } from '@/lib/format'
+
+const LICENSE_VARIANT: Record<License, 'success' | 'cyan' | 'brand' | 'violet'> = {
+  Open: 'success',
+  Research: 'cyan',
+  Commercial: 'brand',
+  Enterprise: 'violet',
+}
+const LICENSE_TERMS: Record<License, { usage: string; redistribution: string; attribution: string }> = {
+  Open: { usage: 'Any use, incl. commercial', redistribution: 'Allowed', attribution: 'Required' },
+  Research: { usage: 'Non-commercial research', redistribution: 'Within institution', attribution: 'Required' },
+  Commercial: { usage: 'Internal commercial use', redistribution: 'Not allowed', attribution: 'Optional' },
+  Enterprise: { usage: 'Org-wide + AI training', redistribution: 'Negotiated', attribution: 'Optional' },
+}
+
+const TABULAR = ['CSV', 'JSON', 'GeoJSON', 'TSV', 'XML']
+
+function priceLabel(price: number | null) {
+  if (price === null) return 'On request'
+  if (price === 0) return 'Free'
+  return formatCurrency(price, { compact: false })
+}
+
+function FileDownload({
+  file,
+  canConvert,
+  onOriginal,
+  onConvert,
+}: {
+  file: DatasetFile
+  canConvert: boolean
+  onOriginal: () => void
+  onConvert: (fmt: 'CSV' | 'TSV' | 'JSON' | 'MD') => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onClick)
+    return () => document.removeEventListener('mousedown', onClick)
+  }, [])
+
+  if (!canConvert) {
+    return (
+      <button onClick={onOriginal} className="btn-ghost !px-3 !py-1.5 !text-xs">
+        <Download className="h-3.5 w-3.5" /> Download
+      </button>
+    )
+  }
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((o) => !o)} className="btn-ghost !px-3 !py-1.5 !text-xs">
+        <Download className="h-3.5 w-3.5" /> Download <ChevronDown className="h-3 w-3" />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-xl border border-edge/70 bg-surface py-1 shadow-2xl">
+          <button onClick={() => { onOriginal(); setOpen(false) }} className="flex w-full items-center justify-between px-3 py-2 text-left text-xs text-slate-200 hover:bg-elevated">
+            Original <span className="text-slate-500">{file.format}</span>
+          </button>
+          <div className="my-1 border-t border-edge/50" />
+          {alternateFormats(file.format).map((fmt) => (
+            <button key={fmt} onClick={() => { onConvert(fmt); setOpen(false) }} className="flex w-full items-center justify-between px-3 py-2 text-left text-xs text-slate-300 hover:bg-elevated">
+              Download as <span className="text-slate-500">{fmt === 'MD' ? 'Markdown' : fmt}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function DatasetDetail() {
+  const { id = '' } = useParams()
+  const { getAny, owns, inCart, addToCart, license, recordDownload, allDatasets } = useStudio()
+  const { user } = useAuth()
+  const { recordView } = useProfile()
+  const [dlError, setDlError] = useState<string | null>(null)
+  const d: CatalogDataset | undefined = getAny(id)
+  const similar = useMemo(() => (d ? similarTo(d, allDatasets, 4) : []), [d, allDatasets])
+
+  // Learn from what the user opens (powers personalization across the studio).
+  useEffect(() => {
+    if (d) recordView({ id: d.id, category: d.category, tags: d.tags })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d?.id])
+
+  const preview = useMemo(() => {
+    if (!d) return null
+    const file = d.files.find((f) => (f.generate || f.content) && TABULAR.includes(f.format))
+    const raw = d.files.find((f) => f.generate || f.content)
+    if (file) {
+      const text = file.generate?.() ?? file.content ?? ''
+      try {
+        const table = parseAny(text, file.format)
+        return { kind: 'table' as const, table, cols: profile(table).slice(0, 8), fileName: file.name }
+      } catch {
+        /* fall through */
+      }
+    }
+    if (raw) {
+      const text = raw.generate?.() ?? raw.content ?? ''
+      return { kind: 'text' as const, text: text.slice(0, 1400), fileName: raw.name }
+    }
+    return null
+  }, [d])
+
+  if (!d) {
+    return (
+      <div className="grid min-h-[50vh] place-items-center text-center">
+        <div>
+          <p className="text-slate-400">Dataset not found.</p>
+          <Link to="/data" className="btn-primary mt-4 inline-flex">
+            <ArrowLeft className="h-4 w-4" /> Back to Data Center
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  const a = ACCENT[d.accent]
+  const owned = owns(d.id)
+  const free = d.price === 0
+  const guide = datasetGuidance(d)
+
+  async function handleDownload(f: DatasetFile) {
+    setDlError(null)
+    try {
+      await downloadDatasetFile(f, d!.id, { userId: user?.id })
+      recordDownload(d!.id, f.name)
+    } catch (e) {
+      setDlError(e instanceof Error ? e.message : 'Download failed')
+    }
+  }
+
+  function downloadAs(f: DatasetFile, fmt: 'CSV' | 'TSV' | 'JSON' | 'MD') {
+    const text = f.generate?.() ?? f.content
+    if (text == null) return
+    try {
+      const table = parseAny(text, f.format)
+      const out = tableToFormat(table, fmt)
+      const ext = fmt === 'MD' ? 'md' : fmt.toLowerCase()
+      downloadText(`${f.name.replace(/\.[^.]+$/, '')}.${ext}`, out, fmt === 'MD' ? 'TXT' : fmt)
+      recordDownload(d!.id, `${f.name} → ${fmt}`)
+    } catch {
+      setDlError('Could not convert this file to that format.')
+    }
+  }
+
+  return (
+    <div className="space-y-7">
+      <Link to="/data" className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200">
+        <ArrowLeft className="h-4 w-4" /> Data Center
+      </Link>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-5 border-b border-edge/60 pb-7">
+        <div className="flex items-start gap-4">
+          <IconBadge icon={Database} accent={d.accent} size="lg" />
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={LICENSE_VARIANT[d.license]}>{d.license}</Badge>
+              <Badge variant="neutral">{d.modality}</Badge>
+              <Badge variant="neutral">{d.category}</Badge>
+              {d.anonymized && <Badge variant="cyan">Anonymized</Badge>}
+            </div>
+            <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-50">{d.name}</h1>
+            <p className="mt-1 text-sm text-slate-400">
+              by <span className="text-slate-300">{d.provider}</span> · updated {d.updated}
+            </p>
+            <div className="mt-2 flex items-center gap-4 text-sm text-slate-400">
+              <span className="inline-flex items-center gap-1"><Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" /> {d.rating || '—'}</span>
+              <span className="inline-flex items-center gap-1"><Download className="h-3.5 w-3.5" /> {formatNumber(d.downloads)} downloads</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Main */}
+        <div className="space-y-6 lg:col-span-2">
+          <p className="text-[15px] leading-relaxed text-slate-300">{d.description}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {d.tags.map((t) => (
+              <span key={t} className="rounded-md bg-elevated/60 px-2 py-1 text-xs text-slate-400">#{t}</span>
+            ))}
+          </div>
+
+          {/* How & where to use */}
+          <Card className="p-5">
+            <div className="flex items-center gap-2">
+              <Compass className="h-4 w-4 text-cyan-400" />
+              <h3 className="text-sm font-semibold text-slate-100">How &amp; where to use this</h3>
+            </div>
+            <p className="mt-2 text-sm leading-relaxed text-slate-300">{guide.howTo}</p>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {guide.worksWith.map((wk) => (
+                <Link key={wk.to} to={wk.to} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1 text-xs text-slate-300 hover:border-brand-500/40 hover:text-white">
+                  <span className="h-1.5 w-1.5 rounded-full bg-brand-400" /> {wk.label}
+                </Link>
+              ))}
+            </div>
+            <div className="mt-4 grid gap-4 border-t border-edge/50 pt-4 sm:grid-cols-2">
+              <div>
+                <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-slate-500">Common use cases</div>
+                <ul className="space-y-1.5">
+                  {guide.useCases.map((u) => (
+                    <li key={u} className="flex items-start gap-2 text-sm text-slate-300">
+                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-400" /> {u}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-slate-500">Intended results</div>
+                <ul className="space-y-1.5">
+                  {guide.outcomes.map((o) => (
+                    <li key={o} className="flex items-start gap-2 text-sm text-slate-300">
+                      <Target className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" /> {o}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </Card>
+
+          {/* Files */}
+          <Card>
+            <CardHeader icon={FileText} accent={d.accent} title="Files" subtitle={`${d.files.length} file${d.files.length !== 1 ? 's' : ''} in this dataset`} />
+            {dlError && <p className="border-t border-edge/50 bg-rose-500/10 px-5 py-2.5 text-xs text-rose-300">{dlError}</p>}
+            <div className="divide-y divide-edge/40 border-t border-edge/50">
+              {d.files.map((f) => {
+                const canDownload = (f.free || owned) && (f.generate || f.content || f.storagePath)
+                const lockedPaid = !f.free && !owned
+                return (
+                  <div key={f.id} className="flex items-center gap-3 px-5 py-3.5">
+                    <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-lg text-xs font-bold', a.bg, a.text)}>
+                      {f.format}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-slate-200">{f.name}</div>
+                      <div className="text-xs text-slate-500">
+                        {f.size}
+                        {f.rows ? ` · ${formatNumber(f.rows)} rows` : ''}
+                        {f.free ? ' · free sample' : ' · licensed'}
+                      </div>
+                    </div>
+                    {canDownload ? (
+                      <button onClick={() => handleDownload(f)} className="btn-primary !px-3 !py-1.5 !text-xs">
+                        <Download className="h-3.5 w-3.5" /> Download
+                      </button>
+                    ) : lockedPaid ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+                        <Lock className="h-3.5 w-3.5" /> License to access
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+                        <Server className="h-3.5 w-3.5" /> Delivered via secure transfer
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </Card>
+
+          {/* Preview */}
+          {preview && (
+            <Card>
+              <CardHeader icon={Microscope} accent="violet" title="Data preview" subtitle={preview.fileName}
+                action={<Link to={`/analyze?dataset=${d.id}`} className="btn-ghost !px-3 !py-1.5 !text-xs"><Microscope className="h-3.5 w-3.5" /> Analyze</Link>}
+              />
+              {preview.kind === 'table' ? (
+                <div className="overflow-x-auto border-t border-edge/50">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-edge/50 text-slate-500">
+                        {preview.table.columns.map((c) => (
+                          <th key={c} className="whitespace-nowrap px-3 py-2 font-medium">{c}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="data-mono">
+                      {preview.table.rows.slice(0, 8).map((row, i) => (
+                        <tr key={i} className="border-b border-edge/30 hover:bg-elevated/40">
+                          {preview.table.columns.map((c) => (
+                            <td key={c} className="max-w-[180px] truncate px-3 py-2 text-slate-300">{row[c]}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <pre className="overflow-x-auto border-t border-edge/50 px-5 py-4 text-[12px] leading-relaxed text-slate-300">
+                  <code className="font-mono">{preview.text}</code>
+                </pre>
+              )}
+              <div className="border-t border-edge/50 px-5 py-2.5 text-xs text-slate-500">
+                Showing a sample. Download the free sample file above, or open it in the Analysis Studio.
+              </div>
+            </Card>
+          )}
+        </div>
+
+        {/* Sidebar */}
+        <div className="space-y-4">
+          <Card className="p-5">
+            <div className="flex items-end justify-between">
+              <span className={cn('text-3xl font-bold', free ? 'text-emerald-300' : a.text)}>{priceLabel(d.price)}</span>
+              <RingProgress value={d.quality} size={56} accent={d.accent} label={<span className="text-xs font-bold text-slate-200">{d.quality}</span>} />
+            </div>
+            <div className="mt-4 space-y-2">
+              {owned ? (
+                <div className="btn w-full bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30">
+                  <Check className="h-4 w-4" /> Licensed — downloads unlocked
+                </div>
+              ) : free ? (
+                <button onClick={() => license(d.id)} className="btn-primary w-full">
+                  <Download className="h-4 w-4" /> Get for free
+                </button>
+              ) : (
+                <>
+                  {inCart(d.id) ? (
+                    <Link to="/library" className="btn-primary w-full !bg-emerald-500 hover:!bg-emerald-400">
+                      <Check className="h-4 w-4" /> In cart — go to checkout
+                    </Link>
+                  ) : (
+                    <button onClick={() => addToCart(d.id)} className="btn-primary w-full">
+                      <ShoppingCart className="h-4 w-4" /> Add to cart
+                    </button>
+                  )}
+                  <button onClick={() => license(d.id)} className="btn-ghost w-full">
+                    License now
+                  </button>
+                </>
+              )}
+              {preview?.kind === 'table' && (
+                <Link to={`/workbench?dataset=${d.id}`} className="btn-ghost w-full">
+                  <Table2 className="h-4 w-4" /> Open in Data Workbench
+                </Link>
+              )}
+              <Link to={`/analyze?dataset=${d.id}`} className="btn-ghost w-full">
+                <Microscope className="h-4 w-4" /> Analyze in Studio
+              </Link>
+            </div>
+          </Card>
+
+          <Card className="p-5">
+            <h3 className="text-sm font-semibold text-slate-200">Dataset facts</h3>
+            <div className="mt-2 divide-y divide-edge/40">
+              <KeyValue label="Records" value={formatNumber(d.records)} mono />
+              <KeyValue label="Size" value={d.sizeGB >= 1000 ? `${(d.sizeGB / 1000).toFixed(1)} TB` : `${d.sizeGB} GB`} mono />
+              <KeyValue label="Modality" value={d.modality} />
+              <KeyValue label="Updated" value={d.updated} mono />
+            </div>
+          </Card>
+
+          <Card className="p-5">
+            <h3 className="text-sm font-semibold text-slate-200">License terms</h3>
+            <div className="mt-2 divide-y divide-edge/40">
+              <KeyValue label="Tier" value={d.license} />
+              <KeyValue label="Usage" value={LICENSE_TERMS[d.license].usage} />
+              <KeyValue label="Redistribution" value={LICENSE_TERMS[d.license].redistribution} />
+              <KeyValue label="Attribution" value={LICENSE_TERMS[d.license].attribution} />
+            </div>
+          </Card>
+
+          <Card className="space-y-3 p-5 text-sm text-slate-400">
+            <div className="flex items-center gap-2 font-semibold text-slate-200"><ShieldCheck className="h-4 w-4 text-teal-400" /> Trust & provenance</div>
+            <div className="flex items-start gap-2"><Fingerprint className="mt-0.5 h-4 w-4 shrink-0 text-teal-400" /> Contributor-verified, {d.anonymized ? 'anonymized' : 'source-attributed'} data with a quality score of {d.quality}%.</div>
+            <div className="flex items-start gap-2"><GitBranch className="mt-0.5 h-4 w-4 shrink-0 text-teal-400" /> Full lineage from source through ETL, scoring and licensing is retained for audit.</div>
+            <div className="flex items-start gap-2"><HardDrive className="mt-0.5 h-4 w-4 shrink-0 text-teal-400" /> Confidential premium data is aggregated in a clean room before it leaves the owner’s boundary.</div>
+          </Card>
+        </div>
+      </div>
+
+      {similar.length > 0 && (
+        <div>
+          <div className="mb-4 flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-brand-300" />
+            <h2 className="text-[15px] font-semibold text-slate-100">Similar datasets</h2>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {similar.map((s) => {
+              const sa = ACCENT[s.accent]
+              return (
+                <Link key={s.id} to={`/data/${s.id}`}>
+                  <Card className="flex h-full items-start gap-3 p-4" hover>
+                    <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl text-xs font-bold', sa.bg, sa.text)}>
+                      {s.modality.slice(0, 3)}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-slate-200">{s.name}</div>
+                      <div className="mt-0.5 truncate text-xs text-slate-500">{s.category} · {priceLabel(s.price)}</div>
+                    </div>
+                  </Card>
+                </Link>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

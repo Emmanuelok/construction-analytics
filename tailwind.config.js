@@ -4,11 +4,26 @@ export default {
   theme: {
     extend: {
       colors: {
-        base: '#04060d',
-        panel: '#080d1a',
-        surface: '#0b1220',
-        elevated: '#0f1729',
-        edge: '#1b2540',
+        // Theme tokens resolve to CSS variables so light/dark/system flips with
+        // no component changes. <alpha-value> keeps opacity utilities working.
+        base: 'rgb(var(--c-base) / <alpha-value>)',
+        panel: 'rgb(var(--c-panel) / <alpha-value>)',
+        surface: 'rgb(var(--c-surface) / <alpha-value>)',
+        elevated: 'rgb(var(--c-elevated) / <alpha-value>)',
+        edge: 'rgb(var(--c-edge) / <alpha-value>)',
+        slate: {
+          50: 'rgb(var(--c-slate-50) / <alpha-value>)',
+          100: 'rgb(var(--c-slate-100) / <alpha-value>)',
+          200: 'rgb(var(--c-slate-200) / <alpha-value>)',
+          300: 'rgb(var(--c-slate-300) / <alpha-value>)',
+          400: 'rgb(var(--c-slate-400) / <alpha-value>)',
+          500: 'rgb(var(--c-slate-500) / <alpha-value>)',
+          600: 'rgb(var(--c-slate-600) / <alpha-value>)',
+          700: 'rgb(var(--c-slate-700) / <alpha-value>)',
+          800: 'rgb(var(--c-slate-800) / <alpha-value>)',
+          900: 'rgb(var(--c-slate-900) / <alpha-value>)',
+          950: 'rgb(var(--c-slate-950) / <alpha-value>)',
+        },
         brand: {
           DEFAULT: '#3b82f6',
           50: '#eef5ff',

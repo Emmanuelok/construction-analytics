@@ -2,7 +2,7 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/construction-analytics/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
@@ -10,6 +10,18 @@
     />
     <meta name="theme-color" content="#04060d" />
     <title>AEC Data & Intelligence Studio</title>
+    <script>
+      // Set the theme before paint to avoid a flash of the wrong theme.
+      (function () {
+        try {
+          var m = localStorage.getItem('aec-theme') || 'system'
+          var r = m === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : m
+          document.documentElement.setAttribute('data-theme', r)
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'dark')
+        }
+      })()
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
