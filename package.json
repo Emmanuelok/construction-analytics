@@ -11,7 +11,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "tsx src/lib/engines.test.mts",
-    "axe": "node scripts/axe-audit.mjs"
+    "axe": "node scripts/axe-audit.mjs",
+    "mcp": "tsx mcp/server.ts",
+    "mcp:smoke": "node mcp/smoke.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
@@ -30,6 +32,7 @@
   },
   "devDependencies": {
     "@axe-core/puppeteer": "^4.11.3",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^25.9.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
@@ -42,6 +45,7 @@
     "tailwindcss": "^3.4.15",
     "tsx": "^4.22.3",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "zod": "^4.4.3"
   }
 }
