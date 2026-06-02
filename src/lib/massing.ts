@@ -37,6 +37,7 @@ export type MassingInput = {
   storeys?: number // explicit storey count; otherwise derived from GFA
   shape?: ShapeKind // footprint form (default rectangle)
   customShape?: Pt[] // user-drawn footprint, used when shape === 'custom'
+  towerShape?: ShapeKind // a distinct plate for the tower above the podium (preset)
   aspect?: number // plan aspect ratio (x ÷ z), 0.3–3
   taper?: number // 0 = none, up to ~0.6 = upper floors shrink (tower taper)
   podium?: number // 0–1 fraction of storeys forming a full-plate podium base
@@ -73,29 +74,37 @@ export function buildMassing(input: MassingInput): Massing {
   // base plate area in scene units, from GFA per storey
   const plateArea = gfa > 0 ? gfa / storeys : 0
   const sceneArea = Math.max(1, plateArea) * PLATE_SCALE * PLATE_SCALE
-  // a custom (user-drawn) footprint when provided, otherwise a preset shape;
-  // the courtyard also carries an inner void, so scale to the *net* plate area
-  const rawOuter = shape === 'custom' && input.customShape && input.customShape.length >= 3
+  const podiumFloors = Math.round(podiumFrac * storeys)
+  const hasSplit = podiumFloors > 0 && podiumFloors < storeys // podium ↔ tower boundary
+  const hasTower = hasSplit && towerSetback > 0
+
+  // normalise a shape (outer + optional courtyard void) to the net per-storey area
+  const prep = (outer: Pt[], hole: Pt[] | null) => {
+    const net = polygonArea(outer) - (hole ? polygonArea(hole) : 0)
+    const kk = Math.sqrt(sceneArea / Math.max(1e-4, net))
+    return { base: scaleAbout(outer, kk), hole: hole ? scaleAbout(hole, kk) : null }
+  }
+  // podium / base plate — a custom (user-drawn) footprint or a preset shape
+  const podiumOuter = shape === 'custom' && input.customShape && input.customShape.length >= 3
     ? centerPolygon(input.customShape)
     : unitShape(shape, aspect)
-  const rawHole = holeFor(shape, aspect)
-  const netArea = polygonArea(rawOuter) - (rawHole ? polygonArea(rawHole) : 0)
-  const k = Math.sqrt(sceneArea / Math.max(1e-4, netArea))
-  const base = scaleAbout(rawOuter, k)
-  const baseHole = rawHole ? scaleAbout(rawHole, k) : null
-  const ext = shapeExtent(base)
+  const podium = prep(podiumOuter, holeFor(shape, aspect))
+  // a distinct tower plate above the podium (preset shapes), else reuse the podium
+  const useTowerShape = hasSplit && !!input.towerShape && input.towerShape !== 'custom' && input.towerShape !== shape
+  const tower = useTowerShape ? prep(unitShape(input.towerShape!, aspect), holeFor(input.towerShape!, aspect)) : podium
+  const ext = shapeExtent(podium.base)
 
   const builtCount = clamp(Math.round((progress / 100) * storeys), 0, storeys)
-  const podiumFloors = Math.round(podiumFrac * storeys)
-  const hasTower = podiumFloors > 0 && podiumFloors < storeys
 
   const floors: FloorSpec[] = []
   for (let i = 0; i < storeys; i++) {
     const t = storeys > 1 ? i / (storeys - 1) : 0
-    const step = hasTower && i >= podiumFloors ? 1 - towerSetback : 1 // tower steps in above the podium
+    const isTower = hasSplit && i >= podiumFloors
+    const src = isTower ? tower : podium
+    const step = hasTower && isTower ? 1 - towerSetback : 1 // tower steps in above the podium
     const scale = (1 - taper * t) * step
-    let poly = scaleAbout(base, scale)
-    let hole = baseHole ? scaleAbout(baseHole, scale) : undefined
+    let poly = scaleAbout(src.base, scale)
+    let hole = src.hole ? scaleAbout(src.hole, scale) : undefined
     if (twistRad) { poly = rotatePolygon(poly, twistRad * i); if (hole) hole = rotatePolygon(hole, twistRad * i) }
     floors.push({
       index: i,

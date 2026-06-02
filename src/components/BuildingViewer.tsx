@@ -43,7 +43,7 @@ export function BuildingViewer({
 
   // Rebuild only the floor meshes when the data that changes geometry changes.
   const rebuildRef = useRef<(() => void) | null>(null)
-  useEffect(() => { rebuildRef.current?.() }, [input.gfa, input.progress, input.storeys, input.shape, input.customShape, input.aspect, input.taper, input.podium, input.towerSetback, input.twist, mode, metric, selected])
+  useEffect(() => { rebuildRef.current?.() }, [input.gfa, input.progress, input.storeys, input.shape, input.customShape, input.towerShape, input.aspect, input.taper, input.podium, input.towerSetback, input.twist, mode, metric, selected])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -177,6 +177,7 @@ export function BuildingViewer({
       ;(mount as HTMLElement & { __baseY?: number }).__baseY = f0 ? f0.y - f0.height / 2 : 0
       ;(mount as HTMLElement & { __platePts?: number }).__platePts = f0 ? f0.polygon.length : 0
       ;(mount as HTMLElement & { __hasHole?: boolean }).__hasHole = !!(f0 && f0.hole)
+      ;(mount as HTMLElement & { __topPlatePts?: number }).__topPlatePts = massing.floors.length ? massing.floors[massing.floors.length - 1].polygon.length : 0
     }
     rebuildRef.current = buildFloors
 

@@ -686,6 +686,13 @@ section('massing')
   ok('solid shapes have no hole', buildMassing({ gfa: 120_000, progress: 0, storeys: 10, shape: 'rect' }).floors[0].hole === undefined)
   ok('courtyard scales to the GFA net of the void (vs a solid rect of same GFA)', polygonArea(court.floors[0].polygon) > polygonArea(buildMassing({ gfa: 120_000, progress: 0, storeys: 10, shape: 'rect' }).floors[0].polygon))
 
+  // distinct tower plate above the podium (per-region shapes)
+  const ts = buildMassing({ gfa: 120_000, progress: 0, storeys: 10, shape: 'rect', podium: 0.4, towerShape: 'cylinder' })
+  ok('podium floors keep the base shape, tower floors switch shape', ts.floors[0].polygon.length === 4 && ts.floors[9].polygon.length === 48)
+  ok('the shape switches exactly at the podium boundary (floor 4)', ts.floors[3].polygon.length === 4 && ts.floors[4].polygon.length === 48)
+  ok('tower shape is ignored without a podium split', buildMassing({ gfa: 120_000, progress: 0, storeys: 10, shape: 'rect', towerShape: 'cylinder' }).floors.every((f) => f.polygon.length === 4))
+  ok('tower shape equal to base shape changes nothing', buildMassing({ gfa: 120_000, progress: 0, storeys: 10, shape: 'rect', podium: 0.4, towerShape: 'rect' }).floors.every((f) => f.polygon.length === 4))
+
   // progress extremes
   ok('0% → nothing built', buildMassing({ gfa: 50_000, progress: 0, storeys: 12 }).builtCount === 0)
   ok('100% → all built', buildMassing({ gfa: 50_000, progress: 100, storeys: 12 }).builtCount === 12)

@@ -84,6 +84,7 @@ export default function ProjectWorkspace() {
   // massing form — real shapes + vertical articulation, not just a square stack
   const [shape, setShape] = useState<ShapeKind>('rect')
   const [customShape, setCustomShape] = useState<Pt[]>(() => unitShape('custom').map((p) => ({ x: p.x * 24, z: p.z * 24 })))
+  const [towerShape, setTowerShape] = useState<ShapeKind | undefined>(undefined)
   const [aspect, setAspect] = useState(1)
   const [taper, setTaper] = useState(0.2)
   const [podium, setPodium] = useState(0)
@@ -159,8 +160,23 @@ export default function ProjectWorkspace() {
             module="project"
             accent={ACCENT_NAME}
             scenarios={scenarios}
-            onSave={(name) => save(name, { projectId, vitals }, summary)}
-            onLoad={(s) => { const d = s.data as { projectId?: string; vitals?: ProjectVitals }; if (d.projectId) setProjectId(d.projectId); if (d.vitals) { setVitals(d.vitals); setEdited(true) } }}
+            onSave={(name) => save(name, { projectId, vitals, form: { shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist } }, summary)}
+            onLoad={(s) => {
+              const d = s.data as { projectId?: string; vitals?: ProjectVitals; form?: Partial<{ shape: ShapeKind; customShape: Pt[]; towerShape: ShapeKind; aspect: number; taper: number; podium: number; towerSetback: number; twist: number }> }
+              if (d.projectId) setProjectId(d.projectId)
+              if (d.vitals) { setVitals(d.vitals); setEdited(true) }
+              const f = d.form
+              if (f) {
+                if (f.shape) setShape(f.shape)
+                if (f.customShape) setCustomShape(f.customShape)
+                setTowerShape(f.towerShape)
+                if (typeof f.aspect === 'number') setAspect(f.aspect)
+                if (typeof f.taper === 'number') setTaper(f.taper)
+                if (typeof f.podium === 'number') setPodium(f.podium)
+                if (typeof f.towerSetback === 'number') setTowerSetback(f.towerSetback)
+                if (typeof f.twist === 'number') setTwist(f.twist)
+              }
+            }}
             onRemove={remove}
           />
         </div>
@@ -201,7 +217,7 @@ export default function ProjectWorkspace() {
         />
         <div className="grid gap-0 border-t border-edge/50 lg:grid-cols-[1.6fr_1fr]">
           <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-            <BuildingViewer input={{ gfa: vitals.gfa, progress: vitals.progress, shape, customShape, aspect, taper, podium, towerSetback, twist }} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />
+            <BuildingViewer input={{ gfa: vitals.gfa, progress: vitals.progress, shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist }} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />
           </Suspense>
           <div className="flex flex-col gap-3 border-t border-edge/50 p-4 lg:border-l lg:border-t-0">
             <div>
@@ -220,6 +236,17 @@ export default function ProjectWorkspace() {
             <Slider label="Taper" value={taper} min={0} max={0.6} step={0.02} onChange={setTaper} fmt={(v) => `${Math.round(v * 100)}%`} />
             <Slider label="Podium" value={podium} min={0} max={0.8} step={0.05} onChange={setPodium} fmt={(v) => (v === 0 ? 'none' : `${Math.round(v * 100)}%`)} />
             <Slider label="Tower setback" value={towerSetback} min={0} max={0.6} step={0.02} onChange={setTowerSetback} fmt={(v) => `${Math.round(v * 100)}%`} />
+            {podium > 0 && (
+              <div>
+                <div className="mb-1.5 text-[11px] uppercase tracking-wide text-slate-500">Tower shape (above podium)</div>
+                <div className="flex flex-wrap gap-1.5">
+                  <button onClick={() => setTowerShape(undefined)} aria-pressed={!towerShape} className={cn('rounded-lg px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors', !towerShape ? 'bg-blue-500/15 text-blue-200 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50 hover:text-slate-200')}>Same</button>
+                  {SHAPE_KINDS.filter((s) => s.id !== 'custom').map((s) => (
+                    <button key={s.id} onClick={() => setTowerShape(s.id)} aria-pressed={towerShape === s.id} className={cn('rounded-lg px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors', towerShape === s.id ? 'bg-blue-500/15 text-blue-200 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50 hover:text-slate-200')}>{s.label}</button>
+                  ))}
+                </div>
+              </div>
+            )}
             <Slider label="Twist / floor" value={twist} min={0} max={8} step={0.5} onChange={setTwist} fmt={(v) => `${v}°`} />
             {selectedFloor !== null && (
               <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-2.5">
