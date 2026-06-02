@@ -17,6 +17,7 @@ import {
   Gauge,
   Wrench,
   Activity,
+  Download,
 } from 'lucide-react'
 import {
   PageHeader,
@@ -36,7 +37,9 @@ import { ScenarioBar } from '@/components/ScenarioBar'
 import { ScrollableTable } from '@/components/ScrollableTable'
 import { ExportMenu } from '@/components/ExportMenu'
 import { CollabBar } from '@/components/CollabBar'
-import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
+import { kpiToItem, tableToCsv, type ReportSpec, type ReportTable } from '@/lib/report'
+import { downloadText } from '@/lib/download'
+import { sampleObj, type ModelStats } from '@/lib/model-stats'
 import type { KPI } from '@/lib/scenarios'
 import { parseIfc, type ParsedIfc } from '@/lib/ifc'
 import { buildIfcScene, DISCIPLINE_COLOR, DISCIPLINE_LABEL, describeSelection, type Discipline, type SelectedElement } from '@/lib/ifc-model'
@@ -45,6 +48,8 @@ import { locateWasm } from '@/lib/ifc-wasm-url'
 const IfcModelViewer = lazy(() => import('@/components/IfcModelViewer').then((m) => ({ default: m.IfcModelViewer })))
 import { SAMPLE_IFC } from '@/lib/ifc-sample'
 import { SAMPLE_IFC_GEO } from '@/lib/ifc-sample-geo'
+const MeshModelViewer = lazy(() => import('@/components/MeshModelViewer').then((m) => ({ default: m.MeshModelViewer })))
+import type { ModelFormat } from '@/components/MeshModelViewer'
 import {
   computeHealth,
   clashNarrative,
@@ -107,6 +112,32 @@ export default function Bim() {
     if (!f) return
     runParse(await f.text(), f.name)
     e.target.value = ''
+  }
+
+  // ---- import a neutral 3D model (glTF/GLB/OBJ/STL): view + extract stats ----
+  const modelRef = useRef<HTMLInputElement>(null)
+  const [model, setModel] = useState<{ data: ArrayBuffer; format: ModelFormat; name: string } | null>(null)
+  const [modelStats, setModelStats] = useState<ModelStats | null>(null)
+  const [modelError, setModelError] = useState<string | null>(null)
+  const openModel = (data: ArrayBuffer, format: ModelFormat, name: string) => { setModelStats(null); setModelError(null); setModel({ data, format, name }) }
+  const clearModel = () => { setModel(null); setModelStats(null); setModelError(null) }
+  async function onModelFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (!f) return
+    const ext = f.name.split('.').pop()?.toLowerCase()
+    const format: ModelFormat = ext === 'glb' ? 'glb' : ext === 'gltf' ? 'gltf' : ext === 'stl' ? 'stl' : 'obj'
+    openModel(await f.arrayBuffer(), format, f.name)
+    e.target.value = ''
+  }
+  const loadSampleModel = () => openModel(new TextEncoder().encode(sampleObj()).buffer, 'obj', 'sample-massing.obj')
+  const modelCsv = () => {
+    if (!modelStats) return ''
+    const summary = tableToCsv({ title: 'Model summary', columns: ['Metric', 'Value', 'Unit'], rows: [
+      ['Meshes', modelStats.meshes, ''], ['Triangles', modelStats.triangles, ''], ['Vertices', modelStats.vertices, ''], ['Materials', modelStats.materials, ''],
+      ['Width', modelStats.dimensions.x, 'units'], ['Height', modelStats.dimensions.y, 'units'], ['Depth', modelStats.dimensions.z, 'units'],
+    ] })
+    const parts = tableToCsv({ title: 'Parts', columns: ['Part', 'Triangles', 'Vertices'], rows: modelStats.parts.map((p) => [p.name, p.triangles, p.vertices]) })
+    return `${summary}\n\n${parts}`
   }
 
   // ---- operable clash / model-health workbench ----
@@ -180,6 +211,87 @@ export default function Bim() {
       )}
 
       {parsed && <ParsedModel data={parsed} source={source ?? ''} onClear={() => { setParsed(null); setSource(null) }} />}
+
+      {/* import a neutral 3D model (glTF / OBJ / STL) — view + extract geometry data.
+          Revit → export IFC (above) or glTF/OBJ → drop it here. */}
+      <Card>
+        <CardHeader
+          icon={Boxes}
+          accent="violet"
+          title="Import a 3D model — glTF · GLB · OBJ · STL"
+          subtitle="Upload a model exported from Revit, SketchUp, Rhino, Blender, etc. — view it and extract geometry data (meshes, triangles, dimensions, parts)."
+          action={
+            <div className="flex flex-wrap gap-1.5">
+              <button onClick={() => modelRef.current?.click()} className="btn-ghost"><Upload className="h-4 w-4" /> Upload model</button>
+              <button onClick={loadSampleModel} className="btn-primary"><Boxes className="h-4 w-4" /> Load sample</button>
+              {model && <button onClick={clearModel} className="btn-ghost"><X className="h-4 w-4" /> Clear</button>}
+              <input ref={modelRef} type="file" accept=".glb,.gltf,.obj,.stl,model/gltf-binary,model/gltf+json" className="hidden" onChange={onModelFile} />
+            </div>
+          }
+        />
+        {model ? (
+          <div className="border-t border-edge/50">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-edge/60 bg-elevated/30 px-4 py-2.5">
+              <span className="flex items-center gap-2 text-sm font-medium text-slate-200">
+                <Boxes className="h-4 w-4 text-violet-400" /> {model.name}
+                <Badge variant="neutral">{model.format.toUpperCase()}</Badge>
+                {modelStats && <span className="text-[11px] text-slate-400">{formatNumber(modelStats.meshes)} meshes · {formatNumber(modelStats.triangles)} triangles</span>}
+              </span>
+              {modelStats && (
+                <div className="flex flex-wrap gap-1.5">
+                  <button onClick={() => downloadText('model-stats.csv', modelCsv(), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>
+                  <button onClick={() => downloadText('model-stats.json', JSON.stringify({ name: model.name, format: model.format, ...modelStats }, null, 2), 'JSON')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><FileCheck2 className="h-3.5 w-3.5" /> JSON</button>
+                </div>
+              )}
+            </div>
+            <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading viewer…</div>}>
+              <MeshModelViewer data={model.data} format={model.format} onStats={setModelStats} onError={setModelError} height={460} />
+            </Suspense>
+            {modelError && <p className="flex items-center gap-2 border-t border-edge/60 px-4 py-2 text-xs text-rose-300"><AlertTriangle className="h-3.5 w-3.5" /> {modelError}</p>}
+            {modelStats && (
+              <div className="space-y-4 border-t border-edge/60 p-5">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                  <MiniStat label="Meshes" value={formatNumber(modelStats.meshes)} accent="violet" />
+                  <MiniStat label="Triangles" value={formatNumber(modelStats.triangles)} accent="blue" />
+                  <MiniStat label="Vertices" value={formatNumber(modelStats.vertices)} accent="cyan" />
+                  <MiniStat label="Materials" value={formatNumber(modelStats.materials)} accent="amber" />
+                  <MiniStat label="Footprint" value={`${formatNumber(Math.round(modelStats.dimensions.x))}×${formatNumber(Math.round(modelStats.dimensions.z))}`} accent="teal" />
+                  <MiniStat label="Height" value={`${formatNumber(Math.round(modelStats.dimensions.y))}`} accent="emerald" />
+                </div>
+                {modelStats.parts.length > 0 && (
+                  <ScrollableTable label="Model parts" className="rounded-xl border border-edge/60">
+                    <table className="w-full min-w-[420px] text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
+                          <th className="px-4 py-2.5 font-medium">Part</th>
+                          <th className="px-3 py-2.5 text-right font-medium">Triangles</th>
+                          <th className="px-3 py-2.5 text-right font-medium">Vertices</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-edge/40">
+                        {modelStats.parts.slice(0, 200).map((p, i) => (
+                          <tr key={i} className="hover:bg-elevated/30">
+                            <td className="px-4 py-2 font-medium text-slate-200">{p.name}</td>
+                            <td className="px-3 py-2 text-right data-mono text-slate-300">{formatNumber(p.triangles)}</td>
+                            <td className="px-3 py-2 text-right data-mono text-slate-400">{formatNumber(p.vertices)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </ScrollableTable>
+                )}
+                <p className="text-[11px] leading-relaxed text-slate-500">
+                  Drag or arrow-keys to orbit · scroll to zoom. Imported models are view + extract (not editable here — the editable generative models live in Project Workspace and Site &amp; Zoning). Native <code className="text-slate-400">.rvt</code> isn&apos;t web-readable — export IFC (parsed above) or glTF/OBJ from Revit.
+                </p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="border-t border-edge/50 px-5 py-8 text-center text-sm text-slate-500">
+            Upload a <span className="text-slate-300">.glb / .gltf / .obj / .stl</span> model, or load the sample, to view it and pull out geometry data. From Revit: export <span className="text-slate-300">IFC</span> (use the uploader at the top) or glTF/OBJ.
+          </div>
+        )}
+      </Card>
 
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">

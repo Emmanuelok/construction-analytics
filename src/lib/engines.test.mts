@@ -29,6 +29,7 @@ import { extractGeometry } from './ifc-geometry.ts'
 import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
 import { buildZoning, insetPolygon, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
 import { slug } from './download.ts'
+import { summarizeModel, sampleObj } from './model-stats.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -734,6 +735,16 @@ section('massing')
   ok('ROM cost = GFA × rate', near(perf.romCost, 100000 * 2800, 5000))
   ok('occupancy + parking from yields', perf.occupancy === Math.round(perf.netArea / 12) && perf.parkingStalls === Math.round((perf.grossFloorArea / 1000) * 3))
   ok('a flatter building has more skin per volume → higher form factor', massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 2, shape: 'rect' })).formFactor > massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 20, shape: 'rect' })).formFactor)
+}
+
+// ── model-stats (uploaded mesh-model import) ────────────────────────────────────
+section('model-stats')
+{
+  const st = summarizeModel([{ name: 'a', triangles: 12, vertices: 24 }, { name: 'b', triangles: 6, vertices: 12 }], 2, { x: 10, y: 20, z: 5 })
+  ok('summarizes meshes / triangles / vertices / materials', st.meshes === 2 && st.triangles === 18 && st.vertices === 36 && st.materials === 2)
+  ok('carries the bounding-box dimensions', st.dimensions.x === 10 && st.dimensions.y === 20 && st.dimensions.z === 5)
+  const obj = sampleObj()
+  ok('sample OBJ has 3 objects, 24 vertices, 18 quad faces', (obj.match(/^o /gm) || []).length === 3 && (obj.match(/^v /gm) || []).length === 24 && (obj.match(/^f /gm) || []).length === 18)
 }
 
 // ── ifc-model (3D reconstruction from IFC counts) ────────────────────────────
