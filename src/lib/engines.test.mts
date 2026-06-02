@@ -33,6 +33,7 @@ import { summarizeModel, sampleObj } from './model-stats.ts'
 import { encodeUrn, decodeUrn, normalizeUrn, translationProgress, bucketKeyFor, objectKeyFor, isTranslatable } from './aps.ts'
 import { AGENT_TOOLS, runTool } from './agent-tools.ts'
 import { parseMcpServers, qualify, split } from './mcp-federation.ts'
+import { fieldsFromSchema, coerceArgs } from './tool-forms.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -792,6 +793,32 @@ section('mcp-federation')
   ok('parseMcpServers: drops non-http + sanitizes names', (() => { const r = parseMcpServers('[{"name":"a b!","url":"ftp://x"},{"name":"ok","url":"https://z/mcp"}]'); return r.length === 1 && r[0].name === 'ok' })())
   ok('qualify/split round-trip', (() => { const q = qualify('autodesk', 'list_models'); const s = split(q); return q === 'autodesk__list_models' && s!.server === 'autodesk' && s!.tool === 'list_models' })())
   ok('split returns null when unqualified', split('plain') === null)
+}
+
+// ── tool-forms (schema-driven Connections hub runner) ───────────────────────────
+section('tool-forms')
+{
+  const massing = AGENT_TOOLS.find((t) => t.name === 'massing_schedule')!.inputSchema
+  const fields = fieldsFromSchema(massing)
+  ok('fieldsFromSchema reads types, enums & required', (() => {
+    const gfa = fields.find((f) => f.name === 'gfa'); const shape = fields.find((f) => f.name === 'shape'); const storeys = fields.find((f) => f.name === 'storeys')
+    return gfa?.type === 'number' && gfa.required && shape?.type === 'enum' && shape.enum!.includes('court') && storeys?.type === 'integer'
+  })())
+  ok('required fields are ordered first', fields[0].required)
+  ok('coerceArgs types values + flags missing required', (() => {
+    const { args, errors } = coerceArgs(fields, { gfa: '100000', storeys: '10', shape: 'rect' })
+    return args.gfa === 100000 && args.storeys === 10 && args.shape === 'rect' && errors.length === 0
+  })())
+  ok('coerceArgs errors on missing required + bad number', (() => {
+    const r1 = coerceArgs(fields, { storeys: '10' }); const r2 = coerceArgs(fields, { gfa: 'abc' })
+    return r1.errors.some((e) => /gfa/.test(e)) && r2.errors.some((e) => /gfa/.test(e))
+  })())
+  const arr = fieldsFromSchema(AGENT_TOOLS.find((t) => t.name === 'score_suppliers')!.inputSchema)
+  ok('array inputs become JSON fields, parsed on coerce', (() => {
+    const f = arr.find((x) => x.name === 'suppliers'); const { args, errors } = coerceArgs(arr, { suppliers: '[{"id":"a"}]' })
+    return f?.type === 'json' && Array.isArray(args.suppliers) && errors.length === 0
+  })())
+  ok('invalid JSON is rejected', coerceArgs(arr, { suppliers: '{bad' }).errors.length === 1)
 }
 
 // ── ifc-model (3D reconstruction from IFC counts) ────────────────────────────

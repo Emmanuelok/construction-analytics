@@ -27,6 +27,7 @@ import {
   Bell,
   Code2,
   Map,
+  Cable,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -85,6 +86,7 @@ export const NAV: NavItem[] = [
   { path: '/ai-studio', label: 'AI Training Studio', blurb: 'Curate, label, anonymize & version', icon: BrainCircuit, accent: 'fuchsia', group: 'Platform', tag: 'AI' },
   { path: '/governance', label: 'Governance & Trust', blurb: 'Permissions, lineage, licensing & audit', icon: ShieldCheck, accent: 'teal', group: 'Platform' },
   { path: '/developer', label: 'Developer & API', blurb: 'Public dataset API — keys, docs & a live playground', icon: Code2, accent: 'violet', group: 'Platform', tag: 'NEW' },
+  { path: '/connections', label: 'Connections', blurb: 'Pull data + run tools across Autodesk, MCP servers & the studio engines', icon: Cable, accent: 'cyan', group: 'Platform', tag: 'NEW' },
 
   // Research
   { path: '/pain-points', label: 'Unsolved Pain Points', blurb: 'The industry gaps we exist to close', icon: Flame, accent: 'rose', group: 'Research', tag: 'NEW' },

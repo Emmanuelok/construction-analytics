@@ -9,7 +9,7 @@ import { AxePuppeteer } from '@axe-core/puppeteer'
 const BASE = process.env.AXE_BASE || 'http://localhost:5173/construction-analytics'
 const ROUTES = [
   '/welcome', '/overview', '/project', '/ask', '/alerts', '/notifications', '/developer',
-  '/cost-schedule', '/procurement', '/field', '/reality-capture', '/digital-twin',
+  '/cost-schedule', '/procurement', '/field', '/reality-capture', '/digital-twin', '/connections',
   '/bim', '/site-zoning', '/sustainability', '/insights', '/governance', '/documents', '/ai-studio',
 ]
 const IGNORE = new Set(['color-contrast']) // tracked separately (theme tokens)
