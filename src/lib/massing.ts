@@ -158,6 +158,22 @@ export type MassingSchedule = {
   builtArea: number // m²
   plannedArea: number // m²
   builtVolume: number // m³
+  // performance, sustainability & yield (with tunable assumptions)
+  wwr: number // window-to-wall ratio used
+  netEfficiency: number // net ÷ gross used
+  netArea: number // net usable area, m²
+  exteriorSurface: number // façade + roof + ground skin, m²
+  glazingArea: number // m²
+  opaqueWallArea: number // m²
+  formFactor: number // exterior surface ÷ gross volume (1/m) — lower is more compact
+  wallToFloor: number // façade area ÷ GFA — façade efficiency
+  slenderness: number // height ÷ smallest plan dimension
+  embodiedCarbon: number // indicative structure + façade, kgCO₂e
+  carbonIntensity: number // kgCO₂e/m²
+  costPerM2: number // build rate used
+  romCost: number // rough-order construction cost
+  occupancy: number // persons (net ÷ area-per-person)
+  parkingStalls: number
 }
 
 // scene units → metres. Plate polygons are stored at PLATE_SCALE; areas scale by
@@ -167,9 +183,20 @@ const LEN_TO_M = 1 / PLATE_SCALE
 
 /** Derive a real-world floor schedule + quantity takeoff from a massing. Pure;
  *  storey height and slab thickness are tunable assumptions for the takeoff. */
-export function massingSchedule(m: Massing, opts?: { storeyHeight?: number; slabThickness?: number }): MassingSchedule {
+export function massingSchedule(m: Massing, opts?: {
+  storeyHeight?: number; slabThickness?: number; wwr?: number; netEfficiency?: number
+  costPerM2?: number; areaPerPerson?: number; parkingPer1000?: number; carbonConcrete?: number; carbonFacade?: number
+}): MassingSchedule {
   const sh = Math.max(0.1, opts?.storeyHeight ?? 3.6)
   const st = Math.max(0, opts?.slabThickness ?? 0.3)
+  const wwr = clamp(opts?.wwr ?? 0.4, 0, 0.95)
+  const netEff = clamp(opts?.netEfficiency ?? 0.82, 0.3, 1)
+  const costPerM2 = Math.max(0, opts?.costPerM2 ?? 2800)
+  const areaPerPerson = Math.max(1, opts?.areaPerPerson ?? 12)
+  const parkingPer1000 = Math.max(0, opts?.parkingPer1000 ?? 3)
+  const cConc = opts?.carbonConcrete ?? 350 // kgCO₂e/m³ slab
+  const cFac = opts?.carbonFacade ?? 80 // kgCO₂e/m² façade
+
   const floors: FloorMetric[] = m.floors.map((f) => {
     const area = (polygonArea(f.polygon) - (f.hole ? polygonArea(f.hole) : 0)) * AREA_TO_M2
     const perimeter = (polygonPerimeter(f.polygon) + (f.hole ? polygonPerimeter(f.hole) : 0)) * LEN_TO_M
@@ -177,22 +204,49 @@ export function massingSchedule(m: Massing, opts?: { storeyHeight?: number; slab
   })
   const sum = (sel: (x: FloorMetric) => number) => floors.reduce((s, x) => s + sel(x), 0)
   const gfa = sum((x) => x.area)
+  const footprint = floors[0]?.area ?? 0
+  const roofArea = floors[floors.length - 1]?.area ?? 0
+  const grossVolume = sum((x) => x.volume)
+  const facadeArea = sum((x) => x.facade)
+  const slabVolume = gfa * st
+  const height = m.storeys * sh
+  const exteriorSurface = facadeArea + roofArea + footprint
+  const ext0 = m.floors[0] ? shapeExtent(m.floors[0].polygon) : { width: 0, depth: 0 }
+  const minDimM = Math.min(ext0.width, ext0.depth) * LEN_TO_M
+  const netArea = gfa * netEff
+  const embodiedCarbon = slabVolume * cConc + facadeArea * cFac
+
   return {
     storeyHeight: sh,
     slabThickness: st,
     floors,
     storeys: m.storeys,
-    height: round1(m.storeys * sh),
+    height: round1(height),
     grossFloorArea: round1(gfa),
-    footprint: floors[0]?.area ?? 0,
-    roofArea: floors[floors.length - 1]?.area ?? 0,
+    footprint,
+    roofArea,
     avgPlate: round1(m.storeys > 0 ? gfa / m.storeys : 0),
-    grossVolume: round1(sum((x) => x.volume)),
-    facadeArea: round1(sum((x) => x.facade)),
-    slabVolume: round1(gfa * st),
+    grossVolume: round1(grossVolume),
+    facadeArea: round1(facadeArea),
+    slabVolume: round1(slabVolume),
     builtArea: round1(floors.filter((x) => x.built).reduce((s, x) => s + x.area, 0)),
     plannedArea: round1(floors.filter((x) => !x.built).reduce((s, x) => s + x.area, 0)),
     builtVolume: round1(floors.filter((x) => x.built).reduce((s, x) => s + x.volume, 0)),
+    wwr,
+    netEfficiency: netEff,
+    netArea: round1(netArea),
+    exteriorSurface: round1(exteriorSurface),
+    glazingArea: round1(facadeArea * wwr),
+    opaqueWallArea: round1(facadeArea * (1 - wwr)),
+    formFactor: grossVolume > 0 ? Math.round((exteriorSurface / grossVolume) * 1000) / 1000 : 0,
+    wallToFloor: gfa > 0 ? Math.round((facadeArea / gfa) * 1000) / 1000 : 0,
+    slenderness: minDimM > 0 ? Math.round((height / minDimM) * 100) / 100 : 0,
+    embodiedCarbon: Math.round(embodiedCarbon),
+    carbonIntensity: gfa > 0 ? round1(embodiedCarbon / gfa) : 0,
+    costPerM2,
+    romCost: Math.round(gfa * costPerM2),
+    occupancy: Math.round(netArea / areaPerPerson),
+    parkingStalls: Math.round((gfa / 1000) * parkingPer1000),
   }
 }
 

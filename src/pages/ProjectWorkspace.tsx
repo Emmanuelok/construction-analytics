@@ -29,7 +29,7 @@ import { deriveProjectModel, projectNarrative, type ProjectVitals, type ProjectM
 import { formatMoney } from '@/lib/evm'
 import { ACCENT, type Accent } from '@/lib/nav'
 import { cn } from '@/lib/cn'
-import { formatNumber } from '@/lib/format'
+import { formatNumber, formatCurrency } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
 import { ExportMenu } from '@/components/ExportMenu'
@@ -98,15 +98,36 @@ export default function ProjectWorkspace() {
   // takeoff assumptions for the schedule/quantities
   const [storeyHeight, setStoreyHeight] = useState(3.6)
   const [slabThickness, setSlabThickness] = useState(0.3)
+  const [wwr, setWwr] = useState(0.4)
+  const [costPerM2, setCostPerM2] = useState(2800)
 
   const massingInput = { gfa: vitals.gfa, progress: vitals.progress, shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist }
   const massing = useMemo(() => buildMassing(massingInput), [vitals.gfa, vitals.progress, shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist])
-  const sched = useMemo(() => massingSchedule(massing, { storeyHeight, slabThickness }), [massing, storeyHeight, slabThickness])
-  const schedCsv = () => tableToCsv({
-    title: `${vitals.name} — Massing schedule`,
-    columns: ['Level', 'Elevation (m)', 'Plate area (m2)', 'Perimeter (m)', 'Facade (m2)', 'Volume (m3)', 'Status'],
-    rows: sched.floors.slice().reverse().map((f) => [f.label, f.elevation, Math.round(f.area), Math.round(f.perimeter), Math.round(f.facade), Math.round(f.volume), f.built ? 'Built' : 'Planned']),
-  })
+  const sched = useMemo(() => massingSchedule(massing, { storeyHeight, slabThickness, wwr, costPerM2 }), [massing, storeyHeight, slabThickness, wwr, costPerM2])
+  const schedCsv = () => {
+    const metrics = tableToCsv({
+      title: 'Quantities & metrics',
+      columns: ['Metric', 'Value', 'Unit'],
+      rows: [
+        ['Modeled GFA', Math.round(sched.grossFloorArea), 'm2'], ['Net usable area', Math.round(sched.netArea), 'm2'],
+        ['Footprint', Math.round(sched.footprint), 'm2'], ['Roof area', Math.round(sched.roofArea), 'm2'],
+        ['Building height', sched.height, 'm'], ['Gross volume', Math.round(sched.grossVolume), 'm3'],
+        ['Exterior surface', Math.round(sched.exteriorSurface), 'm2'], ['Facade area', Math.round(sched.facadeArea), 'm2'],
+        ['Glazing area', Math.round(sched.glazingArea), 'm2'], ['Opaque wall area', Math.round(sched.opaqueWallArea), 'm2'],
+        ['Slab concrete', Math.round(sched.slabVolume), 'm3'], ['Form factor', sched.formFactor, '1/m'],
+        ['Wall-to-floor', sched.wallToFloor, ''], ['Slenderness', sched.slenderness, ''],
+        ['Embodied carbon', sched.embodiedCarbon, 'kgCO2e'], ['Carbon intensity', sched.carbonIntensity, 'kgCO2e/m2'],
+        ['ROM cost', sched.romCost, 'currency'], ['Occupancy', sched.occupancy, 'persons'], ['Parking', sched.parkingStalls, 'stalls'],
+        ['Built area', Math.round(sched.builtArea), 'm2'], ['Planned area', Math.round(sched.plannedArea), 'm2'],
+      ],
+    })
+    const schedule = tableToCsv({
+      title: 'Floor schedule',
+      columns: ['Level', 'Elevation (m)', 'Plate area (m2)', 'Perimeter (m)', 'Facade (m2)', 'Volume (m3)', 'Status'],
+      rows: sched.floors.slice().reverse().map((f) => [f.label, f.elevation, Math.round(f.area), Math.round(f.perimeter), Math.round(f.facade), Math.round(f.volume), f.built ? 'Built' : 'Planned']),
+    })
+    return `${metrics}\n\n${schedule}`
+  }
   const m = useMemo(() => deriveProjectModel(vitals), [vitals])
 
   // the project-level metric the 3D model colours floors by, per mode
@@ -302,7 +323,15 @@ export default function ProjectWorkspace() {
               <span className="mb-1 block text-xs text-slate-400">Slab thickness (m)</span>
               <input type="number" step={0.05} value={slabThickness} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) setSlabThickness(Math.max(0, n)) }} className="w-28 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/30" />
             </label>
-            <p className="max-w-md text-xs leading-relaxed text-slate-500">Quantities scale with the form — taper, podium/tower setback and the courtyard void all change the modeled GFA, façade and concrete below.</p>
+            <label className="block">
+              <span className="mb-1 block text-xs text-slate-400">Window-to-wall</span>
+              <input type="number" step={0.05} value={wwr} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) setWwr(Math.max(0, Math.min(0.95, n))) }} className="w-28 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/30" />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-slate-400">Build rate ($/m²)</span>
+              <input type="number" step={100} value={costPerM2} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) setCostPerM2(Math.max(0, n)) }} className="w-28 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/30" />
+            </label>
+            <p className="max-w-md text-xs leading-relaxed text-slate-500">Quantities scale with the form — taper, podium/tower setback and the courtyard void all change the modeled GFA, façade and concrete. Carbon, cost and occupancy are indicative (assumptions stated).</p>
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -318,6 +347,24 @@ export default function ProjectWorkspace() {
             <DataTile label="Avg plate" value={`${formatNumber(Math.round(sched.avgPlate))} m²`} accent="cyan" />
             <DataTile label="Roof area" value={`${formatNumber(Math.round(sched.roofArea))} m²`} accent="violet" />
             <DataTile label="Floors" value={`${sched.storeys}`} accent="blue" sub={`G–L${sched.storeys - 1}`} />
+          </div>
+
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Performance, cost & yield</div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+              <DataTile label="Net usable area" value={`${formatNumber(Math.round(sched.netArea))} m²`} accent="emerald" sub={`${Math.round(sched.netEfficiency * 100)}% efficiency`} />
+              <DataTile label="Exterior surface" value={`${formatNumber(Math.round(sched.exteriorSurface))} m²`} accent="cyan" sub="façade + roof + ground" />
+              <DataTile label="Glazing area" value={`${formatNumber(Math.round(sched.glazingArea))} m²`} accent="sky" sub={`${Math.round(sched.wwr * 100)}% WWR`} />
+              <DataTile label="Form factor" value={`${sched.formFactor}`} accent="teal" sub="surface ÷ volume (1/m)" />
+              <DataTile label="Wall-to-floor" value={`${sched.wallToFloor}`} accent="violet" sub="façade ÷ GFA" />
+              <DataTile label="Slenderness" value={`${sched.slenderness}`} accent="amber" sub="height ÷ width" />
+              <DataTile label="Embodied carbon" value={`${formatNumber(Math.round(sched.embodiedCarbon / 1000))} t`} accent="rose" sub={`${sched.carbonIntensity} kgCO₂e/m²`} />
+              <DataTile label="ROM cost" value={formatCurrency(sched.romCost)} accent="lime" sub={`$${formatNumber(sched.costPerM2)}/m²`} />
+              <DataTile label="Occupancy" value={`${formatNumber(sched.occupancy)}`} accent="cyan" sub="persons @ 12 m²" />
+              <DataTile label="Parking" value={`${formatNumber(sched.parkingStalls)}`} accent="blue" sub="stalls @ 3/1,000 m²" />
+              <DataTile label="Opaque wall" value={`${formatNumber(Math.round(sched.opaqueWallArea))} m²`} accent="violet" />
+              <DataTile label="Avg plate" value={`${formatNumber(Math.round(sched.avgPlate))} m²`} accent="teal" />
+            </div>
           </div>
 
           <ScrollableTable label="Floor schedule" className="rounded-xl border border-edge/60">

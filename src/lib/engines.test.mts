@@ -721,6 +721,19 @@ section('massing')
   ok('taper reduces modeled GFA below the nominal target', massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 10, taper: 0.4 })).grossFloorArea < 100000)
   ok('courtyard façade includes the atrium walls (perimeter > solid plate)', massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 8, shape: 'court' })).floors[0].perimeter > massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 8, shape: 'rect' })).floors[0].perimeter)
   ok('slug makes a filesystem-safe export name', slug('Meridian Tower!') === 'meridian-tower' && slug('  A/B  ') === 'a-b' && slug('') === 'export')
+
+  // performance, sustainability & yield metrics
+  const perf = massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 10, shape: 'rect' }), { storeyHeight: 3.6, slabThickness: 0.3, wwr: 0.4, netEfficiency: 0.82, costPerM2: 2800 })
+  ok('exterior surface = façade + roof + footprint', near(perf.exteriorSurface, perf.facadeArea + perf.roofArea + perf.footprint, 1))
+  ok('glazing + opaque wall = façade area (WWR split)', near(perf.glazingArea + perf.opaqueWallArea, perf.facadeArea, 1) && near(perf.glazingArea, perf.facadeArea * 0.4, 1))
+  ok('net area = GFA × efficiency', near(perf.netArea, 82000, 5))
+  ok('form factor = exterior surface ÷ gross volume', near(perf.formFactor, perf.exteriorSurface / perf.grossVolume, 0.001))
+  ok('wall-to-floor ratio reported', near(perf.wallToFloor, perf.facadeArea / perf.grossFloorArea, 0.001))
+  ok('slenderness = height ÷ min plan dim (36 / 100 = 0.36)', near(perf.slenderness, 0.36, 0.01), perf.slenderness)
+  ok('embodied carbon = slab×rate + façade×rate; intensity = ÷GFA', near(perf.embodiedCarbon, perf.slabVolume * 350 + perf.facadeArea * 80, 50) && near(perf.carbonIntensity, perf.embodiedCarbon / perf.grossFloorArea, 0.5))
+  ok('ROM cost = GFA × rate', near(perf.romCost, 100000 * 2800, 5000))
+  ok('occupancy + parking from yields', perf.occupancy === Math.round(perf.netArea / 12) && perf.parkingStalls === Math.round((perf.grossFloorArea / 1000) * 3))
+  ok('a flatter building has more skin per volume → higher form factor', massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 2, shape: 'rect' })).formFactor > massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 20, shape: 'rect' })).formFactor)
 }
 
 // ── ifc-model (3D reconstruction from IFC counts) ────────────────────────────
