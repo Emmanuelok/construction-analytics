@@ -50,6 +50,7 @@ import { SAMPLE_IFC } from '@/lib/ifc-sample'
 import { SAMPLE_IFC_GEO } from '@/lib/ifc-sample-geo'
 const MeshModelViewer = lazy(() => import('@/components/MeshModelViewer').then((m) => ({ default: m.MeshModelViewer })))
 import type { ModelFormat } from '@/components/MeshModelViewer'
+import { ApsImport } from '@/components/ApsImport'
 import {
   computeHealth,
   clashNarrative,
@@ -288,10 +289,12 @@ export default function Bim() {
           </div>
         ) : (
           <div className="border-t border-edge/50 px-5 py-8 text-center text-sm text-slate-500">
-            Upload a <span className="text-slate-300">.glb / .gltf / .obj / .stl</span> model, or load the sample, to view it and pull out geometry data. From Revit: export <span className="text-slate-300">IFC</span> (use the uploader at the top) or glTF/OBJ.
+            Upload a <span className="text-slate-300">.glb / .gltf / .obj / .stl</span> model, or load the sample, to view it and pull out geometry data. For native Revit/AutoCAD, use the Autodesk connector below — or export <span className="text-slate-300">IFC</span> (uploader at the top).
           </div>
         )}
       </Card>
+
+      <ApsImport />
 
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">

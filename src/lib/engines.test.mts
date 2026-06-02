@@ -30,6 +30,7 @@ import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
 import { buildZoning, insetPolygon, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
 import { slug } from './download.ts'
 import { summarizeModel, sampleObj } from './model-stats.ts'
+import { encodeUrn, decodeUrn, normalizeUrn, translationProgress, bucketKeyFor, objectKeyFor, isTranslatable } from './aps.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -745,6 +746,22 @@ section('model-stats')
   ok('carries the bounding-box dimensions', st.dimensions.x === 10 && st.dimensions.y === 20 && st.dimensions.z === 5)
   const obj = sampleObj()
   ok('sample OBJ has 3 objects, 24 vertices, 18 quad faces', (obj.match(/^o /gm) || []).length === 3 && (obj.match(/^v /gm) || []).length === 24 && (obj.match(/^f /gm) || []).length === 18)
+}
+
+// ── aps (Autodesk Platform Services — native CAD/BIM translate + view) ──────────
+section('aps')
+{
+  const oid = 'urn:adsk.objects:os.object:aecstudio/model.rvt'
+  const urn = encodeUrn(oid)
+  ok('URN is base64url with no padding', /^[A-Za-z0-9_-]+$/.test(urn) && !urn.includes('=') && !urn.includes('+') && !urn.includes('/'))
+  ok('encode → decode round-trips', decodeUrn(urn) === oid)
+  ok('normalizeUrn encodes a raw objectId', normalizeUrn(oid) === urn)
+  ok('normalizeUrn passes an already-encoded URN through (strips urn: prefix)', normalizeUrn(`urn:${urn}`) === urn && normalizeUrn(urn) === urn)
+  ok('translationProgress reads the manifest', translationProgress({ status: 'inprogress', progress: '57% complete' }).percent === 57 && translationProgress({ status: 'success' }).status === 'success' && translationProgress(null).status === 'none')
+  ok('translationProgress success is 100%', translationProgress({ status: 'success', progress: 'complete' }).percent === 100)
+  ok('bucketKey is APS-legal (lowercase, namespaced)', /^aecstudio[a-z0-9]+$/.test(bucketKeyFor('My-Client-ID 42!')))
+  ok('objectKey is unique + sanitized', /^\d+-/.test(objectKeyFor('My Model (final).rvt')) && !/[()\s]/.test(objectKeyFor('My Model (final).rvt')))
+  ok('isTranslatable knows native CAD/BIM', isTranslatable('tower.rvt') && isTranslatable('site.dwg') && isTranslatable('coord.nwd') && !isTranslatable('notes.txt'))
 }
 
 // ── ifc-model (3D reconstruction from IFC counts) ────────────────────────────
