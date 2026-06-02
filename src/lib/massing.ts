@@ -5,7 +5,7 @@
  * so it's deterministic and testable — no Three.js, no DOM. Scene units are
  * metres / a fixed scale; the viewer just draws boxes at these coordinates. */
 
-import { type Pt, polygonArea } from './zoning'
+import { type Pt, polygonArea, polygonPerimeter } from './zoning'
 import { unitShape, holeFor, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, type ShapeKind } from './shapes'
 export type { ShapeKind } from './shapes'
 export { SHAPE_KINDS } from './shapes'
@@ -126,6 +126,73 @@ export function buildMassing(input: MassingInput): Massing {
     footprint: round1(Math.max(ext.width, ext.depth)),
     builtCount,
     builtPct: round1((builtCount / storeys) * 100),
+  }
+}
+
+/* ---- quantities & floor schedule (real-world data extracted from the geometry) ---- */
+
+export type FloorMetric = {
+  index: number
+  label: string
+  elevation: number // metres above ground (floor underside)
+  area: number // net plate area, m²
+  perimeter: number // façade run incl. any atrium, m
+  facade: number // exterior wall area for the storey, m²
+  volume: number // gross volume of the storey, m³
+  built: boolean
+}
+
+export type MassingSchedule = {
+  storeyHeight: number // m
+  slabThickness: number // m
+  floors: FloorMetric[]
+  storeys: number
+  height: number // m
+  grossFloorArea: number // sum of plate areas, m² (the modeled GFA)
+  footprint: number // ground-floor area, m²
+  roofArea: number // top-floor area, m²
+  avgPlate: number // m²
+  grossVolume: number // m³
+  facadeArea: number // m²
+  slabVolume: number // concrete in slabs, m³
+  builtArea: number // m²
+  plannedArea: number // m²
+  builtVolume: number // m³
+}
+
+// scene units → metres. Plate polygons are stored at PLATE_SCALE; areas scale by
+// PLATE_SCALE², lengths by PLATE_SCALE.
+const AREA_TO_M2 = 1 / (PLATE_SCALE * PLATE_SCALE)
+const LEN_TO_M = 1 / PLATE_SCALE
+
+/** Derive a real-world floor schedule + quantity takeoff from a massing. Pure;
+ *  storey height and slab thickness are tunable assumptions for the takeoff. */
+export function massingSchedule(m: Massing, opts?: { storeyHeight?: number; slabThickness?: number }): MassingSchedule {
+  const sh = Math.max(0.1, opts?.storeyHeight ?? 3.6)
+  const st = Math.max(0, opts?.slabThickness ?? 0.3)
+  const floors: FloorMetric[] = m.floors.map((f) => {
+    const area = (polygonArea(f.polygon) - (f.hole ? polygonArea(f.hole) : 0)) * AREA_TO_M2
+    const perimeter = (polygonPerimeter(f.polygon) + (f.hole ? polygonPerimeter(f.hole) : 0)) * LEN_TO_M
+    return { index: f.index, label: f.label, elevation: round1(f.index * sh), area: round1(area), perimeter: round1(perimeter), facade: round1(perimeter * sh), volume: round1(area * sh), built: f.built }
+  })
+  const sum = (sel: (x: FloorMetric) => number) => floors.reduce((s, x) => s + sel(x), 0)
+  const gfa = sum((x) => x.area)
+  return {
+    storeyHeight: sh,
+    slabThickness: st,
+    floors,
+    storeys: m.storeys,
+    height: round1(m.storeys * sh),
+    grossFloorArea: round1(gfa),
+    footprint: floors[0]?.area ?? 0,
+    roofArea: floors[floors.length - 1]?.area ?? 0,
+    avgPlate: round1(m.storeys > 0 ? gfa / m.storeys : 0),
+    grossVolume: round1(sum((x) => x.volume)),
+    facadeArea: round1(sum((x) => x.facade)),
+    slabVolume: round1(gfa * st),
+    builtArea: round1(floors.filter((x) => x.built).reduce((s, x) => s + x.area, 0)),
+    plannedArea: round1(floors.filter((x) => !x.built).reduce((s, x) => s + x.area, 0)),
+    builtVolume: round1(floors.filter((x) => x.built).reduce((s, x) => s + x.volume, 0)),
   }
 }
 

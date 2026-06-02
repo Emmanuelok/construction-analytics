@@ -13,11 +13,14 @@ import {
   HardHat,
   Boxes,
   ShieldAlert,
+  Ruler,
+  Download,
+  FileJson,
 } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge } from '@/components/ui'
 import { RadarViz } from '@/components/charts'
 const BuildingViewer = lazy(() => import('@/components/BuildingViewer').then((m) => ({ default: m.BuildingViewer })))
-import { COLOR_MODES, SHAPE_KINDS, type ColorMode, type ShapeKind } from '@/lib/massing'
+import { COLOR_MODES, SHAPE_KINDS, buildMassing, massingSchedule, type ColorMode, type ShapeKind } from '@/lib/massing'
 import { unitShape } from '@/lib/shapes'
 import { type Pt } from '@/lib/zoning'
 import { PolygonEditor } from '@/components/PolygonEditor'
@@ -30,8 +33,9 @@ import { formatNumber } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
 import { ExportMenu } from '@/components/ExportMenu'
+import { ScrollableTable } from '@/components/ScrollableTable'
 import { CollabBar } from '@/components/CollabBar'
-import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
+import { kpiToItem, tableToCsv, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 
 const ACCENT_NAME: Accent = 'blue'
@@ -90,6 +94,18 @@ export default function ProjectWorkspace() {
   const [podium, setPodium] = useState(0)
   const [towerSetback, setTowerSetback] = useState(0.35)
   const [twist, setTwist] = useState(0)
+  // takeoff assumptions for the schedule/quantities
+  const [storeyHeight, setStoreyHeight] = useState(3.6)
+  const [slabThickness, setSlabThickness] = useState(0.3)
+
+  const massingInput = { gfa: vitals.gfa, progress: vitals.progress, shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist }
+  const massing = useMemo(() => buildMassing(massingInput), [vitals.gfa, vitals.progress, shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist])
+  const sched = useMemo(() => massingSchedule(massing, { storeyHeight, slabThickness }), [massing, storeyHeight, slabThickness])
+  const schedCsv = () => tableToCsv({
+    title: `${vitals.name} — Massing schedule`,
+    columns: ['Level', 'Elevation (m)', 'Plate area (m2)', 'Perimeter (m)', 'Facade (m2)', 'Volume (m3)', 'Status'],
+    rows: sched.floors.slice().reverse().map((f) => [f.label, f.elevation, Math.round(f.area), Math.round(f.perimeter), Math.round(f.facade), Math.round(f.volume), f.built ? 'Built' : 'Planned']),
+  })
   const m = useMemo(() => deriveProjectModel(vitals), [vitals])
 
   // the project-level metric the 3D model colours floors by, per mode
@@ -217,7 +233,7 @@ export default function ProjectWorkspace() {
         />
         <div className="grid gap-0 border-t border-edge/50 lg:grid-cols-[1.6fr_1fr]">
           <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-            <BuildingViewer input={{ gfa: vitals.gfa, progress: vitals.progress, shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist }} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />
+            <BuildingViewer input={massingInput} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />
           </Suspense>
           <div className="flex flex-col gap-3 border-t border-edge/50 p-4 lg:border-l lg:border-t-0">
             <div>
@@ -258,6 +274,79 @@ export default function ProjectWorkspace() {
               {Math.max(1, Math.round(vitals.gfa / 2500))} storeys · {formatNumber(vitals.gfa)} m² · {vitals.progress}% built. Full IFC mesh geometry renders in BIM Intelligence.
             </div>
           </div>
+        </div>
+      </Card>
+
+      {/* schedule & quantities — structured data extracted from the 3D massing */}
+      <Card>
+        <CardHeader
+          icon={Ruler}
+          accent="cyan"
+          title="Massing schedule & quantities"
+          subtitle="Per-floor areas, perimeters, façade and volumes derived from the model geometry — tune the takeoff assumptions and export"
+          action={
+            <div className="flex flex-wrap gap-1.5">
+              <button onClick={() => download(`${slug(vitals.name)}-massing-schedule.csv`, schedCsv(), 'text/csv')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>
+              <button onClick={() => download(`${slug(vitals.name)}-massing.json`, JSON.stringify({ project: vitals.name, target_gfa: vitals.gfa, ...sched }, null, 2), 'application/json')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><FileJson className="h-3.5 w-3.5" /> JSON</button>
+            </div>
+          }
+        />
+        <div className="space-y-5 border-t border-edge/50 p-5">
+          <div className="flex flex-wrap items-end gap-5">
+            <label className="block">
+              <span className="mb-1 block text-xs text-slate-400">Storey height (m)</span>
+              <input type="number" step={0.1} value={storeyHeight} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) setStoreyHeight(Math.max(2, n)) }} className="w-28 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/30" />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-slate-400">Slab thickness (m)</span>
+              <input type="number" step={0.05} value={slabThickness} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) setSlabThickness(Math.max(0, n)) }} className="w-28 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/30" />
+            </label>
+            <p className="max-w-md text-xs leading-relaxed text-slate-500">Quantities scale with the form — taper, podium/tower setback and the courtyard void all change the modeled GFA, façade and concrete below.</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <DataTile label="Modeled GFA" value={`${formatNumber(Math.round(sched.grossFloorArea))} m²`} accent="cyan" sub={`${Math.round((sched.grossFloorArea / Math.max(1, vitals.gfa)) * 100)}% of ${formatNumber(vitals.gfa)} target`} />
+            <DataTile label="Footprint" value={`${formatNumber(Math.round(sched.footprint))} m²`} accent="blue" sub={`${sched.storeys} storeys`} />
+            <DataTile label="Building height" value={`${formatNumber(sched.height)} m`} accent="violet" sub={`${storeyHeight} m / storey`} />
+            <DataTile label="Gross volume" value={`${formatNumber(Math.round(sched.grossVolume))} m³`} accent="teal" />
+            <DataTile label="Façade area" value={`${formatNumber(Math.round(sched.facadeArea))} m²`} accent="amber" sub="incl. any atrium" />
+            <DataTile label="Slab concrete" value={`${formatNumber(Math.round(sched.slabVolume))} m³`} accent="rose" sub={`@ ${slabThickness} m`} />
+            <DataTile label="Built area (4D)" value={`${formatNumber(Math.round(sched.builtArea))} m²`} accent="emerald" sub={`${Math.round((sched.builtArea / Math.max(1, sched.grossFloorArea)) * 100)}% complete`} />
+            <DataTile label="Planned area" value={`${formatNumber(Math.round(sched.plannedArea))} m²`} accent="sky" />
+            <DataTile label="Built volume" value={`${formatNumber(Math.round(sched.builtVolume))} m³`} accent="lime" />
+            <DataTile label="Avg plate" value={`${formatNumber(Math.round(sched.avgPlate))} m²`} accent="cyan" />
+            <DataTile label="Roof area" value={`${formatNumber(Math.round(sched.roofArea))} m²`} accent="violet" />
+            <DataTile label="Floors" value={`${sched.storeys}`} accent="blue" sub={`G–L${sched.storeys - 1}`} />
+          </div>
+
+          <ScrollableTable label="Floor schedule" className="rounded-xl border border-edge/60">
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
+                  <th className="px-4 py-2.5 font-medium">Level</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Elev (m)</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Plate (m²)</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Perimeter (m)</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Façade (m²)</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Volume (m³)</th>
+                  <th className="px-3 py-2.5 text-center font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-edge/40">
+                {sched.floors.slice().reverse().map((f) => (
+                  <tr key={f.index} className="hover:bg-elevated/30">
+                    <td className="px-4 py-2 font-medium text-slate-200">{f.label}</td>
+                    <td className="px-3 py-2 text-right data-mono text-slate-400">{formatNumber(f.elevation)}</td>
+                    <td className="px-3 py-2 text-right data-mono text-slate-300">{formatNumber(Math.round(f.area))}</td>
+                    <td className="px-3 py-2 text-right data-mono text-slate-400">{formatNumber(Math.round(f.perimeter))}</td>
+                    <td className="px-3 py-2 text-right data-mono text-slate-400">{formatNumber(Math.round(f.facade))}</td>
+                    <td className="px-3 py-2 text-right data-mono text-slate-400">{formatNumber(Math.round(f.volume))}</td>
+                    <td className="px-3 py-2 text-center"><Badge variant={f.built ? 'success' : 'neutral'} dot>{f.built ? 'Built' : 'Planned'}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollableTable>
         </div>
       </Card>
 
@@ -344,6 +433,26 @@ export default function ProjectWorkspace() {
 }
 
 const clamp = (n: number) => Math.max(0, Math.min(100, n))
+
+function slug(s: string): string { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project' }
+function download(name: string, content: string, type: string): void {
+  const blob = new Blob([content], { type })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = name; a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function DataTile({ label, value, accent, sub }: { label: string; value: string; accent: Accent; sub?: string }) {
+  const a = ACCENT[accent]
+  return (
+    <div className={cn('rounded-xl p-3 ring-1', a.bg, a.ring)}>
+      <div className="text-[11px] text-slate-400">{label}</div>
+      <div className={cn('data-mono text-base font-semibold', a.text)}>{value}</div>
+      {sub && <div className="mt-0.5 text-[10px] leading-tight text-slate-500">{sub}</div>}
+    </div>
+  )
+}
 
 function Slider({ label, value, min, max, step, onChange, fmt }: { label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void; fmt?: (v: number) => string }) {
   return (

@@ -22,7 +22,7 @@ import { editLabel, removeLabel, actionLabel, percentValueText, toggleLabel } fr
 import { parseMentions, makeComment, threadFor, addComment, removeComment, toggleResolved, summarizeThread, encodeShareToken, decodeShareToken, shareUrl, logActivity, parseComments, subjectLabel, type Comment as CollabComment, type Author, type Activity } from './collab.ts'
 import { toPublic, parseListQuery, listDatasets, findDataset, generateApiKey, isValidKeyFormat, extractApiKey, ok as apiOk, err as apiErr, type CatalogLike, type PublicDataset } from './apikit.ts'
 import { mentionNotifications, shareNotifications, alertNotifications, buildFeed, unreadCount, isUnread, timeAgo, parseReadIds, subjectName, type Notification } from './notifications.ts'
-import { buildMassing, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
+import { buildMassing, massingSchedule, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
 import { unitShape, holeFor, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, SHAPE_KINDS } from './shapes.ts'
 import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, type SelectedElement } from './ifc-model.ts'
 import { extractGeometry } from './ifc-geometry.ts'
@@ -706,6 +706,19 @@ section('massing')
   ok('safety mode: high safety green', floorColor('safety', f0, 96) === '#22c55e')
   ok('carbon mode: high carbon red', floorColor('carbon', f0, 800) === '#ef4444')
   ok('status mode: high health green', floorColor('status', f0, 90) === '#22c55e')
+
+  // floor schedule + quantity takeoff (real-world data from the geometry)
+  const sched = massingSchedule(buildMassing({ gfa: 100_000, progress: 50, storeys: 10, shape: 'rect' }), { storeyHeight: 3.6, slabThickness: 0.3 })
+  ok('schedule has one row per storey', sched.floors.length === 10)
+  ok('rect plate area ≈ GFA/storeys (10,000 m²)', near(sched.floors[0].area, 10000, 1), sched.floors[0].area)
+  ok('modeled GFA sums the plates (≈100,000 m²)', near(sched.grossFloorArea, 100000, 5), sched.grossFloorArea)
+  ok('100×100 plate → 400 m perimeter, 1,440 m² façade/floor', near(sched.floors[0].perimeter, 400, 1) && near(sched.floors[0].facade, 1440, 5))
+  ok('elevations step by the storey height', near(sched.floors[0].elevation, 0) && near(sched.floors[1].elevation, 3.6) && near(sched.height, 36))
+  ok('gross volume = GFA × storey height', near(sched.grossVolume, 100000 * 3.6, 100))
+  ok('slab concrete = GFA × thickness', near(sched.slabVolume, 100000 * 0.3, 50))
+  ok('built area = 5 of 10 floors (≈50,000 m²)', near(sched.builtArea, 50000, 5) && near(sched.plannedArea, 50000, 5))
+  ok('taper reduces modeled GFA below the nominal target', massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 10, taper: 0.4 })).grossFloorArea < 100000)
+  ok('courtyard façade includes the atrium walls (perimeter > solid plate)', massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 8, shape: 'court' })).floors[0].perimeter > massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 8, shape: 'rect' })).floors[0].perimeter)
 }
 
 // ── ifc-model (3D reconstruction from IFC counts) ────────────────────────────
