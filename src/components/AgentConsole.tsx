@@ -21,9 +21,10 @@ const EXAMPLES = [
 export function AgentConsole() {
   const [enabled, setEnabled] = useState<boolean | null>(null)
   const [tools, setTools] = useState<ToolInfo[]>(DEFAULT_TOOLS)
+  const [federated, setFederated] = useState<string[]>([])
   useEffect(() => {
     let live = true
-    fetch('/api/agent').then((r) => (r.ok ? r.json() : null)).then((d) => { if (!live) return; setEnabled(Boolean(d?.enabled)); if (d?.tools?.length) setTools(d.tools) }).catch(() => { if (live) setEnabled(false) })
+    fetch('/api/agent').then((r) => (r.ok ? r.json() : null)).then((d) => { if (!live) return; setEnabled(Boolean(d?.enabled)); if (d?.tools?.length) setTools(d.tools); setFederated(d?.federated ?? []) }).catch(() => { if (live) setEnabled(false) })
     return () => { live = false }
   }, [])
 
@@ -76,6 +77,8 @@ export function AgentConsole() {
             ))}
           </div>
         )}
+
+        {federated.length > 0 && <p className="text-[11px] text-slate-500">Federating external MCP: <span className="text-slate-300">{federated.join(', ')}</span></p>}
 
         {error && <p className="flex items-center gap-2 text-sm text-rose-300"><AlertTriangle className="h-4 w-4" /> {error}</p>}
 

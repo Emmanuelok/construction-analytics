@@ -13,7 +13,8 @@
     "test": "tsx src/lib/engines.test.mts",
     "axe": "node scripts/axe-audit.mjs",
     "mcp": "tsx mcp/server.ts",
-    "mcp:smoke": "node mcp/smoke.mjs"
+    "mcp:smoke": "node mcp/smoke.mjs",
+    "mcp:federation": "node mcp/federation-smoke.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",

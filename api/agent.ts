@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { AGENT_TOOLS, runTool } from '../src/lib/agent-tools'
+import { parseMcpServers, connectRemote, buildFederatedTools, callFederated, closeRemotes, type Remote } from '../src/lib/mcp-federation'
 
 /* POST /api/agent — an agentic analyst. Claude is given the studio's tools
  * (massing, zoning, IFC, suppliers, carbon — the same ones the MCP server exposes)
@@ -21,7 +22,7 @@ How to work:
 
 export default async function handler(req: Request): Promise<Response> {
   const key = process.env.ANTHROPIC_API_KEY
-  if (req.method === 'GET') return json({ enabled: Boolean(key), tools: AGENT_TOOLS.map((t) => ({ name: t.name, description: t.description })) })
+  if (req.method === 'GET') return json({ enabled: Boolean(key), tools: AGENT_TOOLS.map((t) => ({ name: t.name, description: t.description })), federated: parseMcpServers(process.env.MCP_SERVERS).map((s) => s.name) })
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
   if (!key) return json({ error: 'The agent is not configured on the server (no ANTHROPIC_API_KEY).' }, 501)
 
@@ -31,13 +32,21 @@ export default async function handler(req: Request): Promise<Response> {
   if (!prompt) return json({ error: 'Missing prompt' }, 400)
 
   const client = new Anthropic({ apiKey: key })
+  const builtinNames = new Set(AGENT_TOOLS.map((t) => t.name))
+
+  // Federate any configured external MCP servers (skip unreachable ones).
+  const remotes: Remote[] = []
+  for (const cfg of parseMcpServers(process.env.MCP_SERVERS)) {
+    try { remotes.push(await connectRemote(cfg)) } catch { /* skip a server that won't connect */ }
+  }
+  const fed = buildFederatedTools(remotes)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tools = AGENT_TOOLS.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema as any }))
+  const tools = [...AGENT_TOOLS.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema as any })), ...fed.tools] as any[]
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: prompt }]
   const steps: { tool: string; input: unknown; ok: boolean }[] = []
 
   try {
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 8; i++) {
       const msg = await client.messages.create({
         model: MODEL,
         max_tokens: 2000,
@@ -53,11 +62,16 @@ export default async function handler(req: Request): Promise<Response> {
       }
       const results: Anthropic.ToolResultBlockParam[] = []
       for (const tu of toolUses) {
-        let out: unknown
+        let content = ''
         let good = true
-        try { out = await runTool(tu.name, tu.input as Record<string, unknown>) } catch (e) { out = { error: e instanceof Error ? e.message : String(e) }; good = false }
+        try {
+          const args = (tu.input ?? {}) as Record<string, unknown>
+          if (builtinNames.has(tu.name)) content = JSON.stringify(await runTool(tu.name, args)).slice(0, 8000)
+          else if (fed.routing.has(tu.name)) content = (await callFederated(fed.routing, tu.name, args)).slice(0, 8000)
+          else throw new Error(`Unknown tool ${tu.name}`)
+        } catch (e) { content = `Error: ${e instanceof Error ? e.message : String(e)}`; good = false }
         steps.push({ tool: tu.name, input: tu.input, ok: good })
-        results.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(out).slice(0, 8000), is_error: !good })
+        results.push({ type: 'tool_result', tool_use_id: tu.id, content, is_error: !good })
       }
       messages.push({ role: 'user', content: results })
     }
@@ -65,6 +79,8 @@ export default async function handler(req: Request): Promise<Response> {
   } catch (e) {
     const status = (e as { status?: number }).status
     return json({ error: e instanceof Error ? e.message : 'Agent request failed' }, status && status >= 400 && status < 600 ? status : 500)
+  } finally {
+    await closeRemotes(remotes)
   }
 }
 

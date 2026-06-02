@@ -32,6 +32,7 @@ import { slug } from './download.ts'
 import { summarizeModel, sampleObj } from './model-stats.ts'
 import { encodeUrn, decodeUrn, normalizeUrn, translationProgress, bucketKeyFor, objectKeyFor, isTranslatable } from './aps.ts'
 import { AGENT_TOOLS, runTool } from './agent-tools.ts'
+import { parseMcpServers, qualify, split } from './mcp-federation.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -779,6 +780,18 @@ section('agent-tools')
   let threw = false
   try { await runTool('does_not_exist', {}) } catch { threw = true }
   ok('runTool throws on an unknown tool', threw)
+}
+
+// ── mcp-federation (agent calling external MCP servers) ─────────────────────────
+section('mcp-federation')
+{
+  ok('parseMcpServers: empty → []', parseMcpServers('').length === 0 && parseMcpServers(undefined).length === 0)
+  const arr = parseMcpServers('[{"name":"autodesk","url":"https://x/mcp"},{"name":"db","url":"http://y/mcp"}]')
+  ok('parseMcpServers: JSON array', arr.length === 2 && arr[0].name === 'autodesk' && arr[1].url === 'http://y/mcp')
+  ok('parseMcpServers: name=url pairs', (() => { const r = parseMcpServers('autodesk=https://a/mcp, db=https://b/mcp'); return r.length === 2 && r[0].name === 'autodesk' && r[1].url === 'https://b/mcp' })())
+  ok('parseMcpServers: drops non-http + sanitizes names', (() => { const r = parseMcpServers('[{"name":"a b!","url":"ftp://x"},{"name":"ok","url":"https://z/mcp"}]'); return r.length === 1 && r[0].name === 'ok' })())
+  ok('qualify/split round-trip', (() => { const q = qualify('autodesk', 'list_models'); const s = split(q); return q === 'autodesk__list_models' && s!.server === 'autodesk' && s!.tool === 'list_models' })())
+  ok('split returns null when unqualified', split('plain') === null)
 }
 
 // ── ifc-model (3D reconstruction from IFC counts) ────────────────────────────
