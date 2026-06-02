@@ -15,6 +15,7 @@ import {
   Wand2,
 } from 'lucide-react'
 import { Card, PageHeader, Badge } from '@/components/ui'
+import { AgentConsole } from '@/components/AgentConsole'
 import { BarSeries, AreaTrend } from '@/components/charts'
 import { PROJECTS, SUPPLIERS } from '@/data/platform'
 import { formatCurrency, formatNumber } from '@/lib/format'
@@ -303,6 +304,9 @@ export default function Ask() {
         description="Natural-language analytics over 4.7B records spanning every project, dataset and lifecycle stage. Ask in plain English — get an answer, the query behind it, and a visualization."
         actions={aiEnabled ? <Badge variant="violet" dot>Claude-powered</Badge> : <Badge variant="violet" dot>NL → SQL + charts</Badge>}
       />
+
+      {/* Agentic analyst — runs the studio's real engines as tools */}
+      <AgentConsole />
 
       {/* Ask box */}
       <Card className="p-5">

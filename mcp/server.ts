@@ -8,11 +8,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { buildMassing, massingSchedule } from '../src/lib/massing.ts'
-import { buildZoning, rectSite, type Pt } from '../src/lib/zoning.ts'
-import { parseIfc } from '../src/lib/ifc.ts'
-import { scoreSuppliers } from '../src/lib/supplier-score.ts'
-import { computeCarbon } from '../src/lib/carbon.ts'
+import { runTool } from '../src/lib/agent-tools.ts'
 import * as aps from './aps.ts'
 
 const server = new McpServer({ name: 'aec-studio', version: '0.1.0' })
@@ -36,11 +32,7 @@ server.registerTool('massing_schedule', {
     storeyHeight: z.number().optional().describe('metres (default 3.6)'),
   },
 }, async (a) => {
-  try {
-    const m = buildMassing({ gfa: a.gfa, progress: 100, storeys: a.storeys, shape: a.shape, aspect: a.aspect, taper: a.taper, podium: a.podium, towerSetback: a.towerSetback, twist: a.twist })
-    const s = massingSchedule(m, { storeyHeight: a.storeyHeight })
-    return ok(s)
-  } catch (e) { return fail(e) }
+  try { return ok(await runTool('massing_schedule', a)) } catch (e) { return fail(e) }
 })
 
 server.registerTool('analyze_zoning', {
@@ -63,10 +55,7 @@ server.registerTool('analyze_zoning', {
     skyStep: z.number().optional().describe('0–0.6 envelope step-in above skyBase'),
   },
 }, async (a) => {
-  try {
-    const boundary: Pt[] = a.boundary && a.boundary.length >= 3 ? a.boundary : rectSite(a.width ?? 60, a.depth ?? 45)
-    return ok(buildZoning({ boundary, far: a.far, heightLimit: a.heightLimit, setback: a.setback, maxCoverage: a.maxCoverage, storeyHeight: a.storeyHeight ?? 3.6, proposedGFA: a.proposedGFA, proposedStoreys: a.proposedStoreys, podium: a.podium, towerSetback: a.towerSetback, skyBase: a.skyBase, skyStep: a.skyStep }))
-  } catch (e) { return fail(e) }
+  try { return ok(await runTool('analyze_zoning', a)) } catch (e) { return fail(e) }
 })
 
 server.registerTool('parse_ifc', {
@@ -74,10 +63,7 @@ server.registerTool('parse_ifc', {
   description: 'Parse an IFC (STEP/SPF text) model and return a structured summary: schema, project, instance + element counts, distinct types, storeys, top entity counts, disciplines and the quantity takeoff (from IfcElementQuantity).',
   inputSchema: { ifc: z.string().describe('Full IFC file contents (text)'), fileName: z.string().optional() },
 }, async (a) => {
-  try {
-    const p = parseIfc(a.ifc, a.fileName)
-    return ok({ schema: p.schema, project: p.project, site: p.site, building: p.building, totalInstances: p.totalInstances, elementCount: p.elementCount, distinctTypes: p.distinctTypes, storeys: p.storeys, entityCounts: p.entityCounts.slice(0, 25), disciplines: p.disciplines, quantities: p.quantities })
-  } catch (e) { return fail(e) }
+  try { return ok(await runTool('parse_ifc', a)) } catch (e) { return fail(e) }
 })
 
 server.registerTool('score_suppliers', {
@@ -91,7 +77,7 @@ server.registerTool('score_suppliers', {
     })).describe('The supplier cohort'),
   },
 }, async (a) => {
-  try { return ok(scoreSuppliers(a.suppliers)) } catch (e) { return fail(e) }
+  try { return ok(await runTool('score_suppliers', a)) } catch (e) { return fail(e) }
 })
 
 server.registerTool('compute_carbon', {
@@ -107,7 +93,7 @@ server.registerTool('compute_carbon', {
     })).describe('Material take-off lines'),
   },
 }, async (a) => {
-  try { return ok(computeCarbon(a.materials, { gfa: a.gfa, benchmark: a.benchmark })) } catch (e) { return fail(e) }
+  try { return ok(await runTool('compute_carbon', a)) } catch (e) { return fail(e) }
 })
 
 // ── Autodesk APS tools (native Revit/Navisworks/AutoCAD via APS) ────────────────

@@ -31,6 +31,7 @@ import { buildZoning, insetPolygon, polygonArea, polygonPerimeter, polygonCentro
 import { slug } from './download.ts'
 import { summarizeModel, sampleObj } from './model-stats.ts'
 import { encodeUrn, decodeUrn, normalizeUrn, translationProgress, bucketKeyFor, objectKeyFor, isTranslatable } from './aps.ts'
+import { AGENT_TOOLS, runTool } from './agent-tools.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -762,6 +763,22 @@ section('aps')
   ok('bucketKey is APS-legal (lowercase, namespaced)', /^aecstudio[a-z0-9]+$/.test(bucketKeyFor('My-Client-ID 42!')))
   ok('objectKey is unique + sanitized', /^\d+-/.test(objectKeyFor('My Model (final).rvt')) && !/[()\s]/.test(objectKeyFor('My Model (final).rvt')))
   ok('isTranslatable knows native CAD/BIM', isTranslatable('tower.rvt') && isTranslatable('site.dwg') && isTranslatable('coord.nwd') && !isTranslatable('notes.txt'))
+}
+
+// ── agent-tools (unified tool layer for the MCP server + in-app AI agent) ───────
+section('agent-tools')
+{
+  ok('5 tools, each with a JSON-Schema object input', AGENT_TOOLS.length === 5 && AGENT_TOOLS.every((t) => t.name && t.description && (t.inputSchema as { type?: string }).type === 'object' && (t.inputSchema as { properties?: object }).properties))
+  ok('schemas declare required fields', (AGENT_TOOLS.find((t) => t.name === 'analyze_zoning')!.inputSchema as { required?: string[] }).required!.includes('far'))
+  const ms = (await runTool('massing_schedule', { gfa: 100000, storeys: 10, shape: 'rect' })) as { grossFloorArea: number; floors: unknown[]; embodiedCarbon: number }
+  ok('runTool massing_schedule computes a real schedule', ms.grossFloorArea > 0 && ms.floors.length === 10 && ms.embodiedCarbon > 0)
+  const az = (await runTool('analyze_zoning', { width: 60, depth: 45, far: 4, heightLimit: 60, setback: 6, maxCoverage: 55, proposedGFA: 9000, proposedStoreys: 14 })) as { maxGFA: number; compliance: { overall: boolean } }
+  ok('runTool analyze_zoning computes capacity + compliance', az.maxGFA === 10800 && typeof az.compliance.overall === 'boolean')
+  const ifc = (await runTool('parse_ifc', { ifc: SAMPLE_IFC_GEO })) as { entityCounts: unknown[] }
+  ok('runTool parse_ifc summarises a model', Array.isArray(ifc.entityCounts) && ifc.entityCounts.length > 0)
+  let threw = false
+  try { await runTool('does_not_exist', {}) } catch { threw = true }
+  ok('runTool throws on an unknown tool', threw)
 }
 
 // ── ifc-model (3D reconstruction from IFC counts) ────────────────────────────
