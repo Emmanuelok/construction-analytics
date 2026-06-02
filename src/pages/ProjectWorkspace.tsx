@@ -34,6 +34,7 @@ import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
 import { ExportMenu } from '@/components/ExportMenu'
 import { ScrollableTable } from '@/components/ScrollableTable'
+import { downloadText, slug } from '@/lib/download'
 import { CollabBar } from '@/components/CollabBar'
 import { kpiToItem, tableToCsv, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
@@ -286,8 +287,8 @@ export default function ProjectWorkspace() {
           subtitle="Per-floor areas, perimeters, façade and volumes derived from the model geometry — tune the takeoff assumptions and export"
           action={
             <div className="flex flex-wrap gap-1.5">
-              <button onClick={() => download(`${slug(vitals.name)}-massing-schedule.csv`, schedCsv(), 'text/csv')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>
-              <button onClick={() => download(`${slug(vitals.name)}-massing.json`, JSON.stringify({ project: vitals.name, target_gfa: vitals.gfa, ...sched }, null, 2), 'application/json')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><FileJson className="h-3.5 w-3.5" /> JSON</button>
+              <button onClick={() => downloadText(`${slug(vitals.name)}-massing-schedule.csv`, schedCsv(), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>
+              <button onClick={() => downloadText(`${slug(vitals.name)}-massing.json`, JSON.stringify({ project: vitals.name, target_gfa: vitals.gfa, ...sched }, null, 2), 'JSON')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><FileJson className="h-3.5 w-3.5" /> JSON</button>
             </div>
           }
         />
@@ -433,15 +434,6 @@ export default function ProjectWorkspace() {
 }
 
 const clamp = (n: number) => Math.max(0, Math.min(100, n))
-
-function slug(s: string): string { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project' }
-function download(name: string, content: string, type: string): void {
-  const blob = new Blob([content], { type })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url; a.download = name; a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 0)
-}
 
 function DataTile({ label, value, accent, sub }: { label: string; value: string; accent: Accent; sub?: string }) {
   const a = ACCENT[accent]

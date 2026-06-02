@@ -28,6 +28,7 @@ import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, ty
 import { extractGeometry } from './ifc-geometry.ts'
 import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
 import { buildZoning, insetPolygon, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
+import { slug } from './download.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -719,6 +720,7 @@ section('massing')
   ok('built area = 5 of 10 floors (≈50,000 m²)', near(sched.builtArea, 50000, 5) && near(sched.plannedArea, 50000, 5))
   ok('taper reduces modeled GFA below the nominal target', massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 10, taper: 0.4 })).grossFloorArea < 100000)
   ok('courtyard façade includes the atrium walls (perimeter > solid plate)', massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 8, shape: 'court' })).floors[0].perimeter > massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 8, shape: 'rect' })).floors[0].perimeter)
+  ok('slug makes a filesystem-safe export name', slug('Meridian Tower!') === 'meridian-tower' && slug('  A/B  ') === 'a-b' && slug('') === 'export')
 }
 
 // ── ifc-model (3D reconstruction from IFC counts) ────────────────────────────

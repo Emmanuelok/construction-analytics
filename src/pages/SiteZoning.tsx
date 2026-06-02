@@ -1,9 +1,12 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
 import { PolygonEditor } from '@/components/PolygonEditor'
+import { ScrollableTable } from '@/components/ScrollableTable'
+import { downloadText } from '@/lib/download'
+import { tableToCsv, type ReportTable } from '@/lib/report'
 import {
   buildZoning, rectSite, parseGeoBoundary, scalePolygon, polygonArea, polygonCentroid,
   type Pt, type Zoning,
@@ -58,6 +61,37 @@ export default function SiteZoning() {
     if (!pts) { setGeoError('Could not find a polygon ring. Paste a GeoJSON Polygon/Feature or a [[x,y],…] ring.'); return }
     setGeoError(null); applyBoundary(pts)
   }
+
+  // structured data extracted from the zoning model — tier schedule + exports
+  const tierRows = (): (string | number)[][] => [
+    ...z.tiers.map((t, i) => [z.tiers.length > 1 ? (i === 0 ? 'Proposed podium' : 'Proposed tower') : 'Proposed mass', Math.round(t.footprint), Math.round(t.base), Math.round(t.top)]),
+    ...z.envelopeTiers.map((t, i) => [z.envelopeTiers.length > 1 ? (i === 0 ? 'Envelope base' : 'Envelope upper') : 'Envelope', Math.round(t.footprint), Math.round(t.base), Math.round(t.top)]),
+  ]
+  const zoningCsv = (): string => {
+    const summary: ReportTable = {
+      title: 'Site & Zoning summary',
+      columns: ['Metric', 'Value', 'Unit', 'Status / note'],
+      rows: [
+        ['Site area', Math.round(z.siteArea), 'm2', ''],
+        ['Site perimeter', Math.round(z.sitePerimeter), 'm', ''],
+        ['Buildable area', Math.round(z.buildableArea), 'm2', `${setback} m setback`],
+        ['Max GFA', Math.round(z.maxGFA), 'm2', `FAR ${far}`],
+        ['Proposed GFA', Math.round(proposedGFA), 'm2', z.compliance.far ? 'OK' : 'OVER'],
+        ['Capacity used', Math.round(z.utilisation), '%', ''],
+        ['Proposed height', Math.round(z.proposed.height), 'm', `${z.compliance.height ? 'OK' : 'OVER'} (limit ${z.maxHeight})`],
+        ['Site coverage', Math.round(z.proposed.coverage), '%', `${z.compliance.coverage ? 'OK' : 'OVER'} (max ${maxCoverage})`],
+        ['Footprint', Math.round(z.proposed.footprint), 'm2', z.compliance.setback ? 'OK' : 'OVER'],
+        ['Sky-exposure plane', skyBase > 0 ? skyBase : 'off', skyBase > 0 ? 'm' : '', skyBase > 0 ? (z.compliance.skyPlane ? 'OK' : 'OVER') : ''],
+        ['Compliance', z.compliance.overall ? 'COMPLIANT' : 'NON-COMPLIANT', '', ''],
+      ],
+    }
+    const tiers: ReportTable = { title: 'Tiers', columns: ['Tier', 'Footprint (m2)', 'From (m)', 'To (m)'], rows: tierRows() }
+    return `${tableToCsv(summary)}\n\n${tableToCsv(tiers)}`
+  }
+  const zoningJson = (): string => JSON.stringify({
+    inputs: { far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback, skyBase, skyStep },
+    boundary, zoning: z,
+  }, null, 2)
 
   return (
     <div className="space-y-8">
@@ -150,6 +184,44 @@ export default function SiteZoning() {
           </div>
         </Card>
       </div>
+
+      {/* tier schedule + data export */}
+      <Card>
+        <CardHeader
+          icon={Layers}
+          accent="sky"
+          title="Scheme & envelope tiers"
+          subtitle="Footprints and height bands from the model — proposed massing vs the legal envelope. Export the full analysis as CSV or JSON."
+          action={
+            <div className="flex flex-wrap gap-1.5">
+              <button onClick={() => downloadText('site-zoning-analysis.csv', zoningCsv(), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>
+              <button onClick={() => downloadText('site-zoning-analysis.json', zoningJson(), 'JSON')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><FileJson className="h-3.5 w-3.5" /> JSON</button>
+            </div>
+          }
+        />
+        <ScrollableTable label="Scheme and envelope tiers" className="border-t border-edge/50">
+          <table className="w-full min-w-[480px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
+                <th className="px-4 py-2.5 font-medium">Tier</th>
+                <th className="px-3 py-2.5 text-right font-medium">Footprint (m²)</th>
+                <th className="px-3 py-2.5 text-right font-medium">From (m)</th>
+                <th className="px-3 py-2.5 text-right font-medium">To (m)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-edge/40">
+              {tierRows().map((r, i) => (
+                <tr key={i} className={cn('hover:bg-elevated/30', String(r[0]).startsWith('Envelope') && 'text-slate-400')}>
+                  <td className="px-4 py-2 font-medium text-slate-200">{r[0]}</td>
+                  <td className="px-3 py-2 text-right data-mono text-slate-300">{formatNumber(r[1] as number)}</td>
+                  <td className="px-3 py-2 text-right data-mono text-slate-400">{formatNumber(r[2] as number)}</td>
+                  <td className="px-3 py-2 text-right data-mono text-slate-400">{formatNumber(r[3] as number)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </ScrollableTable>
+      </Card>
 
       {/* GIS import */}
       <Card>
