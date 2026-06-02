@@ -18,7 +18,14 @@ const zoning = await client.callTool({ name: 'analyze_zoning', arguments: { widt
 const z = JSON.parse(zoning.content[0].text)
 console.log(`analyze_zoning → maxGFA ${z.maxGFA} m², utilisation ${Math.round(z.utilisation)}%, compliant ${z.compliance.overall}`)
 
+// Autodesk tools degrade gracefully without APS keys (this env has none).
+const aps = await client.callTool({ name: 'autodesk_status', arguments: { urn: 'dXJuOmFkc2s=' } })
+const apsGraceful = aps.isError === true && /not configured/i.test(aps.content[0].text)
+console.log(`autodesk_status (no keys) → ${apsGraceful ? 'graceful "not configured" ✓' : aps.content[0].text}`)
+
 await client.close()
-const okAll = tools.length === 5 && m.grossFloorArea > 0 && m.floors.length === 10 && z.maxGFA === 10800 && typeof z.compliance.overall === 'boolean'
-console.log(okAll ? '\nMCP SERVER OK ✓ (5 tools, end-to-end tool calls succeed)' : '\nNEEDS REVIEW')
+const names = tools.map((t) => t.name)
+const hasAps = ['autodesk_list_models', 'autodesk_status', 'autodesk_translate', 'autodesk_properties'].every((n) => names.includes(n))
+const okAll = tools.length === 9 && hasAps && m.grossFloorArea > 0 && m.floors.length === 10 && z.maxGFA === 10800 && typeof z.compliance.overall === 'boolean' && apsGraceful
+console.log(okAll ? '\nMCP SERVER OK ✓ (9 tools; engine calls succeed; Autodesk tools present + degrade gracefully)' : '\nNEEDS REVIEW')
 process.exit(okAll ? 0 : 1)

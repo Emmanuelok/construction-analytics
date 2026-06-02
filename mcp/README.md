@@ -14,10 +14,15 @@ web app uses, so there's one source of truth.
 | `parse_ifc` | Parse IFC (STEP/SPF text) → schema, element counts, distinct types, storeys, disciplines, quantity takeoff. |
 | `score_suppliers` | Score & rank a supplier cohort (on-time, quality, lead time, price) → 0–100 composite + grades. |
 | `compute_carbon` | Embodied carbon vs a baseline + GFA benchmark → total kgCO₂e, saving, intensity, rating. |
+| `autodesk_list_models` | List native models in the studio's APS bucket (with URNs). *Needs APS keys.* |
+| `autodesk_status` | Translation status + % for a model URN. *Needs APS keys.* |
+| `autodesk_translate` | Start/force SVF2 translation of an uploaded native model. *Needs APS keys.* |
+| `autodesk_properties` | Extract element properties (quantities, types, parameters) from a translated Revit/Navisworks model. *Needs APS keys.* |
 
-No secrets are required — these are deterministic engines. (Native CAD/BIM via
-Autodesk APS lives in the web app's `/api/aps-*` and could be added here as keyed
-tools later.)
+The five engine tools need **no secrets** (deterministic). The four `autodesk_*`
+tools query Autodesk Platform Services — set **`APS_CLIENT_ID`** and
+**`APS_CLIENT_SECRET`** in this server's environment to enable them; without keys
+they return a clear "not configured" message.
 
 ## Run
 

@@ -13,6 +13,7 @@ import { buildZoning, rectSite, type Pt } from '../src/lib/zoning.ts'
 import { parseIfc } from '../src/lib/ifc.ts'
 import { scoreSuppliers } from '../src/lib/supplier-score.ts'
 import { computeCarbon } from '../src/lib/carbon.ts'
+import * as aps from './aps.ts'
 
 const server = new McpServer({ name: 'aec-studio', version: '0.1.0' })
 
@@ -109,6 +110,47 @@ server.registerTool('compute_carbon', {
   try { return ok(computeCarbon(a.materials, { gfa: a.gfa, benchmark: a.benchmark })) } catch (e) { return fail(e) }
 })
 
+// ── Autodesk APS tools (native Revit/Navisworks/AutoCAD via APS) ────────────────
+// These need APS_CLIENT_ID + APS_CLIENT_SECRET in the MCP server's environment;
+// without them each tool returns a clear "not configured" message.
+const NOT_CONFIGURED = 'Autodesk APS is not configured. Set APS_CLIENT_ID and APS_CLIENT_SECRET in this MCP server\'s environment to enable native CAD/BIM tools.'
+
+server.registerTool('autodesk_list_models', {
+  title: 'List Autodesk (APS) models',
+  description: 'List native models uploaded to the studio\'s Autodesk Platform Services bucket (Revit/Navisworks/AutoCAD/…), with their URNs for the other autodesk_* tools.',
+  inputSchema: {},
+}, async () => {
+  if (!aps.apsConfigured()) return fail(NOT_CONFIGURED)
+  try { return ok(await aps.listModels()) } catch (e) { return fail(e) }
+})
+
+server.registerTool('autodesk_status', {
+  title: 'Autodesk model translation status',
+  description: 'Report the Model Derivative translation status (and % progress) for a model URN or raw objectId.',
+  inputSchema: { urn: z.string().describe('Model URN (base64url) or raw urn:adsk.objects:… id') },
+}, async (a) => {
+  if (!aps.apsConfigured()) return fail(NOT_CONFIGURED)
+  try { return ok(await aps.status(a.urn)) } catch (e) { return fail(e) }
+})
+
+server.registerTool('autodesk_translate', {
+  title: 'Translate an Autodesk model',
+  description: 'Start (or force) translation of an uploaded native model to SVF2 so it can be viewed and its data extracted.',
+  inputSchema: { urn: z.string().describe('Model URN or raw objectId') },
+}, async (a) => {
+  if (!aps.apsConfigured()) return fail(NOT_CONFIGURED)
+  try { return ok(await aps.translate(a.urn)) } catch (e) { return fail(e) }
+})
+
+server.registerTool('autodesk_properties', {
+  title: 'Extract Autodesk model properties',
+  description: 'Extract element properties from a translated native model (e.g. Revit) via the Model Derivative metadata → properties API. Returns the viewables and the first objects with their full property sets — for pulling quantities, types, parameters, etc.',
+  inputSchema: { urn: z.string().describe('Model URN or raw objectId'), guid: z.string().optional().describe('A specific viewable GUID (else the first is used)') },
+}, async (a) => {
+  if (!aps.apsConfigured()) return fail(NOT_CONFIGURED)
+  try { return ok(await aps.properties(a.urn, a.guid)) } catch (e) { return fail(e) }
+})
+
 const transport = new StdioServerTransport()
 await server.connect(transport)
-console.error('AEC Studio MCP server ready (stdio) — tools: massing_schedule, analyze_zoning, parse_ifc, score_suppliers, compute_carbon')
+console.error(`AEC Studio MCP server ready (stdio) — engines: massing_schedule, analyze_zoning, parse_ifc, score_suppliers, compute_carbon · Autodesk: list/status/translate/properties${aps.apsConfigured() ? '' : ' (APS keys not set)'}`)
