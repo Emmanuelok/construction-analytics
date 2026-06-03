@@ -16,6 +16,7 @@ import {
   Ruler,
   Download,
   FileJson,
+  Sun,
 } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge } from '@/components/ui'
 import { RadarViz } from '@/components/charts'
@@ -23,6 +24,8 @@ const BuildingViewer = lazy(() => import('@/components/BuildingViewer').then((m)
 const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
 import { COLOR_MODES, SHAPE_KINDS, buildMassing, massingSchedule, type ColorMode, type ShapeKind } from '@/lib/massing'
 import { buildBuilding } from '@/lib/building'
+import { sunPosition, momentOf } from '@/lib/sun'
+import { compass } from '@/lib/geo'
 import { unitShape } from '@/lib/shapes'
 import { type Pt } from '@/lib/zoning'
 import { PolygonEditor } from '@/components/PolygonEditor'
@@ -67,6 +70,12 @@ const LENSES: { to: string; label: string; icon: typeof CalendarClock; accent: A
 ]
 
 const DIM_TARGET = 90
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const fmtHour = (h: number) => {
+  const hr = Math.floor(h) % 24, mn = Math.round((h - Math.floor(h)) * 60)
+  const h12 = hr % 12 === 0 ? 12 : hr % 12
+  return `${h12}:${String(mn).padStart(2, '0')} ${hr < 12 ? 'AM' : 'PM'}`
+}
 
 export default function ProjectWorkspace() {
   const initialId = (() => { try { return localStorage.getItem(SEL_KEY) || PROJECTS[0].id } catch { return PROJECTS[0].id } })()
@@ -90,6 +99,11 @@ export default function ProjectWorkspace() {
   const [viewMode, setViewMode] = useState<'building' | 'massing'>('building')
   const [hidden3d, setHidden3d] = useState<{ glazing?: boolean; structure?: boolean; slabs?: boolean }>({})
   const [selectedFloor, setSelectedFloor] = useState<number | null>(null)
+  // sun & shadow study — real solar position from latitude/date/time
+  const [sunLat, setSunLat] = useState(40)
+  const [sunMonth, setSunMonth] = useState(6)
+  const [sunHour, setSunHour] = useState(13)
+  const [shadowsOn, setShadowsOn] = useState(true)
   // massing form — real shapes + vertical articulation, not just a square stack
   const [shape, setShape] = useState<ShapeKind>('rect')
   const [customShape, setCustomShape] = useState<Pt[]>(() => unitShape('custom').map((p) => ({ x: p.x * 24, z: p.z * 24 })))
@@ -108,6 +122,7 @@ export default function ProjectWorkspace() {
   const massingInput = { gfa: vitals.gfa, progress: vitals.progress, shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist }
   const massing = useMemo(() => buildMassing(massingInput), [vitals.gfa, vitals.progress, shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist])
   const building = useMemo(() => buildBuilding(massing, { coreRatio: 0.16 }), [massing])
+  const sun = useMemo(() => sunPosition(momentOf(sunMonth, sunHour), sunLat, 0), [sunMonth, sunHour, sunLat])
   const sched = useMemo(() => massingSchedule(massing, { storeyHeight, slabThickness, wwr, costPerM2 }), [massing, storeyHeight, slabThickness, wwr, costPerM2])
   const schedCsv = () => {
     const metrics = tableToCsv({
@@ -243,7 +258,7 @@ export default function ProjectWorkspace() {
           icon={Boxes}
           accent={ACCENT_NAME}
           title="3D building model"
-          subtitle="A real building — floor slabs, a column grid, a glass curtain-wall façade and a core — generated from the project's GFA, storeys & form. Toggle trades, or switch to the analytics Massing view (4D progress, risk, carbon…)."
+          subtitle="A real building — floor slabs, a column grid, a glass curtain-wall façade and a core — generated from the project's GFA, storeys & form. Toggle trades, run a sun & shadow study (real solar position by latitude/date/time), or switch to the analytics Massing view (4D progress, risk, carbon…)."
           action={
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex overflow-hidden rounded-lg ring-1 ring-inset ring-edge/60">
@@ -272,7 +287,7 @@ export default function ProjectWorkspace() {
         <div className="grid gap-0 border-t border-edge/50 lg:grid-cols-[1.6fr_1fr]">
           <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
             {viewMode === 'building'
-              ? <ComponentBuildingViewer model={building} hidden={hidden3d} height={460} />
+              ? <ComponentBuildingViewer model={building} hidden={hidden3d} sun={sun} shadows={shadowsOn} height={460} />
               : <BuildingViewer input={massingInput} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />}
           </Suspense>
           <div className="flex flex-col gap-3 border-t border-edge/50 p-4 lg:border-l lg:border-t-0">
@@ -304,6 +319,34 @@ export default function ProjectWorkspace() {
               </div>
             )}
             <Slider label="Twist / floor" value={twist} min={0} max={8} step={0.5} onChange={setTwist} fmt={(v) => `${v}°`} />
+            {viewMode === 'building' && (
+              <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-amber-300/90">
+                    <Sun className="h-3.5 w-3.5" /> Sun &amp; shadow
+                  </div>
+                  <button onClick={() => setShadowsOn((s) => !s)} aria-pressed={shadowsOn}
+                    className={cn('rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset transition-colors', shadowsOn ? 'bg-amber-500/20 text-amber-100 ring-amber-500/40' : 'text-slate-400 ring-edge/60 hover:text-slate-200')}>
+                    Shadows {shadowsOn ? 'on' : 'off'}
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  <Slider label="Latitude" value={sunLat} min={-60} max={70} step={1} onChange={setSunLat} fmt={(v) => `${Math.abs(v)}° ${v >= 0 ? 'N' : 'S'}`} />
+                  <Slider label="Month" value={sunMonth} min={1} max={12} step={1} onChange={setSunMonth} fmt={(v) => MONTHS[v - 1]} />
+                  <Slider label="Time (solar)" value={sunHour} min={0} max={24} step={0.5} onChange={setSunHour} fmt={fmtHour} />
+                </div>
+                <div className="mt-2 rounded-md bg-base/50 px-2.5 py-1.5 text-[11px]">
+                  {sun.altitude > 0 ? (
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Altitude <span className="data-mono text-amber-200">{sun.altitude}°</span></span>
+                      <span className="text-slate-400">Azimuth <span className="data-mono text-amber-200">{Math.round(sun.azimuth)}° {compass(sun.azimuth)}</span></span>
+                    </div>
+                  ) : (
+                    <span className="text-slate-500">Sun below the horizon — night ({sun.altitude}°)</span>
+                  )}
+                </div>
+              </div>
+            )}
             {selectedFloor !== null && (
               <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-2.5">
                 <div className="text-[11px] uppercase tracking-wide text-blue-300/80">Selected floor · {selectedFloor === 0 ? 'Ground' : `Level ${selectedFloor}`}</div>

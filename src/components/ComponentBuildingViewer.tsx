@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Building2 } from 'lucide-react'
 import type { BuildingModel, Plate } from '@/lib/building'
+import { sunDirection } from '@/lib/sun'
 
 function webglAvailable(): boolean {
   try {
@@ -19,19 +20,25 @@ const DEF_AZ = Math.PI * 0.26, DEF_POLAR = Math.PI * 0.36
 export function ComponentBuildingViewer({
   model,
   hidden = {},
+  sun,
+  shadows = true,
   height = 460,
 }: {
   model: BuildingModel
   hidden?: { glazing?: boolean; structure?: boolean; slabs?: boolean }
+  sun?: { azimuth: number; altitude: number }
+  shadows?: boolean
   height?: number
 }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
-  const propsRef = useRef({ model, hidden })
-  propsRef.current = { model, hidden }
+  const propsRef = useRef({ model, hidden, sun, shadows })
+  propsRef.current = { model, hidden, sun, shadows }
 
   const rebuildRef = useRef<(() => void) | null>(null)
+  const sunFnRef = useRef<(() => void) | null>(null)
   useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs])
+  useEffect(() => { sunFnRef.current?.() }, [sun?.azimuth, sun?.altitude, shadows])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -48,16 +55,23 @@ export function ComponentBuildingViewer({
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 4000)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(width, height)
+    renderer.shadowMap.enabled = true
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap
     mount.appendChild(renderer.domElement)
     renderer.domElement.style.cursor = 'grab'
     renderer.domElement.setAttribute('aria-hidden', 'true')
 
-    scene.add(new THREE.AmbientLight('#9fb2cc', 0.7))
-    scene.add(new THREE.HemisphereLight('#dbeafe', '#0a0f1c', 0.6))
-    const key = new THREE.DirectionalLight('#ffffff', 1.15); key.position.set(1.2, 2, 1.4); scene.add(key)
-    const fill = new THREE.DirectionalLight('#93c5fd', 0.35); fill.position.set(-1.5, 0.6, -1); scene.add(fill)
+    const ambient = new THREE.AmbientLight('#9fb2cc', 0.55); scene.add(ambient)
+    const hemi = new THREE.HemisphereLight('#dbeafe', '#0a0f1c', 0.5); scene.add(hemi)
+    // The sun: a directional light positioned from azimuth/altitude, casting real shadows.
+    const sunLight = new THREE.DirectionalLight('#fff7e6', 1.2)
+    sunLight.position.set(1.2, 2, 1.4)
+    sunLight.shadow.mapSize.set(2048, 2048)
+    sunLight.shadow.bias = -0.0006
+    scene.add(sunLight); scene.add(sunLight.target)
+    const fill = new THREE.DirectionalLight('#93c5fd', 0.3); fill.position.set(-1.5, 0.6, -1); scene.add(fill)
     const ground = new THREE.Mesh(new THREE.CircleGeometry(200, 64), new THREE.MeshStandardMaterial({ color: '#0e1626', roughness: 1 }))
-    ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; scene.add(ground)
+    ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; ground.receiveShadow = true; scene.add(ground)
     const grid = new THREE.GridHelper(400, 80, '#1e293b', '#16203a')
     ;(grid.material as THREE.Material).transparent = true; (grid.material as THREE.Material).opacity = 0.35; scene.add(grid)
 
@@ -89,7 +103,7 @@ export function ComponentBuildingViewer({
       if (p.hole && p.hole.length >= 3) { const h = new THREE.Path(); p.hole.forEach((q, i) => (i ? h.lineTo(q.x, -q.z) : h.moveTo(q.x, -q.z))); h.closePath(); shape.holes.push(h) }
       const geo = new THREE.ExtrudeGeometry(shape, { depth: p.thickness, bevelEnabled: false }); geo.rotateX(-Math.PI / 2)
       disposables.push(geo)
-      const mesh = new THREE.Mesh(geo, mat); mesh.position.y = p.y; group.add(mesh); objects.push(mesh)
+      const mesh = new THREE.Mesh(geo, mat); mesh.position.y = p.y; mesh.castShadow = true; mesh.receiveShadow = true; group.add(mesh); objects.push(mesh)
     }
 
     const clear = () => {
@@ -98,6 +112,42 @@ export function ComponentBuildingViewer({
       for (const g of disposables) g.dispose(); disposables = []
     }
 
+    // Position the sun light from azimuth/altitude, size its shadow camera to the
+    // building, and dim the scene at night. Runs on build + whenever sun/shadows change.
+    const applySun = () => {
+      const { model: m, sun, shadows } = propsRef.current
+      const span = Math.max(m.totalHeight, m.footprint * 1.5, 8)
+      sunLight.target.position.set(0, m.totalHeight * 0.4, 0); sunLight.target.updateMatrixWorld()
+      const sc = sunLight.shadow.camera as THREE.OrthographicCamera
+      sc.left = -span * 1.7; sc.right = span * 1.7; sc.top = span * 1.7; sc.bottom = -span * 1.7
+      sc.near = 0.5; sc.far = span * 8; sc.updateProjectionMatrix()
+      if (sun) {
+        const dir = sunDirection(sun.azimuth, sun.altitude)
+        const dist = span * 2.4
+        sunLight.position.set(dir.x * dist, Math.max(dir.y, 0.04) * dist, dir.z * dist)
+        const day = sun.altitude > 0
+        sunLight.intensity = day ? 0.55 + (Math.min(sun.altitude, 60) / 60) * 1.05 : 0.04
+        sunLight.castShadow = shadows !== false && day
+        ambient.intensity = day ? 0.5 : 0.22
+        hemi.intensity = day ? 0.5 : 0.16
+        scene.background = new THREE.Color(day ? '#0a0f1c' : '#05070e')
+      } else {
+        sunLight.position.set(1.2, 2, 1.4).multiplyScalar(span)
+        sunLight.intensity = 1.2
+        sunLight.castShadow = shadows !== false
+        ambient.intensity = 0.55; hemi.intensity = 0.5
+        scene.background = new THREE.Color('#0a0f1c')
+      }
+      ;(mount as HTMLElement & { __sun?: object }).__sun = {
+        castShadow: sunLight.castShadow,
+        intensity: Math.round(sunLight.intensity * 100) / 100,
+        x: Math.round(sunLight.position.x * 10) / 10,
+        y: Math.round(sunLight.position.y * 10) / 10,
+        z: Math.round(sunLight.position.z * 10) / 10,
+      }
+    }
+    sunFnRef.current = applySun
+
     const build = () => {
       clear()
       const { model: m, hidden: h } = propsRef.current
@@ -105,11 +155,12 @@ export function ComponentBuildingViewer({
       if (!h.structure) {
         if (m.columns.length) {
           const inst = new THREE.InstancedMesh(unitBox, colMat, m.columns.length)
+          inst.castShadow = true; inst.receiveShadow = true
           const mat = new THREE.Matrix4()
           m.columns.forEach((c, i) => { mat.compose(new THREE.Vector3(c.x, c.y, c.z), new THREE.Quaternion(), new THREE.Vector3(c.w, c.h, c.d)); inst.setMatrixAt(i, mat) })
           inst.instanceMatrix.needsUpdate = true; group.add(inst); objects.push(inst)
         }
-        if (m.core) { const cm = new THREE.Mesh(unitBox, coreMat); cm.scale.set(m.core.w, m.core.h, m.core.d); cm.position.set(m.core.x, m.core.y, m.core.z); group.add(cm); objects.push(cm) }
+        if (m.core) { const cm = new THREE.Mesh(unitBox, coreMat); cm.scale.set(m.core.w, m.core.h, m.core.d); cm.position.set(m.core.x, m.core.y, m.core.z); cm.castShadow = true; cm.receiveShadow = true; group.add(cm); objects.push(cm) }
       }
       if (!h.glazing && m.glazing.length) {
         const inst = new THREE.InstancedMesh(unitPlane, glassMat, m.glazing.length)
@@ -127,7 +178,7 @@ export function ComponentBuildingViewer({
       const span = Math.max(m.totalHeight, m.footprint * 1.5, 8)
       orbit.target.set(0, m.totalHeight / 2, 0); orbit.radius = span * 1.7
       scene.fog = new THREE.Fog('#0a0f1c', orbit.radius * 0.7, orbit.radius * 3)
-      applyCamera()
+      applyCamera(); applySun()
       ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, glazing: m.counts.glazingPanels, slabs: m.counts.slabs }
     }
     rebuildRef.current = build

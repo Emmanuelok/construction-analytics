@@ -30,6 +30,7 @@ import { extractGeometry } from './ifc-geometry.ts'
 import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
 import { buildZoning, insetPolygon, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass } from './geo.ts'
+import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
 import { summarizeModel, sampleObj } from './model-stats.ts'
 import { encodeUrn, decodeUrn, normalizeUrn, translationProgress, bucketKeyFor, objectKeyFor, isTranslatable } from './aps.ts'
@@ -996,6 +997,28 @@ section('geo')
   ok('boundaryToLatLng maps every vertex + analyzeSite centroid', boundaryToLatLng(site, anchor).length === 4 && !!analyzeSite(site, anchor).centroidLatLng)
   ok('compass labels a bearing', compass(90) === 'E' && compass(0) === 'N' && compass(225) === 'SW')
   ok('toLatLng / fromLatLng round-trip', (() => { const p = { x: 137.4, z: -88.2 }; const back = fromLatLng(toLatLng(p, anchor), anchor); return near(back.x, p.x, 0.5) && near(back.z, p.z, 0.5) })())
+}
+
+// ── sun (solar position for the building sun/shadow study) ──────────────────────
+section('sun')
+{
+  const LAT = 51.5 // London; lng 0 so solar noon ≈ 12:00 UTC
+  const summerNoon = sunPosition(momentOf(6, 12), LAT, 0)
+  ok('summer-solstice solar noon altitude high (~62°)', summerNoon.altitude >= 58 && summerNoon.altitude <= 66, summerNoon.altitude)
+  ok('sun is due south at solar noon (azimuth ~180°)', summerNoon.azimuth >= 170 && summerNoon.azimuth <= 190, summerNoon.azimuth)
+  const winterNoon = sunPosition(momentOf(12, 12), LAT, 0)
+  ok('winter-solstice solar noon altitude low (~15°)', winterNoon.altitude >= 11 && winterNoon.altitude <= 19, winterNoon.altitude)
+  ok('sun climbs higher in summer than winter', summerNoon.altitude > winterNoon.altitude + 30)
+  ok('sun is below the horizon at solar midnight', sunPosition(momentOf(6, 0), LAT, 0).altitude < 0)
+  // direction vector (x=East, y=up, z=North)
+  const up = sunDirection(180, 90)
+  ok('overhead sun points straight up (y≈1)', near(up.y, 1, 0.01) && near(up.x, 0, 0.01) && near(up.z, 0, 0.01))
+  const south = sunDirection(180, 0)
+  ok('south horizon sun points -z (south), y≈0', near(south.z, -1, 0.01) && near(south.y, 0, 0.01))
+  const east = sunDirection(90, 0)
+  ok('east horizon sun points +x (east)', near(east.x, 1, 0.01) && near(east.y, 0, 0.01))
+  ok('sunDirection is a unit vector', near(Math.hypot(up.x, up.y, up.z), 1, 1e-6) && near(Math.hypot(east.x, east.y, east.z), 1, 1e-6))
+  ok('momentOf builds a mid-month UTC moment with fractional hours', (() => { const d = momentOf(3, 14.5); return d.getUTCMonth() === 2 && d.getUTCDate() === 15 && d.getUTCHours() === 14 && d.getUTCMinutes() === 30 })())
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)
