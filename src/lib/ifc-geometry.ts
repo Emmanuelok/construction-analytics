@@ -17,13 +17,18 @@ export type IfcMesh = {
   indices: Uint32Array
   matrix: number[] // 4x4 column-major placement (world = matrix · local)
   color: { r: number; g: number; b: number; a: number }
+  storey?: number // expressID of the containing IfcBuildingStorey (spatial structure)
+  name?: string // IfcRoot.Name / Tag, if present
 }
+
+export type IfcStorey = { expressID: number; name: string; elevation: number }
 
 export type IfcGeometryResult = {
   meshes: IfcMesh[]
   vertexCount: number
   triangleCount: number
   bbox: { min: [number, number, number]; max: [number, number, number] } | null
+  storeys: IfcStorey[] // building storeys, for floor-by-floor review
 }
 
 /** How to locate the web-ifc WASM. In Node/tests pass `wasmPath` (a directory);
@@ -78,10 +83,47 @@ function getTypeResolver(): Promise<TypeResolver> {
   return typeResolverPromise
 }
 
+type Api = import('web-ifc').IfcAPI
+type Spatial = { storeys: IfcStorey[]; elementStorey: Map<number, number>; nameOf: (id: number) => string | undefined }
+
+/** Read the IFC spatial structure: building storeys (name + elevation) and which
+ *  storey each element is contained in (IfcRelContainedInSpatialStructure), plus a
+ *  name lookup. Fully guarded — any API/shape difference yields empty data so the
+ *  geometry still renders. */
+async function readSpatial(api: Api, modelID: number): Promise<Spatial> {
+  const blank: Spatial = { storeys: [], elementStorey: new Map(), nameOf: () => undefined }
+  try {
+    const W = (await import('web-ifc')) as unknown as Record<string, number>
+    const STOREY = W.IFCBUILDINGSTOREY, REL = W.IFCRELCONTAINEDINSPATIALSTRUCTURE
+    const a = api as unknown as { GetLineIDsWithType: (m: number, t: number) => { size: () => number; get: (i: number) => number }; GetLine: (m: number, id: number) => Record<string, { value?: unknown } | undefined> & { RelatedElements?: { value?: number }[] } }
+    const storeys: IfcStorey[] = []
+    if (typeof STOREY === 'number') {
+      const ids = a.GetLineIDsWithType(modelID, STOREY)
+      for (let i = 0; i < ids.size(); i++) {
+        const id = ids.get(i)
+        try { const s = a.GetLine(modelID, id); storeys.push({ expressID: id, name: String(s?.Name?.value ?? `Storey ${id}`), elevation: Number(s?.Elevation?.value ?? 0) }) } catch { /* skip */ }
+      }
+    }
+    const elementStorey = new Map<number, number>()
+    if (typeof REL === 'number') {
+      const rels = a.GetLineIDsWithType(modelID, REL)
+      for (let i = 0; i < rels.size(); i++) {
+        try {
+          const r = a.GetLine(modelID, rels.get(i))
+          const st = (r?.RelatingStructure as { value?: number })?.value
+          const els = r?.RelatedElements ?? []
+          if (typeof st === 'number') for (const e of els) if (typeof e?.value === 'number') elementStorey.set(e.value, st)
+        } catch { /* skip */ }
+      }
+    }
+    return { storeys, elementStorey, nameOf: (id) => { try { const l = a.GetLine(modelID, id); const v = l?.Name?.value; return v == null ? undefined : String(v) } catch { return undefined } } }
+  } catch { return blank }
+}
+
 /** Tessellate IFC bytes → meshes. Never throws; returns an empty result on any
  *  kernel/parse failure so the caller can fall back to the reconstruction. */
 export async function extractGeometry(bytes: Uint8Array, opts: ExtractOptions = {}): Promise<IfcGeometryResult> {
-  const empty: IfcGeometryResult = { meshes: [], vertexCount: 0, triangleCount: 0, bbox: null }
+  const empty: IfcGeometryResult = { meshes: [], vertexCount: 0, triangleCount: 0, bbox: null, storeys: [] }
   let api: import('web-ifc').IfcAPI
   let resolver: TypeResolver
   try {
@@ -149,11 +191,24 @@ export async function extractGeometry(bytes: Uint8Array, opts: ExtractOptions = 
       }
     })
 
+    // spatial structure: storeys + element→storey + names (so the model can be
+    // reviewed floor-by-floor). Guarded; read while the model is still open.
+    const spatial = await readSpatial(api, modelID)
+    const nameCache = new Map<number, string | undefined>()
+    for (const m of meshes) {
+      const st = spatial.elementStorey.get(m.expressID)
+      if (st !== undefined) m.storey = st
+      if (!nameCache.has(m.expressID)) nameCache.set(m.expressID, spatial.nameOf(m.expressID))
+      const nm = nameCache.get(m.expressID)
+      if (nm) m.name = nm
+    }
+
     return {
       meshes,
       vertexCount,
       triangleCount,
       bbox: meshes.length ? { min, max } : null,
+      storeys: spatial.storeys,
     }
   } catch {
     return empty

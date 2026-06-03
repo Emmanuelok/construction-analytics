@@ -29,6 +29,8 @@ export function IfcModelViewer({
   meshes,
   hidden = {},
   selectedKey = null,
+  selectedExpressID = null,
+  isolateStorey = null,
   onSelect,
   explode = 0,
   section = 1,
@@ -39,6 +41,8 @@ export function IfcModelViewer({
   meshes?: IfcMesh[]
   hidden?: Partial<Record<Discipline, boolean>>
   selectedKey?: string | null
+  selectedExpressID?: number | null // highlight every mesh of this IFC product
+  isolateStorey?: number | null // expressID of a storey to show alone (real geometry)
   onSelect?: (el: SelectedElement | null) => void
   explode?: number // 0 = assembled; >0 spreads elements apart vertically
   section?: number // 1 = whole model; <1 cuts away everything above that height
@@ -47,16 +51,16 @@ export function IfcModelViewer({
 }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
-  const propsRef = useRef({ input, meshes, hidden, selectedKey, onSelect, explode, section })
-  propsRef.current = { input, meshes, hidden, selectedKey, onSelect, explode, section }
+  const propsRef = useRef({ input, meshes, hidden, selectedKey, selectedExpressID, isolateStorey, onSelect, explode, section })
+  propsRef.current = { input, meshes, hidden, selectedKey, selectedExpressID, isolateStorey, onSelect, explode, section }
 
   const rebuildRef = useRef<(() => void) | null>(null)
-  useEffect(() => { rebuildRef.current?.() }, [input.entityCounts, input.storeys, meshes, hidden.struct, hidden.arch, hidden.mep, hidden.other])
+  useEffect(() => { rebuildRef.current?.() }, [input.entityCounts, input.storeys, meshes, hidden.struct, hidden.arch, hidden.mep, hidden.other, isolateStorey])
 
   // Highlight, explode and reset are cheap and independent of geometry, so each
   // gets its own effect (no full scene rebuild).
-  const highlightRef = useRef<((key: string | null) => void) | null>(null)
-  useEffect(() => { highlightRef.current?.(selectedKey ?? null) }, [selectedKey])
+  const highlightRef = useRef<(() => void) | null>(null)
+  useEffect(() => { highlightRef.current?.() }, [selectedKey, selectedExpressID])
   const explodeRef = useRef<((f: number) => void) | null>(null)
   useEffect(() => { explodeRef.current?.(explode) }, [explode])
   const sectionRef = useRef<((f: number) => void) | null>(null)
@@ -114,7 +118,7 @@ export function IfcModelViewer({
     // Per-build disposables (real-geometry BufferGeometries) + the live object list.
     let geometries: THREE.BufferGeometry[] = []
     const objects: THREE.Mesh[] = []
-    let boxHelper: THREE.BoxHelper | null = null
+    let boxHelper: THREE.BoxHelper | THREE.Box3Helper | null = null
     let minBaseY = 0 // lowest element, for the explode spread
     // Horizontal section: normal points down, so fragments above `constant` are clipped.
     const sectionPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e6)
@@ -135,11 +139,19 @@ export function IfcModelViewer({
     const clearHighlight = () => {
       if (boxHelper) { scene.remove(boxHelper); boxHelper.geometry.dispose(); (boxHelper.material as THREE.Material).dispose(); boxHelper = null }
     }
-    const applyHighlight = (k: string | null) => {
+    // highlight the selected IFC product (every mesh of an expressID, boxed) or, in
+    // the BIM tool, a single reconstruction key.
+    const applyHighlight = () => {
       clearHighlight()
-      if (!k) return
-      const obj = objects.find((o) => (o.userData as { key?: string }).key === k)
-      if (obj) { boxHelper = new THREE.BoxHelper(obj, new THREE.Color('#e2e8f0')); scene.add(boxHelper) }
+      const { selectedExpressID: sx, selectedKey: sk } = propsRef.current
+      if (sx != null) {
+        const box = new THREE.Box3(); let any = false
+        for (const o of objects) if ((o.userData as { expressID?: number }).expressID === sx) { box.expandByObject(o); any = true }
+        if (any && !box.isEmpty()) { boxHelper = new THREE.Box3Helper(box, new THREE.Color('#fbbf24')); scene.add(boxHelper) }
+      } else if (sk) {
+        const obj = objects.find((o) => (o.userData as { key?: string }).key === sk)
+        if (obj) { boxHelper = new THREE.BoxHelper(obj, new THREE.Color('#e2e8f0')); scene.add(boxHelper) }
+      }
     }
     highlightRef.current = applyHighlight
 
@@ -173,7 +185,7 @@ export function IfcModelViewer({
         const baseY = (o.userData as { baseY?: number }).baseY ?? o.position.y
         o.position.y = baseY + (baseY - minBaseY) * f
       }
-      boxHelper?.update()
+      if (boxHelper instanceof THREE.BoxHelper) boxHelper.update()
       const b = new THREE.Box3().setFromObject(group) // debug hook: current vertical span
       ;(mount as HTMLElement & { __spanY?: number }).__spanY = b.isEmpty() ? 0 : b.max.y - b.min.y
       applySection(curSection) // keep the cut at the right height as the model spreads
@@ -195,9 +207,10 @@ export function IfcModelViewer({
     const resetView = () => { orbit.azimuth = DEFAULT_AZIMUTH; orbit.polar = DEFAULT_POLAR; frameToGroup() }
     resetRef.current = resetView
 
-    const buildReal = (list: IfcMesh[], hid: Partial<Record<Discipline, boolean>>) => {
+    const buildReal = (list: IfcMesh[], hid: Partial<Record<Discipline, boolean>>, iso: number | null) => {
       list.forEach((m, i) => {
         if (hid[m.discipline]) return
+        if (iso != null && m.storey !== iso) return
         const geom = new THREE.BufferGeometry()
         geom.setAttribute('position', new THREE.BufferAttribute(m.positions, 3))
         if (m.normals.length === m.positions.length) geom.setAttribute('normal', new THREE.BufferAttribute(m.normals, 3))
@@ -228,15 +241,15 @@ export function IfcModelViewer({
 
     const build = () => {
       clear()
-      const { input: inp, meshes: ms, hidden: hid, selectedKey: sk, explode: ex, section: sec } = propsRef.current
-      if (ms && ms.length) buildReal(ms, hid)
+      const { input: inp, meshes: ms, hidden: hid, explode: ex, section: sec, isolateStorey: iso } = propsRef.current
+      if (ms && ms.length) buildReal(ms, hid, iso ?? null)
       else buildRecon(inp, hid)
       for (const o of objects) (o.userData as { baseY?: number }).baseY = o.position.y
       minBaseY = objects.length ? Math.min(...objects.map((o) => o.position.y)) : 0
       applyExplode(ex ?? 0)
       frameToGroup()
       applySection(sec ?? 1)
-      applyHighlight(sk ?? null)
+      applyHighlight()
       ;(mount as HTMLElement & { __meshCount?: number }).__meshCount = objects.length
     }
     rebuildRef.current = build

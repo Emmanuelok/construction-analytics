@@ -18,6 +18,8 @@ import {
   Heart,
   FolderKanban,
   Plus,
+  Boxes,
+  Map as MapIcon,
 } from 'lucide-react'
 import { Card, StatTile, Badge, RingProgress, ProgressBar } from '@/components/ui'
 import { useStudio } from '@/store/studio'
@@ -182,6 +184,24 @@ export default function ForYou() {
                 {q}
               </button>
             ))}
+          </div>
+        </div>
+      </Card>
+
+      {/* ----------------------------------------------------- spotlight: model review */}
+      <Card className="relative overflow-hidden p-5 sm:p-6">
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-blue-500/10 via-violet-500/10 to-transparent" />
+        <div className="relative flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/15 ring-1 ring-inset ring-blue-500/30"><Boxes className="h-5 w-5 text-blue-300" /></span>
+            <div>
+              <div className="flex items-center gap-2"><h2 className="text-base font-semibold text-slate-100">Revit-style model review</h2><Badge variant="violet">NEW</Badge></div>
+              <p className="mt-0.5 max-w-xl text-sm text-slate-400">Walk a building floor-by-floor, click any element for its data, and read sliced plans &amp; schedules — for a generated model or <span className="text-slate-200">your own uploaded IFC/Revit file</span>. Plus an editable, georeferenced site survey.</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/building-explorer" className="inline-flex items-center gap-1.5 rounded-lg bg-blue-500/20 px-3 py-2 text-sm font-medium text-blue-100 ring-1 ring-inset ring-blue-500/40 transition-colors hover:bg-blue-500/30"><Boxes className="h-4 w-4" /> Building Explorer <ArrowRight className="h-3.5 w-3.5" /></Link>
+            <Link to="/site-zoning" className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-elevated/60"><MapIcon className="h-4 w-4" /> Site survey</Link>
           </div>
         </div>
       </Card>

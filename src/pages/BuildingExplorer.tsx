@@ -3,6 +3,7 @@ import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick
 import { PageHeader, Card, CardHeader, StatTile, Badge, Tabs } from '@/components/ui'
 import { ScrollableTable } from '@/components/ScrollableTable'
 const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
+const IfcExplorer = lazy(() => import('@/components/IfcExplorer').then((m) => ({ default: m.IfcExplorer })))
 import { FloorPlan } from '@/components/FloorPlan'
 import { buildMassing, deriveStoreys, SHAPE_KINDS, type ShapeKind } from '@/lib/massing'
 import { buildBuilding } from '@/lib/building'
@@ -30,6 +31,7 @@ export default function BuildingExplorer() {
   const [projectId, setProjectId] = useState(initialId)
   const project = useMemo(() => PROJECTS.find((p) => p.id === projectId) ?? PROJECTS[0], [projectId])
 
+  const [source, setSource] = useState<'parametric' | 'ifc'>('parametric')
   const [storeys, setStoreys] = useState(() => deriveStoreys(project.gfa))
   const [shape, setShape] = useState<ShapeKind>('rect')
   const [aspect, setAspect] = useState(1)
@@ -67,19 +69,30 @@ export default function BuildingExplorer() {
         icon={Boxes}
         eyebrow="BIM review"
         title="Building Explorer"
-        description="Explore the building floor by floor and element by element — like a model browser. Isolate any level, click any slab, column or curtain panel to inspect its data, read the plan, and open the full schedules."
+        description="Review a building floor by floor and element by element — like a model browser. Isolate any level, click any element to inspect its data, and open the full schedules. Use a generated model, or upload your own IFC/Revit export."
         accent="blue"
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <label className="sr-only" htmlFor="explorer-project">Project</label>
-            <select id="explorer-project" value={projectId} onChange={(e) => { setProjectId(e.target.value); setSelectedId(null) }} className="rounded-lg border border-edge/60 bg-elevated/50 px-3 py-1.5 text-sm text-slate-200 focus:border-blue-500/50 focus:outline-none">
-              {PROJECTS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-            <button onClick={exportAll} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-3 py-1.5 text-sm font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><FileJson className="h-4 w-4" /> Export model JSON</button>
+            <div className="flex overflow-hidden rounded-lg ring-1 ring-inset ring-edge/60">
+              {([['parametric', 'Generated'], ['ifc', 'IFC model']] as const).map(([id, label]) => (
+                <button key={id} onClick={() => setSource(id)} className={cn('px-3 py-1.5 text-xs font-medium transition-colors', source === id ? 'bg-blue-500/20 text-blue-100' : 'text-slate-400 hover:bg-elevated/50 hover:text-slate-200')}>{label}</button>
+              ))}
+            </div>
+            {source === 'parametric' && <>
+              <label className="sr-only" htmlFor="explorer-project">Project</label>
+              <select id="explorer-project" value={projectId} onChange={(e) => { setProjectId(e.target.value); setSelectedId(null) }} className="rounded-lg border border-edge/60 bg-elevated/50 px-3 py-1.5 text-sm text-slate-200 focus:border-blue-500/50 focus:outline-none">
+                {PROJECTS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              <button onClick={exportAll} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-3 py-1.5 text-sm font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><FileJson className="h-4 w-4" /> Export model JSON</button>
+            </>}
           </div>
         }
       />
 
+      {source === 'ifc' ? (
+        <Suspense fallback={<div className="grid h-64 place-items-center text-sm text-slate-500">Loading IFC explorer…</div>}><IfcExplorer /></Suspense>
+      ) : (
+      <>
       {/* summary */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatTile label="Storeys" value={String(ex.summary.storeys)} accent="blue" />
@@ -241,6 +254,8 @@ export default function BuildingExplorer() {
           </ScrollableTable>
         </div>
       </Card>
+      </>
+      )}
     </div>
   )
 }
