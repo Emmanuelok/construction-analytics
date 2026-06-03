@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { Building2 } from 'lucide-react'
 import type { BuildingModel, Plate } from '@/lib/building'
 import { sunDirection } from '@/lib/sun'
+import { findElementGeom } from '@/lib/building-explorer'
 
 function webglAvailable(): boolean {
   try {
@@ -22,23 +23,31 @@ export function ComponentBuildingViewer({
   hidden = {},
   sun,
   shadows = true,
+  isolateLevel = null,
+  selected = null,
+  onSelect,
   height = 460,
 }: {
   model: BuildingModel
   hidden?: { glazing?: boolean; structure?: boolean; slabs?: boolean }
   sun?: { azimuth: number; altitude: number }
   shadows?: boolean
+  isolateLevel?: number | null
+  selected?: string | null
+  onSelect?: (id: string | null) => void
   height?: number
 }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
-  const propsRef = useRef({ model, hidden, sun, shadows })
-  propsRef.current = { model, hidden, sun, shadows }
+  const propsRef = useRef({ model, hidden, sun, shadows, isolateLevel, selected, onSelect })
+  propsRef.current = { model, hidden, sun, shadows, isolateLevel, selected, onSelect }
 
   const rebuildRef = useRef<(() => void) | null>(null)
   const sunFnRef = useRef<(() => void) | null>(null)
-  useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs])
+  const highlightRef = useRef<(() => void) | null>(null)
+  useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs, isolateLevel])
   useEffect(() => { sunFnRef.current?.() }, [sun?.azimuth, sun?.altitude, shadows])
+  useEffect(() => { highlightRef.current?.() }, [selected, model])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -86,6 +95,17 @@ export function ComponentBuildingViewer({
     let disposables: THREE.BufferGeometry[] = []
     const objects: THREE.Object3D[] = []
 
+    // click-to-inspect: raycast against the parts; a wireframe box highlights the pick
+    const raycaster = new THREE.Raycaster()
+    const ndc = new THREE.Vector2()
+    const hlBox = new THREE.BoxGeometry(1, 1, 1)
+    const hlEdgesGeo = new THREE.EdgesGeometry(hlBox)
+    const hlFillMat = new THREE.MeshBasicMaterial({ color: '#fbbf24', transparent: true, opacity: 0.16, depthWrite: false })
+    const hlLineMat = new THREE.LineBasicMaterial({ color: '#fbbf24' })
+    const highlight = new THREE.Group()
+    highlight.add(new THREE.Mesh(hlBox, hlFillMat), new THREE.LineSegments(hlEdgesGeo, hlLineMat))
+    highlight.visible = false; highlight.renderOrder = 2; scene.add(highlight)
+
     const orbit = { az: DEF_AZ, polar: DEF_POLAR, radius: 60, target: new THREE.Vector3() }
     const applyCamera = () => {
       camera.position.set(
@@ -96,14 +116,14 @@ export function ComponentBuildingViewer({
       camera.lookAt(orbit.target)
     }
 
-    const plate = (p: Plate, mat: THREE.Material) => {
+    const plate = (p: Plate, mat: THREE.Material, id: string) => {
       const shape = new THREE.Shape()
       p.polygon.forEach((q, i) => (i ? shape.lineTo(q.x, -q.z) : shape.moveTo(q.x, -q.z)))
       shape.closePath()
       if (p.hole && p.hole.length >= 3) { const h = new THREE.Path(); p.hole.forEach((q, i) => (i ? h.lineTo(q.x, -q.z) : h.moveTo(q.x, -q.z))); h.closePath(); shape.holes.push(h) }
       const geo = new THREE.ExtrudeGeometry(shape, { depth: p.thickness, bevelEnabled: false }); geo.rotateX(-Math.PI / 2)
       disposables.push(geo)
-      const mesh = new THREE.Mesh(geo, mat); mesh.position.y = p.y; mesh.castShadow = true; mesh.receiveShadow = true; group.add(mesh); objects.push(mesh)
+      const mesh = new THREE.Mesh(geo, mat); mesh.position.y = p.y; mesh.castShadow = true; mesh.receiveShadow = true; mesh.userData.id = id; group.add(mesh); objects.push(mesh)
     }
 
     const clear = () => {
@@ -150,43 +170,97 @@ export function ComponentBuildingViewer({
 
     const build = () => {
       clear()
-      const { model: m, hidden: h } = propsRef.current
-      if (!h.slabs) { for (const s of m.slabs) plate(s, slabMat); if (m.roof) plate(m.roof, slabMat) }
+      const { model: m, hidden: h, isolateLevel: iso } = propsRef.current
+      const storeys = m.counts.storeys
+      const isolating = iso != null
+      const showFloor = (lvl?: number) => !isolating || lvl === iso
+      // precompute stable per-level element ids (match building-explorer)
+      const colCount: Record<number, number> = {}
+      const colIds = m.columns.map((c) => { const lv = c.level ?? 0; const i = colCount[lv] ?? 0; colCount[lv] = i + 1; return `col-${lv}-${i}` })
+      const panCount: Record<number, number> = {}
+      const panIds = m.glazing.map((g) => { const lv = g.level ?? 0; const i = panCount[lv] ?? 0; panCount[lv] = i + 1; return `pan-${lv}-${i}` })
+
+      if (!h.slabs) {
+        for (const s of m.slabs) if (showFloor(s.level)) plate(s, slabMat, `floor-${s.level ?? 0}`)
+        if (m.roof && (!isolating || iso >= storeys)) plate(m.roof, slabMat, 'roof')
+      }
       if (!h.structure) {
-        if (m.columns.length) {
-          const inst = new THREE.InstancedMesh(unitBox, colMat, m.columns.length)
+        const cols = m.columns.map((c, i) => ({ c, id: colIds[i] })).filter(({ c }) => showFloor(c.level))
+        if (cols.length) {
+          const inst = new THREE.InstancedMesh(unitBox, colMat, cols.length)
           inst.castShadow = true; inst.receiveShadow = true
           const mat = new THREE.Matrix4()
-          m.columns.forEach((c, i) => { mat.compose(new THREE.Vector3(c.x, c.y, c.z), new THREE.Quaternion(), new THREE.Vector3(c.w, c.h, c.d)); inst.setMatrixAt(i, mat) })
-          inst.instanceMatrix.needsUpdate = true; group.add(inst); objects.push(inst)
+          cols.forEach(({ c }, i) => { mat.compose(new THREE.Vector3(c.x, c.y, c.z), new THREE.Quaternion(), new THREE.Vector3(c.w, c.h, c.d)); inst.setMatrixAt(i, mat) })
+          inst.instanceMatrix.needsUpdate = true; inst.userData.ids = cols.map(({ id }) => id); group.add(inst); objects.push(inst)
         }
-        if (m.core) { const cm = new THREE.Mesh(unitBox, coreMat); cm.scale.set(m.core.w, m.core.h, m.core.d); cm.position.set(m.core.x, m.core.y, m.core.z); cm.castShadow = true; cm.receiveShadow = true; group.add(cm); objects.push(cm) }
+        if (m.core && !(isolating && iso >= storeys)) {
+          // when isolating a storey, show just that storey's slice of the core
+          let cy = m.core.y, ch = m.core.h
+          if (isolating) { const sceneSh = m.totalHeight / Math.max(1, storeys); cy = iso * sceneSh + sceneSh / 2; ch = sceneSh * 0.92 }
+          const cm = new THREE.Mesh(unitBox, coreMat); cm.scale.set(m.core.w, ch, m.core.d); cm.position.set(m.core.x, cy, m.core.z); cm.castShadow = true; cm.receiveShadow = true; cm.userData.id = 'core'; group.add(cm); objects.push(cm)
+        }
       }
-      if (!h.glazing && m.glazing.length) {
-        const inst = new THREE.InstancedMesh(unitPlane, glassMat, m.glazing.length)
-        const mat = new THREE.Matrix4(); const q = new THREE.Quaternion(); const up = new THREE.Vector3(0, 1, 0)
-        const ex = new THREE.Vector3(), ez = new THREE.Vector3()
-        m.glazing.forEach((g, i) => {
-          ex.set(g.b.x - g.a.x, 0, g.b.z - g.a.z); const L = ex.length() || 1; ex.normalize()
-          ez.crossVectors(ex, up).normalize()
-          q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(ex, up, ez))
-          mat.compose(new THREE.Vector3((g.a.x + g.b.x) / 2, g.y + g.h / 2, (g.a.z + g.b.z) / 2), q, new THREE.Vector3(L, g.h, 1))
-          inst.setMatrixAt(i, mat)
-        })
-        inst.instanceMatrix.needsUpdate = true; group.add(inst); objects.push(inst)
+      if (!h.glazing) {
+        const pans = m.glazing.map((g, i) => ({ g, id: panIds[i] })).filter(({ g }) => showFloor(g.level))
+        if (pans.length) {
+          const inst = new THREE.InstancedMesh(unitPlane, glassMat, pans.length)
+          const mat = new THREE.Matrix4(); const q = new THREE.Quaternion(); const up = new THREE.Vector3(0, 1, 0)
+          const ex = new THREE.Vector3(), ez = new THREE.Vector3()
+          pans.forEach(({ g }, i) => {
+            ex.set(g.b.x - g.a.x, 0, g.b.z - g.a.z); const L = ex.length() || 1; ex.normalize()
+            ez.crossVectors(ex, up).normalize()
+            q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(ex, up, ez))
+            mat.compose(new THREE.Vector3((g.a.x + g.b.x) / 2, g.y + g.h / 2, (g.a.z + g.b.z) / 2), q, new THREE.Vector3(L, g.h, 1))
+            inst.setMatrixAt(i, mat)
+          })
+          inst.instanceMatrix.needsUpdate = true; inst.userData.ids = pans.map(({ id }) => id); group.add(inst); objects.push(inst)
+        }
       }
       const span = Math.max(m.totalHeight, m.footprint * 1.5, 8)
-      orbit.target.set(0, m.totalHeight / 2, 0); orbit.radius = span * 1.7
-      scene.fog = new THREE.Fog('#0a0f1c', orbit.radius * 0.7, orbit.radius * 3)
-      applyCamera(); applySun()
+      if (isolating && iso < storeys) { const sceneSh = m.totalHeight / Math.max(1, storeys); orbit.target.set(0, iso * sceneSh + sceneSh / 2, 0); orbit.radius = Math.max(m.footprint * 1.6, 10) }
+      else { orbit.target.set(0, m.totalHeight / 2, 0); orbit.radius = span * 1.7 }
+      scene.fog = new THREE.Fog('#0a0f1c', orbit.radius * 0.9, orbit.radius * 3.2)
+      applyCamera(); applySun(); applyHighlight()
       ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, glazing: m.counts.glazingPanels, slabs: m.counts.slabs }
     }
     rebuildRef.current = build
 
-    let dragging = false, lastX = 0, lastY = 0, spin = true
-    const onDown = (e: PointerEvent) => { dragging = true; spin = false; lastX = e.clientX; lastY = e.clientY; renderer.domElement.style.cursor = 'grabbing' }
-    const onMove = (e: PointerEvent) => { if (!dragging) return; orbit.az -= (e.clientX - lastX) * 0.01; orbit.polar = Math.max(0.08, Math.min(Math.PI / 2 - 0.03, orbit.polar - (e.clientY - lastY) * 0.01)); lastX = e.clientX; lastY = e.clientY; applyCamera() }
-    const onUp = () => { dragging = false; renderer.domElement.style.cursor = 'grab' }
+    // selection highlight — a wireframe box sized/oriented to the picked element
+    const applyHighlight = () => {
+      const { model: m, selected } = propsRef.current
+      const g = selected ? findElementGeom(m, selected) : null
+      if (!g) { highlight.visible = false; ;(mount as HTMLElement & { __selected?: string | null }).__selected = null; return }
+      highlight.visible = true
+      highlight.position.set(g.center.x, g.center.y, g.center.z)
+      if (g.dir) {
+        const ex = new THREE.Vector3(g.dir.x, 0, g.dir.z).normalize(), up = new THREE.Vector3(0, 1, 0)
+        const ez = new THREE.Vector3().crossVectors(ex, up).normalize()
+        highlight.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(ex, up, ez))
+      } else highlight.quaternion.identity()
+      highlight.scale.set(Math.max(g.size.x, 0.06) * 1.08, Math.max(g.size.y, 0.06) * 1.08, Math.max(g.size.z, 0.06) * 1.08)
+      ;(mount as HTMLElement & { __selected?: string | null }).__selected = selected ?? null
+    }
+    highlightRef.current = applyHighlight
+
+    const pick = (e: PointerEvent) => {
+      const { onSelect } = propsRef.current
+      if (!onSelect) return
+      const rect = el.getBoundingClientRect()
+      ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+      ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+      raycaster.setFromCamera(ndc, camera)
+      for (const hit of raycaster.intersectObjects(group.children, true)) {
+        const o = hit.object as THREE.Object3D & { userData: { id?: string; ids?: string[] } }
+        if ((o as THREE.InstancedMesh).isInstancedMesh && hit.instanceId != null) { const id = o.userData.ids?.[hit.instanceId]; if (id) { onSelect(id); return } }
+        else if (o.userData?.id) { onSelect(o.userData.id); return }
+      }
+      onSelect(null)
+    }
+
+    let dragging = false, lastX = 0, lastY = 0, spin = true, moved = 0
+    const onDown = (e: PointerEvent) => { dragging = true; spin = false; lastX = e.clientX; lastY = e.clientY; moved = 0; renderer.domElement.style.cursor = 'grabbing' }
+    const onMove = (e: PointerEvent) => { if (!dragging) return; moved += Math.abs(e.clientX - lastX) + Math.abs(e.clientY - lastY); orbit.az -= (e.clientX - lastX) * 0.01; orbit.polar = Math.max(0.08, Math.min(Math.PI / 2 - 0.03, orbit.polar - (e.clientY - lastY) * 0.01)); lastX = e.clientX; lastY = e.clientY; applyCamera() }
+    const onUp = (e: PointerEvent) => { const wasDown = dragging; dragging = false; renderer.domElement.style.cursor = 'grab'; if (wasDown && moved < 6) pick(e) }
     const onWheel = (e: WheelEvent) => { e.preventDefault(); orbit.radius = Math.max(6, Math.min(800, orbit.radius + e.deltaY * 0.07)); applyCamera() }
     const clampP = (p: number) => Math.max(0.08, Math.min(Math.PI / 2 - 0.03, p))
     const onKey = (e: KeyboardEvent) => {
@@ -207,6 +281,7 @@ export function ComponentBuildingViewer({
       cancelAnimationFrame(raf); ro.disconnect()
       el.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); mount.removeEventListener('keydown', onKey)
       clear(); unitBox.dispose(); unitPlane.dispose(); [slabMat, colMat, coreMat, glassMat].forEach((m) => m.dispose())
+      hlBox.dispose(); hlEdgesGeo.dispose(); hlFillMat.dispose(); hlLineMat.dispose()
       ground.geometry.dispose(); (ground.material as THREE.Material).dispose()
       renderer.dispose(); if (el.parentNode === mount) mount.removeChild(el)
     }
@@ -223,6 +298,6 @@ export function ComponentBuildingViewer({
     )
   }
   return (
-    <div ref={mountRef} style={{ height }} tabIndex={0} role="application" aria-label="3D building model with components. Arrow keys orbit, +/- zoom." className="w-full overflow-hidden rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60" />
+    <div ref={mountRef} style={{ height }} tabIndex={0} role="application" aria-label="3D building model with components. Click an element to inspect it. Arrow keys orbit, +/- zoom." className="w-full overflow-hidden rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60" />
   )
 }

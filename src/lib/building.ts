@@ -7,9 +7,9 @@
 import { type Pt, polygonCentroid } from './zoning'
 import type { Massing } from './massing'
 
-export type Box = { x: number; y: number; z: number; w: number; h: number; d: number } // centre + full size
-export type Quad = { a: Pt; b: Pt; y: number; h: number } // façade panel: edge a→b (plan), base y, height
-export type Plate = { polygon: Pt[]; hole?: Pt[]; y: number; thickness: number } // slab/roof at elevation y
+export type Box = { x: number; y: number; z: number; w: number; h: number; d: number; level?: number } // centre + full size
+export type Quad = { a: Pt; b: Pt; y: number; h: number; level?: number } // façade panel: edge a→b (plan), base y, height
+export type Plate = { polygon: Pt[]; hole?: Pt[]; y: number; thickness: number; level?: number } // slab/roof at elevation y
 
 export type BuildingModel = {
   slabs: Plate[]
@@ -41,17 +41,17 @@ export function buildBuilding(m: Massing, opts?: { columnSpacing?: number; coreR
 
   for (const f of m.floors) {
     const base = f.y - f.height / 2
-    slabs.push({ polygon: f.polygon, hole: f.hole, y: base, thickness: slabT })
+    slabs.push({ polygon: f.polygon, hole: f.hole, y: base, thickness: slabT, level: f.index })
     const poly = f.polygon
     for (let i = 0; i < poly.length; i++) {
       const a = poly[i], b = poly[(i + 1) % poly.length]
       const L = dist(a, b)
       if (L < 1e-3) continue
-      glazing.push({ a, b, y: base + slabT, h: f.height - slabT })
+      glazing.push({ a, b, y: base + slabT, h: f.height - slabT, level: f.index })
       const segs = Math.max(1, Math.round(L / spacing))
       for (let s = 0; s < segs; s++) {
         const t = s / segs
-        columns.push({ x: a.x + (b.x - a.x) * t, y: base + f.height / 2, z: a.z + (b.z - a.z) * t, w: 0.18, h: f.height, d: 0.18 })
+        columns.push({ x: a.x + (b.x - a.x) * t, y: base + f.height / 2, z: a.z + (b.z - a.z) * t, w: 0.18, h: f.height, d: 0.18, level: f.index })
       }
     }
   }
@@ -65,7 +65,7 @@ export function buildBuilding(m: Massing, opts?: { columnSpacing?: number; coreR
   }
 
   const top = m.floors[m.floors.length - 1]
-  const roof = top ? { polygon: top.polygon, hole: top.hole, y: top.y + top.height / 2 - slabT, thickness: slabT } : null
+  const roof = top ? { polygon: top.polygon, hole: top.hole, y: top.y + top.height / 2 - slabT, thickness: slabT, level: m.floors.length } : null
 
   return {
     slabs,

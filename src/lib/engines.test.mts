@@ -24,6 +24,7 @@ import { toPublic, parseListQuery, listDatasets, findDataset, generateApiKey, is
 import { mentionNotifications, shareNotifications, alertNotifications, buildFeed, unreadCount, isUnread, timeAgo, parseReadIds, subjectName, type Notification } from './notifications.ts'
 import { buildMassing, massingSchedule, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
 import { buildBuilding } from './building.ts'
+import { explodeBuilding, planForLevel, findElementGeom, levelColumns, levelPanels } from './building-explorer.ts'
 import { unitShape, holeFor, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, SHAPE_KINDS } from './shapes.ts'
 import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, type SelectedElement } from './ifc-model.ts'
 import { extractGeometry } from './ifc-geometry.ts'
@@ -756,6 +757,38 @@ section('building')
   ok('cylinder footprint → far more façade panels than a box', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 10, shape: 'cylinder' })).glazing.length === 480)
   ok('taller building → more columns', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 20, shape: 'rect' })).columns.length > b.columns.length)
   ok('coreRatio 0 omits the core', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 5, shape: 'rect' }), { coreRatio: 0 }).core === null)
+  ok('every element is tagged with its level', b.slabs.every((s, i) => s.level === i) && b.columns.every((c) => c.level !== undefined) && b.glazing.every((g) => g.level !== undefined))
+  ok('roof is tagged as the level above the top floor', b.roof?.level === 10)
+}
+
+// ── building-explorer (Revit-style floor/element/schedule review) ───────────────
+section('building-explorer')
+{
+  const model = buildBuilding(buildMassing({ gfa: 120_000, progress: 100, storeys: 12, shape: 'rect' }), { coreRatio: 0.16 })
+  const ex = explodeBuilding(model, { storeyHeight: 3.6 })
+  ok('explodes one inspectable element per real part', ex.summary.columns === model.columns.length && ex.summary.panels === model.glazing.length)
+  ok('a floor element per storey + a roof, all addressable by id', !!(ex.byId['floor-0'] && ex.byId['floor-11'] && ex.byId['roof'] && ex.byId['col-0-0'] && ex.byId['core']))
+  ok('levels list = 12 storeys + roof', ex.levels.length === 13 && ex.levels[0].name === 'Ground' && ex.levels[12].isRoof)
+  ok('ground floor sits at elevation 0 with real area', ex.byId['floor-0'].data.elevation === 0 && Number(ex.byId['floor-0'].data.area) > 0)
+  ok('upper floor elevation = level × storey height', Number(ex.byId['floor-10'].data.elevation) === 36)
+  ok('column carries a real height (~storey) & concrete volume', Number(ex.byId['col-0-0'].data.height) > 3 && Number(ex.byId['col-0-0'].data.height) < 3.4 && Number(ex.byId['col-0-0'].data.volume) > 0)
+  ok('panel carries width/height/area + a compass facing', (() => { const p = ex.byId['pan-0-0'].data; return Number(p.area) > 0 && Number(p.facing) >= 0 && Number(p.facing) <= 360 && typeof p.orientation === 'string' })())
+  ok('core spans all storeys (level -1) with volume', ex.byId['core'].level === -1 && Number(ex.byId['core'].data.volume) > 0)
+  ok('column section/slab are tunable takeoff assumptions', explodeBuilding(model, { columnSection: 0.8 }).byId['col-0-0'].data.section === 0.8)
+  // schedules
+  const colSched = ex.schedules.find((s) => s.category === 'Column')!
+  ok('column schedule has a row per column with a concrete total', colSched.rows.length === model.columns.length && colSched.totals.volume > 0)
+  ok('floor schedule totals the GFA across storeys', (() => { const fs = ex.schedules.find((s) => s.group === 'Floors & Roof')!; return fs.rows.length === 13 && fs.totals.area > 0 })())
+  // level filtering is consistent
+  ok('per-level columns/panels partition the totals', (() => { let c = 0, p = 0; for (let i = 0; i < 12; i++) { c += levelColumns(model, i).length; p += levelPanels(model, i).length } return c === model.columns.length && p === model.glazing.length })())
+  // plan projection
+  const plan = planForLevel(model, 0)
+  ok('plan projection: outline + columns with ids that match the schedule', plan.outline.length >= 4 && plan.columns.length === levelColumns(model, 0).length && plan.columns[0].id === 'col-0-0')
+  ok('roof plan has no columns/panels', planForLevel(model, 12).isRoof && planForLevel(model, 12).columns.length === 0)
+  // highlight geometry
+  ok('findElementGeom locates a column box', (() => { const g = findElementGeom(model, 'col-0-0'); return !!g && Math.abs(g.size.x - model.columns[0].w) < 1e-9 })())
+  ok('findElementGeom gives a panel an edge direction', (() => { const g = findElementGeom(model, 'pan-0-0'); return !!g && !!g.dir })())
+  ok('findElementGeom returns null for an unknown id', findElementGeom(model, 'nope-9-9') === null)
 }
 
 // ── model-stats (uploaded mesh-model import) ────────────────────────────────────

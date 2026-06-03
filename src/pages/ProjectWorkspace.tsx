@@ -354,7 +354,8 @@ export default function ProjectWorkspace() {
               </div>
             )}
             <div className="mt-auto text-[11px] leading-relaxed text-slate-500">
-              {Math.max(1, Math.round(vitals.gfa / 2500))} storeys · {formatNumber(vitals.gfa)} m² · {vitals.progress}% built. Full IFC mesh geometry renders in BIM Intelligence.
+              {Math.max(1, Math.round(vitals.gfa / 2500))} storeys · {formatNumber(vitals.gfa)} m² · {vitals.progress}% built.{' '}
+              <Link to="/building-explorer" className="text-blue-300 underline-offset-2 hover:text-blue-200 hover:underline">Explore floor-by-floor & every element →</Link>
             </div>
           </div>
         </div>

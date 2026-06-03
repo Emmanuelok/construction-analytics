@@ -49,7 +49,8 @@ const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n
 const round1 = (n: number) => Math.round(n * 10) / 10
 
 const STOREY_HEIGHT = 1 // scene units per storey
-const PLATE_SCALE = 0.16 // metres → scene units (plate area scales by PLATE_SCALE²)
+export const PLATE_SCALE = 0.16 // metres → scene units (plate area scales by PLATE_SCALE²)
+export const SCENE_LEN_TO_M = 1 / PLATE_SCALE // scene plan unit → metres
 
 /** Derive a plausible storey count from GFA when none is given. */
 export function deriveStoreys(gfa: number): number {
