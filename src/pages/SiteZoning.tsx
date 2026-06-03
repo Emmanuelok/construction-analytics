@@ -204,16 +204,24 @@ export default function SiteZoning() {
       {/* actual site on a basemap + geospatial analytics */}
       <div className="grid gap-4 lg:grid-cols-5">
         <Card className="lg:col-span-3">
-          <CardHeader icon={MapIcon} accent="emerald" title="Site map" subtitle="The parcel on a satellite/streets basemap — white = boundary, amber = setback, green = proposed footprint. Set the location to place it." />
+          <CardHeader icon={MapIcon} accent="emerald" title="Site map — place & draw your parcel" subtitle="Search an address (or click the map) to place the site, drag its vertices to reshape it on the imagery, or draw a brand-new boundary. Amber dashed = setback · green = proposed footprint." />
           <div className="space-y-3 border-t border-edge/50 p-4">
-            <div className="flex flex-wrap items-end gap-3">
+            <Suspense fallback={<div style={{ height: 420 }} className="grid place-items-center text-sm text-slate-500">Loading map…</div>}>
+              <SiteMap
+                anchor={anchor}
+                editable
+                boundary={boundary}
+                onBoundaryChange={applyBoundary}
+                onAnchorChange={setAnchor}
+                overlays={[...(z.buildable.length >= 3 ? [{ points: z.buildable, color: '#fbbf24', dashed: true }] : []), ...(footprintPoly.length >= 3 ? [{ points: footprintPoly, color: '#22c55e', fill: 0.5 }] : [])]}
+                height={440}
+              />
+            </Suspense>
+            <div className="flex flex-wrap items-end gap-3 border-t border-edge/40 pt-3">
               <label className="block"><span className="mb-1 block text-xs text-slate-400">Latitude</span><input type="number" step={0.0005} value={anchor.lat} onChange={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v)) setAnchor((a) => ({ ...a, lat: v })) }} className="w-32 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/30" /></label>
               <label className="block"><span className="mb-1 block text-xs text-slate-400">Longitude</span><input type="number" step={0.0005} value={anchor.lng} onChange={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v)) setAnchor((a) => ({ ...a, lng: v })) }} className="w-32 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/30" /></label>
-              <p className="text-[11px] text-slate-500">Place the parcel at a real address to study context, orientation &amp; neighbours.</p>
+              <p className="text-[11px] text-slate-500">Precise coordinates — or just use the map above.</p>
             </div>
-            <Suspense fallback={<div style={{ height: 420 }} className="grid place-items-center text-sm text-slate-500">Loading map…</div>}>
-              <SiteMap anchor={anchor} overlays={[{ points: boundary, color: '#e2e8f0', fill: 0.06 }, ...(z.buildable.length >= 3 ? [{ points: z.buildable, color: '#fbbf24', dashed: true }] : []), ...(footprintPoly.length >= 3 ? [{ points: footprintPoly, color: '#22c55e', fill: 0.5 }] : [])]} height={420} />
-            </Suspense>
           </div>
         </Card>
 
