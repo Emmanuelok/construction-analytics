@@ -25,6 +25,8 @@ import { mentionNotifications, shareNotifications, alertNotifications, buildFeed
 import { buildMassing, massingSchedule, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
 import { buildBuilding } from './building.ts'
 import { explodeBuilding, planForLevel, findElementGeom, levelColumns, levelPanels } from './building-explorer.ts'
+import { explodeIfc, meshGeom, friendlyType } from './ifc-explorer.ts'
+import type { IfcGeometryResult, IfcMesh } from './ifc-geometry.ts'
 import { unitShape, holeFor, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, SHAPE_KINDS } from './shapes.ts'
 import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, type SelectedElement } from './ifc-model.ts'
 import { extractGeometry } from './ifc-geometry.ts'
@@ -789,6 +791,39 @@ section('building-explorer')
   ok('findElementGeom locates a column box', (() => { const g = findElementGeom(model, 'col-0-0'); return !!g && Math.abs(g.size.x - model.columns[0].w) < 1e-9 })())
   ok('findElementGeom gives a panel an edge direction', (() => { const g = findElementGeom(model, 'pan-0-0'); return !!g && !!g.dir })())
   ok('findElementGeom returns null for an unknown id', findElementGeom(model, 'nope-9-9') === null)
+}
+
+// ── ifc-explorer (review a real uploaded IFC model floor-by-floor) ──────────────
+section('ifc-explorer')
+{
+  const IDENT = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+  // a closed, outward-wound unit cube (volume 1, 12 triangles)
+  const cubePos = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1])
+  const cubeIdx = new Uint32Array([1, 2, 6, 1, 6, 5, 0, 4, 7, 0, 7, 3, 2, 3, 7, 2, 7, 6, 0, 1, 5, 0, 5, 4, 4, 5, 6, 4, 6, 7, 0, 3, 2, 0, 2, 1])
+  const g = meshGeom(cubePos, cubeIdx, IDENT)
+  ok('meshGeom measures a unit cube: volume 1, 12 triangles, 1×1×1 bbox', near(g.volume, 1, 1e-6) && g.triangles === 12 && near(g.max[1] - g.min[1], 1, 1e-9))
+  ok('meshGeom applies the placement matrix (scaled cube → 8× volume)', near(meshGeom(cubePos, cubeIdx, [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1]).volume, 8, 1e-6))
+  ok('friendlyType maps IFC names', friendlyType('IFCWALLSTANDARDCASE') === 'Wall' && friendlyType('IFCCOLUMN') === 'Column' && friendlyType('IFCSPACE') === 'Space' && friendlyType('IFC#7') === 'Other')
+
+  const mesh = (expressID: number, ifcTypeName: string, storey: number, name?: string): IfcMesh => ({ expressID, ifcType: 0, ifcTypeName, discipline: 'other', positions: cubePos, normals: new Float32Array(0), indices: cubeIdx, matrix: IDENT, color: { r: 0, g: 0, b: 0, a: 1 }, storey, name })
+  const res: IfcGeometryResult = {
+    meshes: [mesh(10, 'IFCWALLSTANDARDCASE', 100, 'Ext Wall A'), mesh(20, 'IFCCOLUMN', 200), mesh(20, 'IFCCOLUMN', 200)],
+    vertexCount: 24, triangleCount: 36, bbox: { min: [0, 0, 0], max: [1, 1, 1] },
+    storeys: [{ expressID: 200, name: 'Level 1', elevation: 3 }, { expressID: 100, name: 'Ground', elevation: 0 }],
+  }
+  const ex = explodeIfc(res)
+  ok('groups meshes into one element per IFC product', ex.summary.elements === 2 && !!ex.byExpress[10] && !!ex.byExpress[20])
+  ok('classifies categories from IFC type', ex.byExpress[10].category === 'Wall' && ex.byExpress[20].category === 'Column')
+  ok('uses the IfcRoot name as the mark when present', ex.byExpress[10].mark === 'Ext Wall A' && ex.byExpress[20].mark.startsWith('Column #'))
+  ok('orders storeys by elevation (Ground = level 0)', ex.levels[0].name === 'Ground' && ex.levels[1].name === 'Level 1' && ex.byExpress[10].level === 0 && ex.byExpress[20].level === 1)
+  ok('measures real volume from geometry (col = 2 cubes = vol 2)', near(Number(ex.byExpress[20].data.volume), 2, 1e-6) && near(Number(ex.byExpress[10].data.volume), 1, 1e-6))
+  ok('builds a schedule per category with volume totals', ex.schedules.length === 2 && ex.schedules.every((s) => s.totals.volume > 0))
+  ok('level navigator counts elements + volume per storey', ex.levels[0].elements === 1 && near(ex.levels[1].volume, 2, 1e-6))
+  ok('summary totals elements, storeys, categories, volume', ex.summary.storeys === 2 && ex.summary.categories === 2 && near(ex.summary.volume, 3, 1e-6))
+  // an element with no spatial container → Unassigned level
+  const res2: IfcGeometryResult = { ...res, meshes: [mesh(10, 'IFCWALL', 100), { ...mesh(30, 'IFCDOOR', 0), storey: undefined }] }
+  const ex2 = explodeIfc(res2)
+  ok('puts spatially-uncontained elements in an Unassigned bucket', ex2.byExpress[30].level === -1 && ex2.levels.some((l) => l.unassigned))
 }
 
 // ── model-stats (uploaded mesh-model import) ────────────────────────────────────
