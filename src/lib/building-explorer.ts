@@ -9,14 +9,14 @@
 import { type Pt, polygonArea, polygonPerimeter, polygonCentroid } from './zoning'
 import { bearing, compass } from './geo'
 import { SCENE_LEN_TO_M } from './massing'
-import type { BuildingModel, Box, Quad } from './building'
+import type { BuildingModel, Box, Quad, Beam } from './building'
 
 const LEN = SCENE_LEN_TO_M // scene plan unit → metres
 const AREA = LEN * LEN
 const r1 = (n: number) => Math.round(n * 10) / 10
 const r2 = (n: number) => Math.round(n * 100) / 100
 
-export type ElementCategory = 'Floor' | 'Column' | 'Curtain Panel' | 'Core' | 'Roof'
+export type ElementCategory = 'Floor' | 'Column' | 'Beam' | 'Wall' | 'Window' | 'Door' | 'Core' | 'Roof'
 export type ScheduleCol = { key: string; label: string; unit?: string; numeric?: boolean; total?: boolean }
 
 export type BuildingElement = {
@@ -54,6 +54,7 @@ export type BuildingExplosion = {
   schedules: Schedule[]
   summary: {
     elements: number; storeys: number; columns: number; panels: number
+    beams: number; windows: number; doors: number; walls: number
     gfa: number; grossVolume: number; facadeArea: number; height: number
     concreteVolume: number; coreVolume: number
   }
@@ -81,15 +82,6 @@ const COLUMN_COLS: ScheduleCol[] = [
   { key: 'x', label: 'X (E)', unit: 'm', numeric: true },
   { key: 'z', label: 'Z (N)', unit: 'm', numeric: true },
 ]
-const PANEL_COLS: ScheduleCol[] = [
-  { key: 'mark', label: 'Mark' },
-  { key: 'level', label: 'Level' },
-  { key: 'width', label: 'Width', unit: 'm', numeric: true },
-  { key: 'height', label: 'Height', unit: 'm', numeric: true },
-  { key: 'area', label: 'Area', unit: 'm²', numeric: true, total: true },
-  { key: 'facing', label: 'Facing', unit: '°', numeric: true },
-  { key: 'orientation', label: 'Orient.' },
-]
 const CORE_COLS: ScheduleCol[] = [
   { key: 'mark', label: 'Mark' },
   { key: 'footprint', label: 'Footprint', unit: 'm²', numeric: true, total: true },
@@ -97,14 +89,43 @@ const CORE_COLS: ScheduleCol[] = [
   { key: 'volume', label: 'Volume', unit: 'm³', numeric: true, total: true },
   { key: 'levelsServed', label: 'Levels', numeric: true },
 ]
+const BEAM_COLS: ScheduleCol[] = [
+  { key: 'mark', label: 'Mark' },
+  { key: 'level', label: 'Level' },
+  { key: 'length', label: 'Length', unit: 'm', numeric: true, total: true },
+  { key: 'depth', label: 'Depth', unit: 'm', numeric: true },
+  { key: 'width', label: 'Width', unit: 'm', numeric: true },
+  { key: 'volume', label: 'Concrete', unit: 'm³', numeric: true, total: true },
+  { key: 'bearing', label: 'Bearing', unit: '°', numeric: true },
+]
+const OPENING_COLS: ScheduleCol[] = [
+  { key: 'mark', label: 'Mark' },
+  { key: 'level', label: 'Level' },
+  { key: 'width', label: 'Width', unit: 'm', numeric: true },
+  { key: 'height', label: 'Height', unit: 'm', numeric: true },
+  { key: 'area', label: 'Area', unit: 'm²', numeric: true, total: true },
+  { key: 'sill', label: 'Sill', unit: 'm', numeric: true },
+  { key: 'orientation', label: 'Faces' },
+]
+const WALL_COLS: ScheduleCol[] = [
+  { key: 'mark', label: 'Mark' },
+  { key: 'level', label: 'Level' },
+  { key: 'length', label: 'Length', unit: 'm', numeric: true, total: true },
+  { key: 'height', label: 'Height', unit: 'm', numeric: true },
+  { key: 'area', label: 'Area', unit: 'm²', numeric: true, total: true },
+  { key: 'orientation', label: 'Faces' },
+]
 
 const levelName = (i: number, storeys: number) => (i === 0 ? 'Ground' : i >= storeys ? 'Roof' : `Level ${i}`)
 const pad = (n: number) => String(n).padStart(2, '0')
 
 /** Columns belonging to a level, in stable order (shared by schedule, plan & viewer). */
 export const levelColumns = (m: BuildingModel, level: number): Box[] => m.columns.filter((c) => c.level === level)
-/** Curtain-wall panels belonging to a level, in stable order. */
+/** Window panels belonging to a level, in stable order. */
 export const levelPanels = (m: BuildingModel, level: number): Quad[] => m.glazing.filter((g) => g.level === level)
+export const levelBeams = (m: BuildingModel, level: number): Beam[] => m.beams.filter((x) => x.level === level)
+export const levelWalls = (m: BuildingModel, level: number): Quad[] => m.walls.filter((x) => x.level === level)
+export const levelDoors = (m: BuildingModel, level: number): Quad[] => m.doors.filter((x) => x.level === level)
 
 const plateBBox = (poly: Pt[]) => {
   const xs = poly.map((p) => p.x), zs = poly.map((p) => p.z)
@@ -162,21 +183,36 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
     })
   }
 
-  // curtain-wall panels (facing = direction from the level centroid to the panel)
+  // façade + frame, per level: windows, doors, opaque walls and edge beams
+  const beamWidth = 0.3 // m — beam web width takeoff
   for (let level = 0; level < storeys; level++) {
     const slab = m.slabs.find((s) => s.level === level)
     const c = slab ? polygonCentroid(slab.polygon) : { x: 0, z: 0 }
+    const lvl = levelName(level, storeys)
+    const faces = (g: Quad) => compass(bearing(c, { x: (g.a.x + g.b.x) / 2, z: (g.a.z + g.b.z) / 2 }))
     levelPanels(m, level).forEach((g, i) => {
-      const width = dist(g.a, g.b) * LEN
-      const height = g.h * sh
-      const mid = { x: (g.a.x + g.b.x) / 2, z: (g.a.z + g.b.z) / 2 }
-      const facing = bearing(c, mid)
-      const mark = `GP-${level === 0 ? 'G' : pad(level)}-${pad(i + 1)}`
-      elements.push({
-        id: `pan-${level}-${i}`, category: 'Curtain Panel', level, levelName: levelName(level, storeys), mark,
-        title: `Curtain panel ${mark}`, cols: PANEL_COLS,
-        data: { mark, level: levelName(level, storeys), width: r2(width), height: r2(height), area: r2(width * height), facing, orientation: compass(facing) },
-      })
+      const width = dist(g.a, g.b) * LEN, height = g.h * sh
+      const mark = `W-${level === 0 ? 'G' : pad(level)}-${pad(i + 1)}`
+      elements.push({ id: `pan-${level}-${i}`, category: 'Window', level, levelName: lvl, mark, title: `Window ${mark}`, cols: OPENING_COLS,
+        data: { mark, level: lvl, width: r2(width), height: r2(height), area: r2(width * height), sill: r2(g.y * sh), orientation: faces(g) } })
+    })
+    levelDoors(m, level).forEach((g, i) => {
+      const width = dist(g.a, g.b) * LEN, height = g.h * sh
+      const mark = `D-${pad(i + 1)}`
+      elements.push({ id: `door-${level}-${i}`, category: 'Door', level, levelName: lvl, mark, title: `Entrance door ${mark}`, cols: OPENING_COLS,
+        data: { mark, level: lvl, width: r2(width), height: r2(height), area: r2(width * height), sill: 0, orientation: faces(g) } })
+    })
+    levelWalls(m, level).forEach((g, i) => {
+      const length = dist(g.a, g.b) * LEN, height = g.h * sh
+      const mark = `WL-${level === 0 ? 'G' : pad(level)}-${pad(i + 1)}`
+      elements.push({ id: `wall-${level}-${i}`, category: 'Wall', level, levelName: lvl, mark, title: `Façade wall ${mark}`, cols: WALL_COLS,
+        data: { mark, level: lvl, length: r2(length), height: r2(height), area: r2(length * height), orientation: faces(g) } })
+    })
+    levelBeams(m, level).forEach((bm, i) => {
+      const length = dist(bm.a, bm.b) * LEN, depth = bm.depth * sh
+      const mark = `B-${level === 0 ? 'G' : pad(level)}-${pad(i + 1)}`
+      elements.push({ id: `beam-${level}-${i}`, category: 'Beam', level, levelName: lvl, mark, title: `Edge beam ${mark}`, cols: BEAM_COLS,
+        data: { mark, level: lvl, length: r2(length), depth: r2(depth), width: beamWidth, volume: r2(length * depth * beamWidth), bearing: bearing(bm.a, bm.b) } })
     })
   }
 
@@ -216,26 +252,29 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
     for (const k of Object.keys(totals)) totals[k] = r1(totals[k])
     return { group, category, columns, rows: els.map((e) => ({ id: e.id, ...e.data })), totals }
   }
+  const ofCat = (cat: ElementCategory) => elements.filter((e) => e.category === cat)
   const floorEls = elements.filter((e) => e.category === 'Floor' || e.category === 'Roof')
-  const colEls = elements.filter((e) => e.category === 'Column')
-  const panEls = elements.filter((e) => e.category === 'Curtain Panel')
-  const coreEls = elements.filter((e) => e.category === 'Core')
+  const colEls = ofCat('Column'), beamEls = ofCat('Beam'), winEls = ofCat('Window'), doorEls = ofCat('Door'), wallEls = ofCat('Wall'), coreEls = ofCat('Core')
   const schedules: Schedule[] = [
     sched('Floors & Roof', 'Floor', FLOOR_COLS, floorEls),
     sched('Columns', 'Column', COLUMN_COLS, colEls),
-    sched('Curtain Panels', 'Curtain Panel', PANEL_COLS, panEls),
-  ]
+    sched('Beams', 'Beam', BEAM_COLS, beamEls),
+    sched('Windows', 'Window', OPENING_COLS, winEls),
+    sched('Doors', 'Door', OPENING_COLS, doorEls),
+    sched('Walls', 'Wall', WALL_COLS, wallEls),
+  ].filter((s) => s.rows.length)
   if (coreEls.length) schedules.push(sched('Core', 'Core', CORE_COLS, coreEls))
 
   const gfa = floorEls.filter((e) => e.category === 'Floor').reduce((s, e) => s + Number(e.data.area), 0)
   const facadeArea = floorEls.reduce((s, e) => s + Number(e.data.facade), 0)
-  const concreteVolume = floorEls.reduce((s, e) => s + Number(e.data.volume), 0) + colEls.reduce((s, e) => s + Number(e.data.volume), 0)
+  const concreteVolume = floorEls.reduce((s, e) => s + Number(e.data.volume), 0) + colEls.reduce((s, e) => s + Number(e.data.volume), 0) + beamEls.reduce((s, e) => s + Number(e.data.volume), 0)
   const grossVolume = levels.filter((l) => !l.isRoof).reduce((s, l) => s + l.area * sh, 0)
 
   return {
     elements, byId, levels, schedules,
     summary: {
-      elements: elements.length, storeys, columns: colEls.length, panels: panEls.length,
+      elements: elements.length, storeys, columns: colEls.length, panels: winEls.length,
+      beams: beamEls.length, windows: winEls.length, doors: doorEls.length, walls: wallEls.length,
       gfa: r1(gfa), grossVolume: r1(grossVolume), facadeArea: r1(facadeArea), height: r1(storeys * sh),
       concreteVolume: r1(concreteVolume), coreVolume: coreEls.length ? Number(coreEls[0].data.volume) : 0,
     },
@@ -247,6 +286,7 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
 
 export type PlanColumn = { id: string; x: number; z: number; w: number; d: number }
 export type PlanPanel = { id: string; a: Pt; b: Pt; facing: number }
+export type PlanDoor = { id: string; a: Pt; b: Pt }
 export type LevelPlan = {
   level: number
   isRoof: boolean
@@ -254,6 +294,7 @@ export type LevelPlan = {
   hole?: Pt[]
   columns: PlanColumn[]
   panels: PlanPanel[]
+  doors: PlanDoor[]
   core?: { id: string; x: number; z: number; w: number; d: number }
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number }
 }
@@ -274,6 +315,7 @@ export function planForLevel(m: BuildingModel, level: number): LevelPlan {
     hole: slab?.hole,
     columns: cols.map((col, i) => ({ id: `col-${level}-${i}`, x: col.x, z: col.z, w: col.w, d: col.d })),
     panels: pans.map((g, i) => ({ id: `pan-${level}-${i}`, a: g.a, b: g.b, facing: bearing(c, { x: (g.a.x + g.b.x) / 2, z: (g.a.z + g.b.z) / 2 }) })),
+    doors: isRoof ? [] : levelDoors(m, level).map((g, i) => ({ id: `door-${level}-${i}`, a: g.a, b: g.b })),
     core: m.core ? { id: 'core', x: m.core.x, z: m.core.z, w: m.core.w, d: m.core.d } : undefined,
     bounds: bb,
   }
@@ -292,8 +334,15 @@ export function findElementGeom(m: BuildingModel, id: string): ElementGeom | nul
   if (fm) { const s = m.slabs.find((x) => x.level === Number(fm[1])); if (!s) return null; const b = plateBBox(s.polygon); return { center: { x: (b.minX + b.maxX) / 2, y: s.y + s.thickness / 2, z: (b.minZ + b.maxZ) / 2 }, size: { x: b.maxX - b.minX, y: s.thickness, z: b.maxZ - b.minZ } } }
   const cm = id.match(/^col-(\d+)-(\d+)$/)
   if (cm) { const c = levelColumns(m, Number(cm[1]))[Number(cm[2])]; if (!c) return null; return { center: { x: c.x, y: c.y, z: c.z }, size: { x: c.w, y: c.h, z: c.d } } }
+  const quadGeom = (g: Quad, thick: number): ElementGeom => ({ center: { x: (g.a.x + g.b.x) / 2, y: g.y + g.h / 2, z: (g.a.z + g.b.z) / 2 }, size: { x: dist(g.a, g.b), y: g.h, z: thick }, dir: { x: g.b.x - g.a.x, z: g.b.z - g.a.z } })
   const pm = id.match(/^pan-(\d+)-(\d+)$/)
-  if (pm) { const g = levelPanels(m, Number(pm[1]))[Number(pm[2])]; if (!g) return null; return { center: { x: (g.a.x + g.b.x) / 2, y: g.y + g.h / 2, z: (g.a.z + g.b.z) / 2 }, size: { x: dist(g.a, g.b), y: g.h, z: 0.16 }, dir: { x: g.b.x - g.a.x, z: g.b.z - g.a.z } } }
+  if (pm) { const g = levelPanels(m, Number(pm[1]))[Number(pm[2])]; return g ? quadGeom(g, 0.16) : null }
+  const dm = id.match(/^door-(\d+)-(\d+)$/)
+  if (dm) { const g = levelDoors(m, Number(dm[1]))[Number(dm[2])]; return g ? quadGeom(g, 0.2) : null }
+  const wm = id.match(/^wall-(\d+)-(\d+)$/)
+  if (wm) { const g = levelWalls(m, Number(wm[1]))[Number(wm[2])]; return g ? quadGeom(g, 0.12) : null }
+  const bm = id.match(/^beam-(\d+)-(\d+)$/)
+  if (bm) { const b = levelBeams(m, Number(bm[1]))[Number(bm[2])]; if (!b) return null; return { center: { x: (b.a.x + b.b.x) / 2, y: b.y, z: (b.a.z + b.b.z) / 2 }, size: { x: dist(b.a, b.b), y: b.depth, z: b.width }, dir: { x: b.b.x - b.a.x, z: b.b.z - b.a.z } } }
   return null
 }
 

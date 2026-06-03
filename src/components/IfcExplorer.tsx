@@ -245,7 +245,7 @@ export function IfcExplorer() {
                   </tr>
                 </thead>
                 <tbody>
-                  {activeSchedule.rows.map((r) => {
+                  {activeSchedule.rows.slice(0, 300).map((r) => {
                     const on = r.id === (sel != null ? `ifc-${sel}` : null)
                     return (
                       <tr key={r.id} onClick={() => selectRow(r.id)} className={cn('cursor-pointer border-b border-edge/30 transition-colors', on ? 'bg-amber-500/10' : 'hover:bg-elevated/40')}>
@@ -253,6 +253,9 @@ export function IfcExplorer() {
                       </tr>
                     )
                   })}
+                  {activeSchedule.rows.length > 300 && (
+                    <tr><td colSpan={activeSchedule.columns.length} className="px-3 py-2 text-center text-[11px] text-slate-500">Showing first 300 of {formatNumber(activeSchedule.rows.length)} — export CSV for the full schedule.</td></tr>
+                  )}
                 </tbody>
                 <tfoot>
                   <tr className="border-t border-edge/60 text-sm font-semibold text-slate-200">

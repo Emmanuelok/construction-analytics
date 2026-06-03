@@ -57,6 +57,18 @@ export function FloorPlan({ plan, selected, onSelect, height = 320 }: {
           )
         })}
       </g>
+      {/* entrance doors */}
+      <g>
+        {plan.doors.map((p) => {
+          const on = selected === p.id
+          return (
+            <g key={p.id} className="cursor-pointer" onClick={() => onSelect(p.id)}>
+              <line x1={toX(p.a.x)} y1={toY(p.a.z)} x2={toX(p.b.x)} y2={toY(p.b.z)} stroke="transparent" strokeWidth={12} vectorEffect="non-scaling-stroke" />
+              <line x1={toX(p.a.x)} y1={toY(p.a.z)} x2={toX(p.b.x)} y2={toY(p.b.z)} stroke={on ? '#fbbf24' : '#34d399'} strokeWidth={on ? 5 : 4} vectorEffect="non-scaling-stroke" strokeLinecap="round" />
+            </g>
+          )
+        })}
+      </g>
       {/* structural columns */}
       <g>
         {plan.columns.map((c) => {
