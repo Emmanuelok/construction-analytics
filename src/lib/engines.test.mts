@@ -23,6 +23,7 @@ import { parseMentions, makeComment, threadFor, addComment, removeComment, toggl
 import { toPublic, parseListQuery, listDatasets, findDataset, generateApiKey, isValidKeyFormat, extractApiKey, ok as apiOk, err as apiErr, type CatalogLike, type PublicDataset } from './apikit.ts'
 import { mentionNotifications, shareNotifications, alertNotifications, buildFeed, unreadCount, isUnread, timeAgo, parseReadIds, subjectName, type Notification } from './notifications.ts'
 import { buildMassing, massingSchedule, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
+import { buildBuilding } from './building.ts'
 import { unitShape, holeFor, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, SHAPE_KINDS } from './shapes.ts'
 import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, type SelectedElement } from './ifc-model.ts'
 import { extractGeometry } from './ifc-geometry.ts'
@@ -739,6 +740,20 @@ section('massing')
   ok('ROM cost = GFA × rate', near(perf.romCost, 100000 * 2800, 5000))
   ok('occupancy + parking from yields', perf.occupancy === Math.round(perf.netArea / 12) && perf.parkingStalls === Math.round((perf.grossFloorArea / 1000) * 3))
   ok('a flatter building has more skin per volume → higher form factor', massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 2, shape: 'rect' })).formFactor > massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 20, shape: 'rect' })).formFactor)
+}
+
+// ── building (componentized building from the massing) ──────────────────────────
+section('building')
+{
+  const b = buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 10, shape: 'rect' }))
+  ok('one slab per storey + a roof', b.slabs.length === 10 && b.counts.slabs === 10 && b.roof !== null)
+  ok('a glazed façade panel per edge per floor (rect = 4×10)', b.glazing.length === 40 && b.counts.glazingPanels === 40)
+  ok('places a perimeter column grid (multiple of storeys, >0)', b.columns.length > 0 && b.columns.length % 10 === 0)
+  ok('columns span a storey height each', b.columns.every((c) => c.h > 0 && c.w > 0 && c.d > 0))
+  ok('a central core spanning full height by default', b.core !== null && Math.abs(b.core!.h - b.totalHeight) < 1e-9)
+  ok('cylinder footprint → far more façade panels than a box', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 10, shape: 'cylinder' })).glazing.length === 480)
+  ok('taller building → more columns', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 20, shape: 'rect' })).columns.length > b.columns.length)
+  ok('coreRatio 0 omits the core', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 5, shape: 'rect' }), { coreRatio: 0 }).core === null)
 }
 
 // ── model-stats (uploaded mesh-model import) ────────────────────────────────────

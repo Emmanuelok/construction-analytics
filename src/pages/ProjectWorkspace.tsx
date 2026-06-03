@@ -20,7 +20,9 @@ import {
 import { PageHeader, Card, CardHeader, StatTile, Badge } from '@/components/ui'
 import { RadarViz } from '@/components/charts'
 const BuildingViewer = lazy(() => import('@/components/BuildingViewer').then((m) => ({ default: m.BuildingViewer })))
+const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
 import { COLOR_MODES, SHAPE_KINDS, buildMassing, massingSchedule, type ColorMode, type ShapeKind } from '@/lib/massing'
+import { buildBuilding } from '@/lib/building'
 import { unitShape } from '@/lib/shapes'
 import { type Pt } from '@/lib/zoning'
 import { PolygonEditor } from '@/components/PolygonEditor'
@@ -85,6 +87,8 @@ export default function ProjectWorkspace() {
   const reset = () => { setVitals(toVitals(baseProject)); setEdited(false) }
 
   const [colorMode, setColorMode] = useState<ColorMode>('progress')
+  const [viewMode, setViewMode] = useState<'building' | 'massing'>('building')
+  const [hidden3d, setHidden3d] = useState<{ glazing?: boolean; structure?: boolean; slabs?: boolean }>({})
   const [selectedFloor, setSelectedFloor] = useState<number | null>(null)
   // massing form — real shapes + vertical articulation, not just a square stack
   const [shape, setShape] = useState<ShapeKind>('rect')
@@ -103,6 +107,7 @@ export default function ProjectWorkspace() {
 
   const massingInput = { gfa: vitals.gfa, progress: vitals.progress, shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist }
   const massing = useMemo(() => buildMassing(massingInput), [vitals.gfa, vitals.progress, shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist])
+  const building = useMemo(() => buildBuilding(massing, { coreRatio: 0.16 }), [massing])
   const sched = useMemo(() => massingSchedule(massing, { storeyHeight, slabThickness, wwr, costPerM2 }), [massing, storeyHeight, slabThickness, wwr, costPerM2])
   const schedCsv = () => {
     const metrics = tableToCsv({
@@ -238,24 +243,37 @@ export default function ProjectWorkspace() {
           icon={Boxes}
           accent={ACCENT_NAME}
           title="3D building model"
-          subtitle="Orbit · scroll to zoom · click a floor. Colour shows the selected analytics layer; in 4D mode, solid floors are built and ghosted floors are planned."
+          subtitle="A real building — floor slabs, a column grid, a glass curtain-wall façade and a core — generated from the project's GFA, storeys & form. Toggle trades, or switch to the analytics Massing view (4D progress, risk, carbon…)."
           action={
-            <div className="flex flex-wrap gap-1.5">
-              {COLOR_MODES.map((cm) => (
-                <button
-                  key={cm.id}
-                  onClick={() => setColorMode(cm.id)}
-                  className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', colorMode === cm.id ? 'bg-blue-500/15 text-blue-200 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50 hover:text-slate-200')}
-                >
-                  {cm.label}
-                </button>
-              ))}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex overflow-hidden rounded-lg ring-1 ring-inset ring-edge/60">
+                {(['building', 'massing'] as const).map((v) => (
+                  <button key={v} onClick={() => setViewMode(v)} className={cn('px-2.5 py-1 text-xs font-medium transition-colors', viewMode === v ? 'bg-blue-500/20 text-blue-100' : 'text-slate-400 hover:bg-elevated/50 hover:text-slate-200')}>
+                    {v === 'building' ? 'Building' : 'Massing'}
+                  </button>
+                ))}
+              </div>
+              {viewMode === 'massing' ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {COLOR_MODES.map((cm) => (
+                    <button key={cm.id} onClick={() => setColorMode(cm.id)} className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', colorMode === cm.id ? 'bg-blue-500/15 text-blue-200 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50 hover:text-slate-200')}>{cm.label}</button>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {([['glazing', 'Façade'], ['structure', 'Structure'], ['slabs', 'Slabs']] as const).map(([k, label]) => (
+                    <button key={k} onClick={() => setHidden3d((h) => ({ ...h, [k]: !h[k] }))} aria-pressed={!hidden3d[k]} className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', hidden3d[k] ? 'text-slate-500 ring-edge/60' : 'bg-blue-500/15 text-blue-200 ring-blue-500/40')}>{label}</button>
+                  ))}
+                </div>
+              )}
             </div>
           }
         />
         <div className="grid gap-0 border-t border-edge/50 lg:grid-cols-[1.6fr_1fr]">
           <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-            <BuildingViewer input={massingInput} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />
+            {viewMode === 'building'
+              ? <ComponentBuildingViewer model={building} hidden={hidden3d} height={460} />
+              : <BuildingViewer input={massingInput} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />}
           </Suspense>
           <div className="flex flex-col gap-3 border-t border-edge/50 p-4 lg:border-l lg:border-t-0">
             <div>
