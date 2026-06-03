@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Building2 } from 'lucide-react'
-import type { BuildingModel, Plate } from '@/lib/building'
+import type { BuildingModel, Plate, Quad, Beam } from '@/lib/building'
 import { sunDirection } from '@/lib/sun'
 import { findElementGeom } from '@/lib/building-explorer'
 
@@ -29,7 +29,7 @@ export function ComponentBuildingViewer({
   height = 460,
 }: {
   model: BuildingModel
-  hidden?: { glazing?: boolean; structure?: boolean; slabs?: boolean }
+  hidden?: { glazing?: boolean; structure?: boolean; slabs?: boolean; facade?: boolean }
   sun?: { azimuth: number; altitude: number }
   shadows?: boolean
   isolateLevel?: number | null
@@ -45,7 +45,7 @@ export function ComponentBuildingViewer({
   const rebuildRef = useRef<(() => void) | null>(null)
   const sunFnRef = useRef<(() => void) | null>(null)
   const highlightRef = useRef<(() => void) | null>(null)
-  useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs, isolateLevel])
+  useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs, hidden.facade, isolateLevel])
   useEffect(() => { sunFnRef.current?.() }, [sun?.azimuth, sun?.altitude, shadows])
   useEffect(() => { highlightRef.current?.() }, [selected, model])
 
@@ -86,8 +86,12 @@ export function ComponentBuildingViewer({
 
     const slabMat = new THREE.MeshStandardMaterial({ color: '#b8c2d0', roughness: 0.85, metalness: 0.05 })
     const colMat = new THREE.MeshStandardMaterial({ color: '#64748b', roughness: 0.6, metalness: 0.15 })
+    const beamMat = new THREE.MeshStandardMaterial({ color: '#566173', roughness: 0.5, metalness: 0.25 })
     const coreMat = new THREE.MeshStandardMaterial({ color: '#475569', roughness: 0.8 })
-    const glassMat = new THREE.MeshStandardMaterial({ color: '#7dd3fc', transparent: true, opacity: 0.24, roughness: 0.08, metalness: 0.4, side: THREE.DoubleSide, depthWrite: false })
+    const wallMat = new THREE.MeshStandardMaterial({ color: '#9aa7b8', roughness: 0.9, metalness: 0.04, side: THREE.DoubleSide })
+    const glassMat = new THREE.MeshStandardMaterial({ color: '#7dd3fc', transparent: true, opacity: 0.32, roughness: 0.06, metalness: 0.5, side: THREE.DoubleSide, depthWrite: false })
+    const doorMat = new THREE.MeshStandardMaterial({ color: '#1f2a3a', transparent: true, opacity: 0.78, roughness: 0.2, metalness: 0.4, side: THREE.DoubleSide })
+    const mullionMat = new THREE.MeshStandardMaterial({ color: '#2b3647', roughness: 0.4, metalness: 0.5 })
     const unitBox = new THREE.BoxGeometry(1, 1, 1)
     const unitPlane = new THREE.PlaneGeometry(1, 1)
 
@@ -168,60 +172,80 @@ export function ComponentBuildingViewer({
     }
     sunFnRef.current = applySun
 
+    // per-level stable ids (match building-explorer) + instancing helpers
+    const idsFor = <T extends { level?: number }>(arr: T[], prefix: string) => { const c: Record<number, number> = {}; return arr.map((x) => { const lv = x.level ?? 0; const i = c[lv] ?? 0; c[lv] = i + 1; return `${prefix}-${lv}-${i}` }) }
+    const up = new THREE.Vector3(0, 1, 0)
+    const planeInst = (items: { g: Quad; id: string }[], mat: THREE.Material, o: { shadow?: boolean; outset?: number } = {}) => {
+      if (!items.length) return
+      const inst = new THREE.InstancedMesh(unitPlane, mat, items.length)
+      if (o.shadow !== false) { inst.castShadow = true; inst.receiveShadow = true }
+      const m4 = new THREE.Matrix4(), basis = new THREE.Matrix4(), q = new THREE.Quaternion(), ex = new THREE.Vector3(), ez = new THREE.Vector3(), pos = new THREE.Vector3(), scl = new THREE.Vector3()
+      const d = o.outset ?? 0
+      items.forEach(({ g }, i) => {
+        ex.set(g.b.x - g.a.x, 0, g.b.z - g.a.z); const L = ex.length() || 1; ex.normalize(); ez.crossVectors(ex, up).normalize()
+        q.setFromRotationMatrix(basis.makeBasis(ex, up, ez))
+        m4.compose(pos.set((g.a.x + g.b.x) / 2 + ez.x * d, g.y + g.h / 2, (g.a.z + g.b.z) / 2 + ez.z * d), q, scl.set(L, g.h, 1))
+        inst.setMatrixAt(i, m4)
+      })
+      inst.instanceMatrix.needsUpdate = true; inst.userData.ids = items.map((x) => x.id); group.add(inst); objects.push(inst)
+    }
+    const boxInst = (items: { c: { x: number; y: number; z: number; w: number; h: number; d: number }; id?: string }[], mat: THREE.Material) => {
+      if (!items.length) return
+      const inst = new THREE.InstancedMesh(unitBox, mat, items.length)
+      inst.castShadow = true; inst.receiveShadow = true
+      const m4 = new THREE.Matrix4(), iq = new THREE.Quaternion(), pos = new THREE.Vector3(), scl = new THREE.Vector3()
+      items.forEach(({ c }, i) => { m4.compose(pos.set(c.x, c.y, c.z), iq, scl.set(c.w, c.h, c.d)); inst.setMatrixAt(i, m4) })
+      inst.instanceMatrix.needsUpdate = true; if (items[0].id !== undefined) inst.userData.ids = items.map((x) => x.id); group.add(inst); objects.push(inst)
+    }
+    const beamInst = (items: { b: Beam; id: string }[], mat: THREE.Material) => {
+      if (!items.length) return
+      const inst = new THREE.InstancedMesh(unitBox, mat, items.length)
+      inst.castShadow = true; inst.receiveShadow = true
+      const m4 = new THREE.Matrix4(), basis = new THREE.Matrix4(), q = new THREE.Quaternion(), ex = new THREE.Vector3(), ez = new THREE.Vector3(), pos = new THREE.Vector3(), scl = new THREE.Vector3()
+      items.forEach(({ b }, i) => {
+        ex.set(b.b.x - b.a.x, 0, b.b.z - b.a.z); const L = ex.length() || 1; ex.normalize(); ez.crossVectors(ex, up).normalize()
+        q.setFromRotationMatrix(basis.makeBasis(ex, up, ez))
+        m4.compose(pos.set((b.a.x + b.b.x) / 2, b.y, (b.a.z + b.b.z) / 2), q, scl.set(L, b.depth, b.width))
+        inst.setMatrixAt(i, m4)
+      })
+      inst.instanceMatrix.needsUpdate = true; inst.userData.ids = items.map((x) => x.id); group.add(inst); objects.push(inst)
+    }
+
     const build = () => {
       clear()
       const { model: m, hidden: h, isolateLevel: iso } = propsRef.current
       const storeys = m.counts.storeys
       const isolating = iso != null
-      const showFloor = (lvl?: number) => !isolating || lvl === iso
-      // precompute stable per-level element ids (match building-explorer)
-      const colCount: Record<number, number> = {}
-      const colIds = m.columns.map((c) => { const lv = c.level ?? 0; const i = colCount[lv] ?? 0; colCount[lv] = i + 1; return `col-${lv}-${i}` })
-      const panCount: Record<number, number> = {}
-      const panIds = m.glazing.map((g) => { const lv = g.level ?? 0; const i = panCount[lv] ?? 0; panCount[lv] = i + 1; return `pan-${lv}-${i}` })
+      const show = (lvl?: number) => !isolating || lvl === iso
+      const colIds = idsFor(m.columns, 'col'), panIds = idsFor(m.glazing, 'pan'), wallIds = idsFor(m.walls, 'wall'), doorIds = idsFor(m.doors, 'door'), beamIds = idsFor(m.beams, 'beam')
 
       if (!h.slabs) {
-        for (const s of m.slabs) if (showFloor(s.level)) plate(s, slabMat, `floor-${s.level ?? 0}`)
+        for (const s of m.slabs) if (show(s.level)) plate(s, slabMat, `floor-${s.level ?? 0}`)
         if (m.roof && (!isolating || iso >= storeys)) plate(m.roof, slabMat, 'roof')
       }
       if (!h.structure) {
-        const cols = m.columns.map((c, i) => ({ c, id: colIds[i] })).filter(({ c }) => showFloor(c.level))
-        if (cols.length) {
-          const inst = new THREE.InstancedMesh(unitBox, colMat, cols.length)
-          inst.castShadow = true; inst.receiveShadow = true
-          const mat = new THREE.Matrix4()
-          cols.forEach(({ c }, i) => { mat.compose(new THREE.Vector3(c.x, c.y, c.z), new THREE.Quaternion(), new THREE.Vector3(c.w, c.h, c.d)); inst.setMatrixAt(i, mat) })
-          inst.instanceMatrix.needsUpdate = true; inst.userData.ids = cols.map(({ id }) => id); group.add(inst); objects.push(inst)
-        }
+        boxInst(m.columns.map((c, i) => ({ c, id: colIds[i] })).filter(({ c }) => show(c.level)), colMat)
+        beamInst(m.beams.map((b, i) => ({ b, id: beamIds[i] })).filter(({ b }) => show(b.level)), beamMat)
         if (m.core && !(isolating && iso >= storeys)) {
-          // when isolating a storey, show just that storey's slice of the core
           let cy = m.core.y, ch = m.core.h
           if (isolating) { const sceneSh = m.totalHeight / Math.max(1, storeys); cy = iso * sceneSh + sceneSh / 2; ch = sceneSh * 0.92 }
           const cm = new THREE.Mesh(unitBox, coreMat); cm.scale.set(m.core.w, ch, m.core.d); cm.position.set(m.core.x, cy, m.core.z); cm.castShadow = true; cm.receiveShadow = true; cm.userData.id = 'core'; group.add(cm); objects.push(cm)
         }
       }
+      if (!h.facade) {
+        planeInst(m.walls.map((g, i) => ({ g, id: wallIds[i] })).filter(({ g }) => show(g.level)), wallMat)
+        boxInst(m.mullions.filter((c) => show(c.level)).map((c) => ({ c })), mullionMat) // framing — visual only
+      }
       if (!h.glazing) {
-        const pans = m.glazing.map((g, i) => ({ g, id: panIds[i] })).filter(({ g }) => showFloor(g.level))
-        if (pans.length) {
-          const inst = new THREE.InstancedMesh(unitPlane, glassMat, pans.length)
-          const mat = new THREE.Matrix4(); const q = new THREE.Quaternion(); const up = new THREE.Vector3(0, 1, 0)
-          const ex = new THREE.Vector3(), ez = new THREE.Vector3()
-          pans.forEach(({ g }, i) => {
-            ex.set(g.b.x - g.a.x, 0, g.b.z - g.a.z); const L = ex.length() || 1; ex.normalize()
-            ez.crossVectors(ex, up).normalize()
-            q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(ex, up, ez))
-            mat.compose(new THREE.Vector3((g.a.x + g.b.x) / 2, g.y + g.h / 2, (g.a.z + g.b.z) / 2), q, new THREE.Vector3(L, g.h, 1))
-            inst.setMatrixAt(i, mat)
-          })
-          inst.instanceMatrix.needsUpdate = true; inst.userData.ids = pans.map(({ id }) => id); group.add(inst); objects.push(inst)
-        }
+        planeInst(m.glazing.map((g, i) => ({ g, id: panIds[i] })).filter(({ g }) => show(g.level)), glassMat, { shadow: false, outset: 0.02 })
+        planeInst(m.doors.map((g, i) => ({ g, id: doorIds[i] })).filter(({ g }) => show(g.level)), doorMat, { outset: 0.02 })
       }
       const span = Math.max(m.totalHeight, m.footprint * 1.5, 8)
       if (isolating && iso < storeys) { const sceneSh = m.totalHeight / Math.max(1, storeys); orbit.target.set(0, iso * sceneSh + sceneSh / 2, 0); orbit.radius = Math.max(m.footprint * 1.6, 10) }
       else { orbit.target.set(0, m.totalHeight / 2, 0); orbit.radius = span * 1.7 }
       scene.fog = new THREE.Fog('#0a0f1c', orbit.radius * 0.9, orbit.radius * 3.2)
       applyCamera(); applySun(); applyHighlight()
-      ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, glazing: m.counts.glazingPanels, slabs: m.counts.slabs }
+      ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, windows: m.counts.windows, glazing: m.counts.windows, beams: m.counts.beams, doors: m.counts.doors, slabs: m.counts.slabs }
     }
     rebuildRef.current = build
 
@@ -280,7 +304,7 @@ export function ComponentBuildingViewer({
     return () => {
       cancelAnimationFrame(raf); ro.disconnect()
       el.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); mount.removeEventListener('keydown', onKey)
-      clear(); unitBox.dispose(); unitPlane.dispose(); [slabMat, colMat, coreMat, glassMat].forEach((m) => m.dispose())
+      clear(); unitBox.dispose(); unitPlane.dispose(); [slabMat, colMat, beamMat, coreMat, wallMat, glassMat, doorMat, mullionMat].forEach((m) => m.dispose())
       hlBox.dispose(); hlEdgesGeo.dispose(); hlFillMat.dispose(); hlLineMat.dispose()
       ground.geometry.dispose(); (ground.material as THREE.Material).dispose()
       renderer.dispose(); if (el.parentNode === mount) mount.removeChild(el)
@@ -292,7 +316,7 @@ export function ComponentBuildingViewer({
     return (
       <div style={{ height }} className="flex w-full flex-col items-center justify-center gap-2 rounded-xl bg-base/60 p-4 text-center" role="img" aria-label="Building model (3D unavailable)">
         <Building2 className="h-7 w-7 text-slate-600" />
-        <p className="text-sm text-slate-300">{model.counts.storeys} storeys · {model.counts.columns} columns · {model.counts.glazingPanels} façade panels</p>
+        <p className="text-sm text-slate-300">{model.counts.storeys} storeys · {model.counts.columns} columns · {model.counts.windows} windows · {model.counts.beams} beams</p>
         <p className="text-[11px] text-slate-500">3D needs WebGL — component counts are computed from the model.</p>
       </div>
     )

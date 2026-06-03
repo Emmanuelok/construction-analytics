@@ -97,7 +97,9 @@ export default function ProjectWorkspace() {
 
   const [colorMode, setColorMode] = useState<ColorMode>('progress')
   const [viewMode, setViewMode] = useState<'building' | 'massing'>('building')
-  const [hidden3d, setHidden3d] = useState<{ glazing?: boolean; structure?: boolean; slabs?: boolean }>({})
+  const [hidden3d, setHidden3d] = useState<{ glazing?: boolean; structure?: boolean; slabs?: boolean; facade?: boolean }>({})
+  const [bayWidth, setBayWidth] = useState(3.4)
+  const [mullions, setMullions] = useState(true)
   const [selectedFloor, setSelectedFloor] = useState<number | null>(null)
   // sun & shadow study — real solar position from latitude/date/time
   const [sunLat, setSunLat] = useState(40)
@@ -121,7 +123,7 @@ export default function ProjectWorkspace() {
 
   const massingInput = { gfa: vitals.gfa, progress: vitals.progress, shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist }
   const massing = useMemo(() => buildMassing(massingInput), [vitals.gfa, vitals.progress, shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist])
-  const building = useMemo(() => buildBuilding(massing, { coreRatio: 0.16 }), [massing])
+  const building = useMemo(() => buildBuilding(massing, { coreRatio: 0.16, wwr, bayWidth, mullions }), [massing, wwr, bayWidth, mullions])
   const sun = useMemo(() => sunPosition(momentOf(sunMonth, sunHour), sunLat, 0), [sunMonth, sunHour, sunLat])
   const sched = useMemo(() => massingSchedule(massing, { storeyHeight, slabThickness, wwr, costPerM2 }), [massing, storeyHeight, slabThickness, wwr, costPerM2])
   const schedCsv = () => {
@@ -276,7 +278,7 @@ export default function ProjectWorkspace() {
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
-                  {([['glazing', 'Façade'], ['structure', 'Structure'], ['slabs', 'Slabs']] as const).map(([k, label]) => (
+                  {([['structure', 'Structure'], ['facade', 'Walls'], ['glazing', 'Windows'], ['slabs', 'Slabs']] as const).map(([k, label]) => (
                     <button key={k} onClick={() => setHidden3d((h) => ({ ...h, [k]: !h[k] }))} aria-pressed={!hidden3d[k]} className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', hidden3d[k] ? 'text-slate-500 ring-edge/60' : 'bg-blue-500/15 text-blue-200 ring-blue-500/40')}>{label}</button>
                   ))}
                 </div>
@@ -319,6 +321,18 @@ export default function ProjectWorkspace() {
               </div>
             )}
             <Slider label="Twist / floor" value={twist} min={0} max={8} step={0.5} onChange={setTwist} fmt={(v) => `${v}°`} />
+            {viewMode === 'building' && (
+              <div className="rounded-lg border border-blue-500/20 bg-blue-500/[0.05] p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-[11px] font-medium uppercase tracking-wide text-blue-300/90">Façade &amp; frame</div>
+                  <button onClick={() => setMullions((v) => !v)} aria-pressed={mullions} className={cn('rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset transition-colors', mullions ? 'bg-blue-500/20 text-blue-100 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:text-slate-200')}>Mullions {mullions ? 'on' : 'off'}</button>
+                </div>
+                <div className="space-y-2">
+                  <Slider label="Window-to-wall" value={wwr} min={0.2} max={0.85} step={0.05} onChange={setWwr} fmt={(v) => `${Math.round(v * 100)}%`} />
+                  <Slider label="Window bay" value={bayWidth} min={1.5} max={9} step={0.1} onChange={setBayWidth} fmt={(v) => `${v.toFixed(1)} m`} />
+                </div>
+              </div>
+            )}
             {viewMode === 'building' && (
               <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] p-3">
                 <div className="mb-2 flex items-center justify-between">

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, PanelsTopLeft } from 'lucide-react'
+import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge, Tabs } from '@/components/ui'
 import { ScrollableTable } from '@/components/ScrollableTable'
 const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
@@ -15,7 +15,8 @@ import { formatNumber } from '@/lib/format'
 import { downloadText, slug } from '@/lib/download'
 
 const SEL_KEY = 'aec-active-project'
-const CAT_ICON: Record<string, typeof Columns3> = { Floor: SquareStack, Column: Columns3, 'Curtain Panel': PanelsTopLeft, Core: BoxIcon, Roof: SquareStack }
+const ROW_CAP = 300 // cap rendered schedule rows (export covers all)
+const CAT_ICON: Record<string, typeof Columns3> = { Floor: SquareStack, Column: Columns3, Beam: Rows3, Window: Frame, Door: DoorOpen, Wall: Square, Core: BoxIcon, Roof: SquareStack }
 
 const fmtCell = (v: number | string) => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v)
 const csvCell = (v: number | string) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
@@ -43,9 +44,12 @@ export default function BuildingExplorer() {
   const [isolate, setIsolate] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [schedTab, setSchedTab] = useState('Floor')
-  const [hidden, setHidden] = useState<{ glazing?: boolean; structure?: boolean; slabs?: boolean }>({})
+  const [hidden, setHidden] = useState<{ glazing?: boolean; structure?: boolean; slabs?: boolean; facade?: boolean }>({})
+  const [wwr, setWwr] = useState(0.55)
+  const [bayWidth, setBayWidth] = useState(3.4)
+  const [mullions, setMullions] = useState(true)
 
-  const model = useMemo(() => buildBuilding(buildMassing({ gfa: project.gfa, progress: 100, storeys, shape: shape === 'custom' ? 'rect' : shape, aspect }), { coreRatio: 0.16 }), [project.gfa, storeys, shape, aspect])
+  const model = useMemo(() => buildBuilding(buildMassing({ gfa: project.gfa, progress: 100, storeys, shape: shape === 'custom' ? 'rect' : shape, aspect }), { coreRatio: 0.16, wwr, bayWidth, mullions }), [project.gfa, storeys, shape, aspect, wwr, bayWidth, mullions])
   const ex = useMemo(() => explodeBuilding(model, { storeyHeight, slabThickness, columnSection }), [model, storeyHeight, slabThickness, columnSection])
   const plan = useMemo(() => planForLevel(model, activeLevel), [model, activeLevel])
   const selectedEl: BuildingElement | null = selectedId ? ex.byId[selectedId] ?? null : null
@@ -97,10 +101,10 @@ export default function BuildingExplorer() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatTile label="Storeys" value={String(ex.summary.storeys)} accent="blue" />
         <StatTile label="Elements" value={formatNumber(ex.summary.elements)} accent="cyan" />
-        <StatTile label="Columns" value={formatNumber(ex.summary.columns)} accent="violet" />
-        <StatTile label="Curtain panels" value={formatNumber(ex.summary.panels)} accent="sky" />
+        <StatTile label="Columns + beams" value={`${formatNumber(ex.summary.columns)} · ${formatNumber(ex.summary.beams)}`} accent="violet" />
+        <StatTile label="Windows + doors" value={`${formatNumber(ex.summary.windows)} · ${formatNumber(ex.summary.doors)}`} accent="sky" />
         <StatTile label="Gross floor area" value={`${formatNumber(ex.summary.gfa)} m²`} accent="emerald" />
-        <StatTile label="Concrete (slab+col)" value={`${formatNumber(ex.summary.concreteVolume)} m³`} accent="amber" />
+        <StatTile label="Concrete" value={`${formatNumber(ex.summary.concreteVolume)} m³`} accent="amber" />
       </div>
 
       {/* model parameters */}
@@ -120,6 +124,11 @@ export default function BuildingExplorer() {
           <Field label="Storey height" unit="m" value={storeyHeight} min={2.5} max={6} step={0.1} onChange={setStoreyHeight} />
           <Field label="Column section" unit="m" value={columnSection} min={0.2} max={1.5} step={0.05} onChange={setColumnSection} />
           <Field label="Slab thickness" unit="m" value={slabThickness} min={0.1} max={0.6} step={0.05} onChange={setSlabThickness} />
+          <Field label="Window-to-wall" value={wwr} min={0.2} max={0.85} step={0.05} onChange={setWwr} fmt={(v) => `${Math.round(v * 100)}%`} />
+          <Field label="Window bay" unit="m" value={bayWidth} min={1.5} max={9} step={0.1} onChange={setBayWidth} />
+          <label className="flex items-end pb-1">
+            <button onClick={() => setMullions((v) => !v)} aria-pressed={mullions} className={cn('inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium ring-1 ring-inset transition-colors', mullions ? 'bg-blue-500/15 text-blue-200 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50')}>Mullions {mullions ? 'on' : 'off'}</button>
+          </label>
         </div>
       </Card>
 
@@ -133,7 +142,7 @@ export default function BuildingExplorer() {
                 {isolate && <Badge variant="cyan">Isolated · {activeLevelInfo?.name ?? `Level ${activeLevel}`}</Badge>}
                 <button onClick={() => setIsolate(false)} disabled={!isolate} className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', isolate ? 'text-slate-300 ring-edge/60 hover:bg-elevated/50' : 'cursor-default text-slate-600 ring-edge/40')}>Whole building</button>
                 <div className="flex flex-wrap gap-1.5">
-                  {([['glazing', 'Façade'], ['structure', 'Structure'], ['slabs', 'Slabs']] as const).map(([k, label]) => (
+                  {([['structure', 'Structure'], ['facade', 'Walls'], ['glazing', 'Windows'], ['slabs', 'Slabs']] as const).map(([k, label]) => (
                     <button key={k} onClick={() => setHidden((h) => ({ ...h, [k]: !h[k] }))} aria-pressed={!hidden[k]} className={cn('rounded-lg px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors', hidden[k] ? 'text-slate-500 ring-edge/60' : 'bg-blue-500/15 text-blue-200 ring-blue-500/40')}>{label}</button>
                   ))}
                 </div>
@@ -180,7 +189,8 @@ export default function BuildingExplorer() {
             <FloorPlan plan={plan} selected={selectedId} onSelect={selectEl} height={340} />
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" /> Column</span>
-              <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-sky-400" /> Curtain panel</span>
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-sky-400" /> Window</span>
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-emerald-400" /> Door</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 border border-slate-500 bg-slate-600/40" /> Core</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-400" /> Selected</span>
             </div>
@@ -236,7 +246,7 @@ export default function BuildingExplorer() {
                 </tr>
               </thead>
               <tbody>
-                {activeSchedule.rows.map((r) => {
+                {activeSchedule.rows.slice(0, ROW_CAP).map((r) => {
                   const on = r.id === selectedId
                   return (
                     <tr key={r.id} onClick={() => selectEl(r.id)} className={cn('cursor-pointer border-b border-edge/30 transition-colors', on ? 'bg-amber-500/10' : 'hover:bg-elevated/40')}>
@@ -244,6 +254,9 @@ export default function BuildingExplorer() {
                     </tr>
                   )
                 })}
+                {activeSchedule.rows.length > ROW_CAP && (
+                  <tr><td colSpan={activeSchedule.columns.length} className="px-3 py-2 text-center text-[11px] text-slate-500">Showing first {ROW_CAP} of {formatNumber(activeSchedule.rows.length)} — export CSV for the full schedule.</td></tr>
+                )}
               </tbody>
               <tfoot>
                 <tr className="border-t border-edge/60 text-sm font-semibold text-slate-200">
