@@ -25,7 +25,7 @@ import { mentionNotifications, shareNotifications, alertNotifications, buildFeed
 import { buildMassing, massingSchedule, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
 import { buildBuilding } from './building.ts'
 import { explodeBuilding, planForLevel, findElementGeom, levelColumns, levelPanels } from './building-explorer.ts'
-import { explodeIfc, meshGeom, friendlyType } from './ifc-explorer.ts'
+import { explodeIfc, meshGeom, friendlyType, sliceMeshes, cutHeightFor } from './ifc-explorer.ts'
 import type { IfcGeometryResult, IfcMesh } from './ifc-geometry.ts'
 import { unitShape, holeFor, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, SHAPE_KINDS } from './shapes.ts'
 import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, type SelectedElement } from './ifc-model.ts'
@@ -824,6 +824,14 @@ section('ifc-explorer')
   const res2: IfcGeometryResult = { ...res, meshes: [mesh(10, 'IFCWALL', 100), { ...mesh(30, 'IFCDOOR', 0), storey: undefined }] }
   const ex2 = explodeIfc(res2)
   ok('puts spatially-uncontained elements in an Unassigned bucket', ex2.byExpress[30].level === -1 && ex2.levels.some((l) => l.unassigned))
+  // horizontal section — a real floor plan sliced from the geometry
+  const cube = mesh(10, 'IFCWALL', 100)
+  const segs = sliceMeshes([cube], 0.5)
+  ok('sliceMeshes cuts a cube into plan segments tagged by element', segs.length >= 4 && segs.every((s) => s.expressID === 10))
+  ok('cut segments lie on the cut, within the footprint', segs.every((s) => s.ax >= -1e-6 && s.ax <= 1 + 1e-6 && s.az >= -1e-6 && s.az <= 1 + 1e-6))
+  ok('slice perimeter ≈ 4 for a unit cube', near(segs.reduce((t, s) => t + Math.hypot(s.bx - s.ax, s.bz - s.az), 0), 4, 1e-6))
+  ok('a plane above the geometry yields no segments', sliceMeshes([cube], 2).length === 0)
+  ok('cutHeightFor cuts above the floor (30% up a unit cube)', near(cutHeightFor([cube]), 0.3, 1e-9))
 }
 
 // ── model-stats (uploaded mesh-model import) ────────────────────────────────────

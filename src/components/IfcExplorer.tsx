@@ -8,8 +8,9 @@ import { downloadText, slug } from '@/lib/download'
 import { DISCIPLINE_LABEL, DISCIPLINE_COLOR, type Discipline, type SelectedElement } from '@/lib/ifc-model'
 import { locateWasm } from '@/lib/ifc-wasm-url'
 import { SAMPLE_IFC_GEO } from '@/lib/ifc-sample-geo'
-import { explodeIfc, type IfcExplosion, type IfcSchedule } from '@/lib/ifc-explorer'
+import { explodeIfc, sliceMeshes, cutHeightFor, type IfcExplosion, type IfcSchedule } from '@/lib/ifc-explorer'
 import type { IfcGeometryResult } from '@/lib/ifc-geometry'
+import { IfcPlan } from '@/components/IfcPlan'
 
 const IfcModelViewer = lazy(() => import('@/components/IfcModelViewer').then((m) => ({ default: m.IfcModelViewer })))
 
@@ -73,16 +74,22 @@ export function IfcExplorer() {
   const selectedEl = sel != null ? ex?.byExpress[sel] ?? null : null
   const activeSchedule = ex?.schedules.find((s) => s.category === schedTab) ?? ex?.schedules[0]
 
-  const onViewerSelect = (el: SelectedElement | null) => {
-    if (!el?.expressID || !ex) { setSel(null); return }
-    setSel(el.expressID)
-    const e = ex.byExpress[el.expressID]
+  // a real floor plan: slice the active level's meshes with a horizontal section
+  const slice = useMemo(() => {
+    if (!ex || !res) return []
+    const ids = new Set(ex.elements.filter((e) => e.level === level).map((e) => e.expressID))
+    const ms = ids.size ? res.meshes.filter((m) => ids.has(m.expressID)) : res.meshes
+    return ms.length ? sliceMeshes(ms, cutHeightFor(ms)) : []
+  }, [ex, res, level])
+
+  const selectExpress = (id: number | null) => {
+    if (id == null || !ex) { setSel(null); return }
+    setSel(id)
+    const e = ex.byExpress[id]
     if (e) { setSchedTab(e.category); if (e.level >= 0) setLevel(e.level) }
   }
-  const selectRow = (id: string) => {
-    const e = ex?.elements.find((x) => x.id === id); if (!e) return
-    setSel(e.expressID); setSchedTab(e.category); if (e.level >= 0) setLevel(e.level)
-  }
+  const onViewerSelect = (el: SelectedElement | null) => selectExpress(el?.expressID ?? null)
+  const selectRow = (id: string) => { const e = ex?.elements.find((x) => x.id === id); if (e) selectExpress(e.expressID) }
   const gotoLevel = (i: number) => { setLevel(i); setIsolate(true) }
 
   if (status === 'idle' || (status !== 'ready' && !ex)) {
@@ -184,7 +191,15 @@ export function IfcExplorer() {
         </Card>
       </div>
 
-      {/* inspector + schedules */}
+      {/* floor plan section + inspector */}
+      <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
+      <Card className="overflow-hidden">
+        <CardHeader icon={Table2} accent="teal" title={`Floor plan — ${activeLevel?.name ?? 'level'} (section)`} subtitle="A horizontal section cut through the real geometry at this level. Click a cut element to inspect it." />
+        <div className="border-t border-edge/50 p-4">
+          <IfcPlan segments={slice} selected={sel} onSelect={selectExpress} height={340} />
+          <p className="mt-2 text-[11px] text-slate-500">Sliced ~30% up the level's height — lines are the cut faces of walls, columns & other solids.</p>
+        </div>
+      </Card>
       <Card className="flex flex-col">
         <CardHeader icon={MousePointerClick} accent="violet" title="Element inspector" subtitle="Measured properties of the selected IFC product." />
         <div className="border-t border-edge/50 p-5">
@@ -208,10 +223,11 @@ export function IfcExplorer() {
               <button onClick={() => setSel(null)} className="mt-3 text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline">Clear selection</button>
             </div>
           ) : (
-            <div className="flex items-center justify-center gap-2 py-6 text-center text-sm text-slate-400"><MousePointerClick className="h-5 w-5 text-slate-600" /> Click an element in the 3D model or a schedule row to inspect it.</div>
+            <div className="flex items-center justify-center gap-2 py-6 text-center text-sm text-slate-400"><MousePointerClick className="h-5 w-5 text-slate-600" /> Click an element in the 3D model, the plan, or a schedule row to inspect it.</div>
           )}
         </div>
       </Card>
+      </div>
 
       {activeSchedule && (
         <Card>

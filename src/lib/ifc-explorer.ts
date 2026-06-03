@@ -161,3 +161,53 @@ export function explodeIfc(res: IfcGeometryResult): IfcExplosion {
     },
   }
 }
+
+/* ---- horizontal section (a real floor plan sliced from the geometry) ---- */
+
+export type PlanSegment = { ax: number; az: number; bx: number; bz: number; expressID: number; ifcType: string }
+type SliceMesh = { positions: Float32Array; indices: ArrayLike<number>; matrix: number[]; expressID: number; ifcTypeName: string }
+
+/** Intersect one triangle (world coords) with the horizontal plane y=Y → the cut
+ *  segment in plan (x,z), or null if it doesn't cross. */
+function triSeg(ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number, y: number): [number, number, number, number] | null {
+  const sa = ay - y, sb = by - y, sc = cy - y
+  const pts: [number, number][] = []
+  const edge = (x0: number, z0: number, s0: number, x1: number, z1: number, s1: number) => {
+    if ((s0 > 0 && s1 < 0) || (s0 < 0 && s1 > 0)) { const t = s0 / (s0 - s1); pts.push([x0 + (x1 - x0) * t, z0 + (z1 - z0) * t]) }
+  }
+  edge(ax, az, sa, bx, bz, sb); edge(bx, bz, sb, cx, cz, sc); edge(cx, cz, sc, ax, az, sa)
+  return pts.length === 2 ? [pts[0][0], pts[0][1], pts[1][0], pts[1][1]] : null
+}
+
+/** Slice a set of tessellated meshes with the horizontal plane y=Y, returning the
+ *  cut segments in plan (x = East, z = North) tagged with their IFC product — a real
+ *  floor-plan section through the model. Pure. */
+export function sliceMeshes(meshes: SliceMesh[], y: number): PlanSegment[] {
+  const out: PlanSegment[] = []
+  for (const m of meshes) {
+    const mat = m.matrix, pos = m.positions, idx = m.indices
+    const n = pos.length / 3
+    const wx = new Float64Array(n), wy = new Float64Array(n), wz = new Float64Array(n)
+    for (let i = 0; i < n; i++) {
+      const x = pos[i * 3], yv = pos[i * 3 + 1], z = pos[i * 3 + 2]
+      wx[i] = mat[0] * x + mat[4] * yv + mat[8] * z + mat[12]
+      wy[i] = mat[1] * x + mat[5] * yv + mat[9] * z + mat[13]
+      wz[i] = mat[2] * x + mat[6] * yv + mat[10] * z + mat[14]
+    }
+    const tris = Math.floor(idx.length / 3)
+    for (let t = 0; t < tris; t++) {
+      const a = idx[t * 3], b = idx[t * 3 + 1], c = idx[t * 3 + 2]
+      const s = triSeg(wx[a], wy[a], wz[a], wx[b], wy[b], wz[b], wx[c], wy[c], wz[c], y)
+      if (s) out.push({ ax: s[0], az: s[1], bx: s[2], bz: s[3], expressID: m.expressID, ifcType: m.ifcTypeName })
+    }
+  }
+  return out
+}
+
+/** A sensible plan-cut height for a set of meshes: a fraction up from their lowest
+ *  point (≈ just above the floor, through walls/columns). Pure. */
+export function cutHeightFor(meshes: SliceMesh[], frac = 0.3): number {
+  let min = Infinity, max = -Infinity
+  for (const m of meshes) { const g = meshGeom(m.positions, m.indices, m.matrix); if (g.min[1] < min) min = g.min[1]; if (g.max[1] > max) max = g.max[1] }
+  return min === Infinity ? 0 : min + (max - min) * frac
+}

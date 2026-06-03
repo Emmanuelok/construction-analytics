@@ -54,6 +54,13 @@ try {
   await new Promise((r) => setTimeout(r, 600))
   ok('a level can be isolated', isolated && await page.evaluate(() => /Isolated|Whole building/.test(document.body.innerText)))
 
+  // a real floor plan, sliced from the geometry
+  const planSegs = await page.evaluate(() => { const svg = [...document.querySelectorAll('svg')].find((s) => s.getAttribute('aria-label')?.startsWith('IFC floor plan section')); return svg ? svg.querySelectorAll('line').length : 0 })
+  ok('floor plan section sliced from the geometry renders cut segments', planSegs > 0, { planSegs })
+  await page.evaluate(() => { const svg = [...document.querySelectorAll('svg')].find((s) => s.getAttribute('aria-label')?.startsWith('IFC floor plan section')); svg?.querySelector('line')?.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  await new Promise((r) => setTimeout(r, 400))
+  ok('clicking a plan segment inspects that element', await page.evaluate(() => /Clear selection|IFC type/i.test(document.body.innerText)))
+
   const realErrors = errors.filter((e) => !/404|favicon|tile|wasm|web-ifc|Failed to load resource|ERR_/i.test(e))
   ok('no console errors', realErrors.length === 0, realErrors.slice(0, 5))
 } catch (e) {
