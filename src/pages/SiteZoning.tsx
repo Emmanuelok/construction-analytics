@@ -11,6 +11,8 @@ import {
   buildZoning, rectSite, parseGeoBoundary, scalePolygon, polygonArea, polygonCentroid,
   type Pt, type Zoning,
 } from '@/lib/zoning'
+import { analyzeSite, compass, type LatLng } from '@/lib/geo'
+const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
 const SiteZoningViewer = lazy(() => import('@/components/SiteZoningViewer').then((m) => ({ default: m.SiteZoningViewer })))
 
@@ -40,6 +42,7 @@ export default function SiteZoning() {
   const [skyStep, setSkyStep] = useState(DEFAULTS.skyStep)
   const [geoText, setGeoText] = useState('')
   const [geoError, setGeoError] = useState<string | null>(null)
+  const [anchor, setAnchor] = useState<LatLng>({ lat: 40.7128, lng: -74.006 }) // where to place the parcel on the basemap
   // bumping this remounts the boundary editor so it refits its view after a
   // preset / import / reset; plain drags keep the same key (no jump).
   const [boundaryKey, setBoundaryKey] = useState(0)
@@ -49,6 +52,13 @@ export default function SiteZoning() {
     () => buildZoning({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback, skyBase, skyStep }),
     [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback, skyBase, skyStep],
   )
+  const geo = useMemo(() => analyzeSite(boundary, anchor), [boundary, anchor])
+  const footprintPoly = useMemo(() => {
+    const base = z.buildable.length >= 3 ? z.buildable : boundary
+    const baseArea = polygonArea(base)
+    const k = baseArea > 0 ? Math.sqrt(Math.min(1, z.proposed.footprint / baseArea)) : 0
+    return k > 0 ? scalePolygon(base, k, polygonCentroid(base)) : []
+  }, [z.buildable, z.proposed.footprint, boundary])
 
   const reset = () => {
     applyBoundary(PRESETS[0].pts); setFar(DEFAULTS.far); setHeightLimit(DEFAULTS.heightLimit); setSetback(DEFAULTS.setback)
@@ -185,6 +195,49 @@ export default function SiteZoning() {
         </Card>
       </div>
 
+      {/* actual site on a basemap + geospatial analytics */}
+      <div className="grid gap-4 lg:grid-cols-5">
+        <Card className="lg:col-span-3">
+          <CardHeader icon={MapIcon} accent="emerald" title="Site map" subtitle="The parcel on a satellite/streets basemap — white = boundary, amber = setback, green = proposed footprint. Set the location to place it." />
+          <div className="space-y-3 border-t border-edge/50 p-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="block"><span className="mb-1 block text-xs text-slate-400">Latitude</span><input type="number" step={0.0005} value={anchor.lat} onChange={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v)) setAnchor((a) => ({ ...a, lat: v })) }} className="w-32 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/30" /></label>
+              <label className="block"><span className="mb-1 block text-xs text-slate-400">Longitude</span><input type="number" step={0.0005} value={anchor.lng} onChange={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v)) setAnchor((a) => ({ ...a, lng: v })) }} className="w-32 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/30" /></label>
+              <p className="text-[11px] text-slate-500">Place the parcel at a real address to study context, orientation &amp; neighbours.</p>
+            </div>
+            <Suspense fallback={<div style={{ height: 420 }} className="grid place-items-center text-sm text-slate-500">Loading map…</div>}>
+              <SiteMap anchor={anchor} overlays={[{ points: boundary, color: '#e2e8f0', fill: 0.06 }, ...(z.buildable.length >= 3 ? [{ points: z.buildable, color: '#fbbf24', dashed: true }] : []), ...(footprintPoly.length >= 3 ? [{ points: footprintPoly, color: '#22c55e', fill: 0.5 }] : [])]} height={420} />
+            </Suspense>
+          </div>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <CardHeader icon={Maximize2} accent="teal" title="Geospatial analytics" subtitle="Computed from the boundary" />
+          <div className="space-y-4 border-t border-edge/50 p-5">
+            <div className="grid grid-cols-2 gap-3">
+              <Metric label="Area" value={`${formatNumber(geo.area.m2)} m²`} sub={`${geo.area.ha} ha · ${geo.area.acres} ac`} />
+              <Metric label="Perimeter" value={`${formatNumber(geo.perimeter.m)} m`} sub={`${formatNumber(geo.perimeter.ft)} ft`} />
+              <Metric label="Frontage" value={`${formatNumber(geo.frontage.length)} m`} sub={`${compass(geo.frontage.bearing)} · ${geo.frontage.bearing}°`} />
+              <Metric label="Compactness" value={`${geo.compactness}`} sub="1.0 = circle" />
+              <Metric label="Extent" value={`${geo.bbox.width} × ${geo.bbox.depth} m`} sub="bounding box" />
+              <Metric label="Centroid" value={geo.centroidLatLng ? `${geo.centroidLatLng.lat}` : '—'} sub={geo.centroidLatLng ? `${geo.centroidLatLng.lng}` : 'lat / lng'} />
+            </div>
+            <div>
+              <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">Edges</div>
+              <div className="max-h-40 space-y-1 overflow-auto pr-1">
+                {geo.edges.map((e) => (
+                  <div key={e.index} className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400">Edge {e.index + 1}</span>
+                    <span className="data-mono text-slate-300">{formatNumber(e.length)} m</span>
+                    <span className="data-mono text-slate-400">{compass(e.bearing)} {e.bearing}°</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Card>
+      </div>
+
       {/* tier schedule + data export */}
       <Card>
         <CardHeader
@@ -284,6 +337,16 @@ function PlanDiagram({ z, boundary }: { z: Zoning; boundary: Pt[] }) {
         <text x={12} y={H - 14}>▦ <tspan fill="#fbbf24">Setback</tspan> · <tspan fill={z.compliance.overall ? '#22c55e' : '#ef4444'}>Proposed footprint</tspan></text>
       </g>
     </svg>
+  )
+}
+
+function Metric({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-lg bg-elevated/40 p-2.5">
+      <div className="text-[11px] text-slate-400">{label}</div>
+      <div className="data-mono text-sm font-semibold text-slate-100">{value}</div>
+      {sub && <div className="text-[10px] text-slate-500">{sub}</div>}
+    </div>
   )
 }
 

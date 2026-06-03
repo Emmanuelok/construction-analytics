@@ -29,6 +29,7 @@ import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, ty
 import { extractGeometry } from './ifc-geometry.ts'
 import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
 import { buildZoning, insetPolygon, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
+import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass } from './geo.ts'
 import { slug } from './download.ts'
 import { summarizeModel, sampleObj } from './model-stats.ts'
 import { encodeUrn, decodeUrn, normalizeUrn, translationProgress, bucketKeyFor, objectKeyFor, isTranslatable } from './aps.ts'
@@ -974,6 +975,27 @@ section('zoning')
   const ll = parseGeoBoundary('[[-0.0005,-0.0005],[0.0005,-0.0005],[0.0005,0.0005],[-0.0005,0.0005]]')
   ok('projects a lon/lat ring to metres (~12,300 m²)', !!ll && polygonArea(ll!) > 11000 && polygonArea(ll!) < 13500, ll && polygonArea(ll))
   ok('rejects non-JSON input', parseGeoBoundary('not json') === null)
+}
+
+// ── geo (geospatial site analytics) ─────────────────────────────────────────────
+section('geo')
+{
+  const site = rectSite(40, 30)
+  const a = analyzeSite(site)
+  ok('area in m²/ha/acres/ft²', a.area.m2 === 1200 && near(a.area.ha, 0.12, 1e-6) && near(a.area.acres, 0.2965, 0.001) && near(a.area.ft2, 12917, 5))
+  ok('perimeter m + ft', a.perimeter.m === 140 && near(a.perimeter.ft, 459, 1))
+  ok('one edge per side with length + bearing', a.edges.length === 4 && a.edges[0].length === 40 && a.edges[1].length === 30)
+  ok('bearings: E side 90°, N side 0°', a.edges[0].bearing === 90 && a.edges[1].bearing === 0)
+  ok('frontage = longest edge (40 m)', a.frontage.length === 40)
+  ok('compactness (Polsby–Popper) ≈ 0.77 for a 40×30 rect', near(a.compactness, 0.769, 0.01), a.compactness)
+  ok('bbox = 40 × 30', a.bbox.width === 40 && a.bbox.depth === 30)
+  ok('a square is more compact than a long sliver', analyzeSite(rectSite(35, 35)).compactness > analyzeSite(rectSite(100, 8)).compactness)
+  // projection: local metres → lat/lng about an anchor
+  const anchor = { lat: 40, lng: -74 }
+  ok('toLatLng moves north by z and east by x', (() => { const ll = toLatLng({ x: 0, z: 110540 }, anchor); return near(ll.lat, 41, 1e-3) && near(ll.lng, -74, 1e-6) })())
+  ok('boundaryToLatLng maps every vertex + analyzeSite centroid', boundaryToLatLng(site, anchor).length === 4 && !!analyzeSite(site, anchor).centroidLatLng)
+  ok('compass labels a bearing', compass(90) === 'E' && compass(0) === 'N' && compass(225) === 'SW')
+  ok('toLatLng / fromLatLng round-trip', (() => { const p = { x: 137.4, z: -88.2 }; const back = fromLatLng(toLatLng(p, anchor), anchor); return near(back.x, p.x, 0.5) && near(back.z, p.z, 0.5) })())
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)
