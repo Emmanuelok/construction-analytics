@@ -30,7 +30,7 @@ import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, ty
 import { extractGeometry } from './ifc-geometry.ts'
 import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
 import { buildZoning, insetPolygon, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
-import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass } from './geo.ts'
+import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
 import { summarizeModel, sampleObj } from './model-stats.ts'
@@ -1030,6 +1030,13 @@ section('geo')
   ok('boundaryToLatLng maps every vertex + analyzeSite centroid', boundaryToLatLng(site, anchor).length === 4 && !!analyzeSite(site, anchor).centroidLatLng)
   ok('compass labels a bearing', compass(90) === 'E' && compass(0) === 'N' && compass(225) === 'SW')
   ok('toLatLng / fromLatLng round-trip', (() => { const p = { x: 137.4, z: -88.2 }; const back = fromLatLng(toLatLng(p, anchor), anchor); return near(back.x, p.x, 0.5) && near(back.z, p.z, 0.5) })())
+  // site survey — clickable, georeferenced parcel review
+  const sv = siteSurvey(site, anchor)
+  ok('survey lists every vertex with local metres + lat/lng', sv.vertices.length === 4 && sv.vertices[0].lat !== undefined && sv.vertices[0].lng !== undefined)
+  ok('survey lists every edge with length, bearing & compass + endpoints', sv.edges.length === 4 && sv.edges[0].compass === 'E' && sv.edges[0].from === 'V1' && sv.edges[0].to === 'V2')
+  ok('survey edge wraps the last vertex back to the first', sv.edges[3].to === 'V1')
+  ok('survey carries area, perimeter, frontage compass & georeferenced centroid', sv.area.m2 === 1200 && sv.perimeter.m === 140 && sv.frontage.compass === compass(sv.frontage.bearing) && sv.centroid.lat !== undefined)
+  ok('survey without an anchor omits lat/lng (local-only)', (() => { const s2 = siteSurvey(site); return s2.vertices[0].lat === undefined && s2.centroid.lat === undefined && s2.edges.length === 4 })())
 }
 
 // ── sun (solar position for the building sun/shadow study) ──────────────────────

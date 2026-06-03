@@ -72,3 +72,36 @@ export function analyzeSite(boundary: Pt[], anchor?: LatLng): GeoAnalysis {
 export function compass(deg: number): string {
   return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW', 'N'][Math.round(((deg % 360) / 45))]
 }
+
+/* ---- site survey: clickable, georeferenced coordinate + boundary review ---- */
+
+export type SiteVertex = { index: number; label: string; x: number; z: number; lat?: number; lng?: number }
+export type SiteEdge = { index: number; label: string; from: string; to: string; length: number; bearing: number; compass: string }
+export type SiteSurvey = {
+  vertices: SiteVertex[]
+  edges: SiteEdge[]
+  area: GeoAnalysis['area']
+  perimeter: GeoAnalysis['perimeter']
+  frontage: { length: number; bearing: number; compass: string; index: number }
+  compactness: number
+  bbox: GeoAnalysis['bbox']
+  centroid: { x: number; z: number; lat?: number; lng?: number }
+}
+
+/** A full survey of a parcel: each vertex with local metres + (optionally) lat/lng,
+ *  each edge with length, bearing & compass — the data behind a clickable site plan. */
+export function siteSurvey(boundary: Pt[], anchor?: LatLng): SiteSurvey {
+  const g = analyzeSite(boundary, anchor)
+  const n = boundary.length
+  const vertices: SiteVertex[] = boundary.map((p, i) => {
+    const v: SiteVertex = { index: i, label: `V${i + 1}`, x: r1(p.x), z: r1(p.z) }
+    if (anchor) { const ll = toLatLng(p, anchor); v.lat = ll.lat; v.lng = ll.lng }
+    return v
+  })
+  const edges: SiteEdge[] = g.edges.map((e) => ({ index: e.index, label: `E${e.index + 1}`, from: `V${e.index + 1}`, to: `V${((e.index + 1) % n) + 1}`, length: e.length, bearing: e.bearing, compass: compass(e.bearing) }))
+  const frontIdx = g.edges.reduce((m, e) => (e.length > g.edges[m].length ? e.index : m), 0)
+  const c = polygonCentroid(boundary)
+  const centroid: SiteSurvey['centroid'] = { x: r1(c.x), z: r1(c.z) }
+  if (anchor && g.centroidLatLng) { centroid.lat = g.centroidLatLng.lat; centroid.lng = g.centroidLatLng.lng }
+  return { vertices, edges, area: g.area, perimeter: g.perimeter, frontage: { length: g.frontage.length, bearing: g.frontage.bearing, compass: compass(g.frontage.bearing), index: frontIdx }, compactness: g.compactness, bbox: g.bbox, centroid }
+}

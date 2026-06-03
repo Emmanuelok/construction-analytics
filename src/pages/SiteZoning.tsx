@@ -1,6 +1,7 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson } from 'lucide-react'
-import { PageHeader, StatTile, Card, CardHeader, Badge } from '@/components/ui'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair } from 'lucide-react'
+import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
+import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
 import { PolygonEditor } from '@/components/PolygonEditor'
@@ -11,7 +12,7 @@ import {
   buildZoning, rectSite, parseGeoBoundary, scalePolygon, polygonArea, polygonCentroid,
   type Pt, type Zoning,
 } from '@/lib/zoning'
-import { analyzeSite, compass, type LatLng } from '@/lib/geo'
+import { analyzeSite, siteSurvey, compass, type LatLng, type SiteSurvey } from '@/lib/geo'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
 const SiteZoningViewer = lazy(() => import('@/components/SiteZoningViewer').then((m) => ({ default: m.SiteZoningViewer })))
@@ -53,6 +54,11 @@ export default function SiteZoning() {
     [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback, skyBase, skyStep],
   )
   const geo = useMemo(() => analyzeSite(boundary, anchor), [boundary, anchor])
+  const survey = useMemo(() => siteSurvey(boundary, anchor), [boundary, anchor])
+  const [siteSel, setSiteSel] = useState<string | null>(null)
+  const [surveyTab, setSurveyTab] = useState('vertices')
+  const selVertex = siteSel?.startsWith('v-') ? survey.vertices[Number(siteSel.slice(2))] : undefined
+  const selEdge = siteSel?.startsWith('e-') ? survey.edges[Number(siteSel.slice(2))] : undefined
   const footprintPoly = useMemo(() => {
     const base = z.buildable.length >= 3 ? z.buildable : boundary
     const baseArea = polygonArea(base)
@@ -238,6 +244,111 @@ export default function SiteZoning() {
         </Card>
       </div>
 
+      {/* site survey — clickable parcel coordinates, edges & bearings */}
+      <div className="grid gap-5 lg:grid-cols-5">
+        <Card className="overflow-hidden lg:col-span-3">
+          <CardHeader icon={Crosshair} accent="teal" title="Site survey & coordinates" subtitle="The actual parcel — click a numbered vertex or an edge to read its coordinates, length & bearing. White = boundary · amber dashed = setback · green = proposed footprint." />
+          <div className="border-t border-edge/50 p-4">
+            <SitePlan boundary={boundary} buildable={z.buildable.length >= 3 ? z.buildable : undefined} footprint={footprintPoly.length >= 3 ? footprintPoly : undefined} selected={siteSel} onSelect={setSiteSel} height={360} />
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-sky-400" /> Vertex (V#)</span>
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-slate-200" /> Boundary edge (E#)</span>
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-400" /> Selected</span>
+              {anchor && <span className="ml-auto data-mono text-slate-500">centroid {survey.centroid.lat}, {survey.centroid.lng}</span>}
+            </div>
+          </div>
+        </Card>
+
+        <Card className="flex flex-col lg:col-span-2">
+          <CardHeader icon={MousePointerClick} accent="violet" title="Survey inspector" subtitle="Coordinates & bearing of the selected vertex or edge." />
+          <div className="border-t border-edge/50 p-5">
+            {selVertex ? (
+              <dl className="divide-y divide-edge/40 rounded-lg ring-1 ring-edge/50">
+                <SiteRow k="Vertex" v={selVertex.label} />
+                <SiteRow k="Local E (x)" v={`${selVertex.x} m`} />
+                <SiteRow k="Local N (z)" v={`${selVertex.z} m`} />
+                <SiteRow k="Latitude" v={selVertex.lat !== undefined ? `${selVertex.lat}°` : '— set location'} />
+                <SiteRow k="Longitude" v={selVertex.lng !== undefined ? `${selVertex.lng}°` : '—'} />
+              </dl>
+            ) : selEdge ? (
+              <dl className="divide-y divide-edge/40 rounded-lg ring-1 ring-edge/50">
+                <SiteRow k="Edge" v={`${selEdge.label} (${selEdge.from}→${selEdge.to})`} />
+                <SiteRow k="Length" v={`${formatNumber(selEdge.length)} m`} />
+                <SiteRow k="Bearing" v={`${selEdge.bearing}°`} />
+                <SiteRow k="Direction" v={`${selEdge.compass}`} />
+                <SiteRow k="Frontage" v={selEdge.index === survey.frontage.index ? 'Yes — longest edge' : 'No'} />
+              </dl>
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center gap-2 py-8 text-center">
+                <MousePointerClick className="h-7 w-7 text-slate-600" />
+                <p className="text-sm text-slate-400">Click any vertex or edge on the plan — or a row below — to read its survey data.</p>
+              </div>
+            )}
+            <div className="mt-4 grid grid-cols-2 gap-3 border-t border-edge/40 pt-4 text-center">
+              <div><div className="data-mono text-lg text-slate-100">{formatNumber(survey.area.m2)}</div><div className="text-[11px] text-slate-500">m² · {survey.area.acres} ac</div></div>
+              <div><div className="data-mono text-lg text-slate-100">{formatNumber(survey.perimeter.m)}</div><div className="text-[11px] text-slate-500">m perimeter</div></div>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* survey tables — vertices & edges, exportable */}
+      <Card>
+        <CardHeader
+          icon={Layers} accent="teal" title="Survey schedule" subtitle="Every boundary vertex (local metres + lat/lng) and edge (length, bearing, compass). Click a row to locate it; export for CAD/GIS."
+          action={
+            <div className="flex flex-wrap gap-1.5">
+              <button onClick={() => downloadText('site-survey-vertices.csv', vertCsv(survey), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> Vertices</button>
+              <button onClick={() => downloadText('site-survey-edges.csv', edgeCsv(survey), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> Edges</button>
+              <button onClick={() => downloadText('site-survey.json', JSON.stringify(survey, null, 2), 'JSON')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><FileJson className="h-3.5 w-3.5" /> JSON</button>
+            </div>
+          }
+        />
+        <div className="border-t border-edge/50 p-4">
+          <Tabs tabs={[{ id: 'vertices', label: `Vertices (${survey.vertices.length})` }, { id: 'edges', label: `Edges (${survey.edges.length})` }]} active={surveyTab} onChange={setSurveyTab} className="mb-3" />
+          <ScrollableTable label={`Site ${surveyTab}`}>
+            {surveyTab === 'vertices' ? (
+              <table className="w-full min-w-[520px] text-left text-sm">
+                <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500"><th className="px-3 py-2 font-medium">Vertex</th><th className="px-3 py-2 text-right font-medium">E / x (m)</th><th className="px-3 py-2 text-right font-medium">N / z (m)</th><th className="px-3 py-2 text-right font-medium">Latitude</th><th className="px-3 py-2 text-right font-medium">Longitude</th></tr></thead>
+                <tbody>
+                  {survey.vertices.map((v) => {
+                    const on = siteSel === `v-${v.index}`
+                    return (
+                      <tr key={v.index} onClick={() => setSiteSel(`v-${v.index}`)} className={cn('cursor-pointer border-b border-edge/30 transition-colors', on ? 'bg-amber-500/10' : 'hover:bg-elevated/40')}>
+                        <td className="px-3 py-1.5 font-medium text-slate-200">{v.label}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-300">{v.x}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-300">{v.z}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-400">{v.lat ?? '—'}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-400">{v.lng ?? '—'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <table className="w-full min-w-[520px] text-left text-sm">
+                <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500"><th className="px-3 py-2 font-medium">Edge</th><th className="px-3 py-2 font-medium">From→To</th><th className="px-3 py-2 text-right font-medium">Length (m)</th><th className="px-3 py-2 text-right font-medium">Bearing</th><th className="px-3 py-2 text-right font-medium">Compass</th></tr></thead>
+                <tbody>
+                  {survey.edges.map((e) => {
+                    const on = siteSel === `e-${e.index}`
+                    return (
+                      <tr key={e.index} onClick={() => setSiteSel(`e-${e.index}`)} className={cn('cursor-pointer border-b border-edge/30 transition-colors', on ? 'bg-amber-500/10' : 'hover:bg-elevated/40')}>
+                        <td className="px-3 py-1.5 font-medium text-slate-200">{e.label}{e.index === survey.frontage.index ? ' ★' : ''}</td>
+                        <td className="data-mono px-3 py-1.5 text-slate-400">{e.from}→{e.to}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(e.length)}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-300">{e.bearing}°</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-400">{e.compass}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </ScrollableTable>
+          <p className="mt-2 text-[11px] text-slate-500">★ = frontage (longest edge). Local coordinates are metres about the parcel origin; lat/lng appear once a map location is set.</p>
+        </div>
+      </Card>
+
       {/* tier schedule + data export */}
       <Card>
         <CardHeader
@@ -338,6 +449,23 @@ function PlanDiagram({ z, boundary }: { z: Zoning; boundary: Pt[] }) {
       </g>
     </svg>
   )
+}
+
+function SiteRow({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4 px-3 py-2">
+      <dt className="text-xs text-slate-400">{k}</dt>
+      <dd className="data-mono text-sm font-medium text-slate-200">{v}</dd>
+    </div>
+  )
+}
+
+const csvCell = (v: string | number) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
+function vertCsv(s: SiteSurvey): string {
+  return ['Vertex,X_E_m,Z_N_m,Latitude,Longitude', ...s.vertices.map((v) => [v.label, v.x, v.z, v.lat ?? '', v.lng ?? ''].map(csvCell).join(','))].join('\n')
+}
+function edgeCsv(s: SiteSurvey): string {
+  return ['Edge,From,To,Length_m,Bearing_deg,Compass,Frontage', ...s.edges.map((e) => [e.label, e.from, e.to, e.length, e.bearing, e.compass, e.index === s.frontage.index ? 'yes' : ''].map(csvCell).join(','))].join('\n')
 }
 
 function Metric({ label, value, sub }: { label: string; value: string; sub?: string }) {
