@@ -43,7 +43,7 @@ export function BuildingViewer({
 
   // Rebuild only the floor meshes when the data that changes geometry changes.
   const rebuildRef = useRef<(() => void) | null>(null)
-  useEffect(() => { rebuildRef.current?.() }, [input.gfa, input.progress, input.storeys, input.taper, mode, metric, selected])
+  useEffect(() => { rebuildRef.current?.() }, [input.gfa, input.progress, input.storeys, input.shape, input.customShape, input.towerShape, input.aspect, input.taper, input.podium, input.towerSetback, input.twist, mode, metric, selected])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -77,14 +77,11 @@ export function BuildingViewer({
     scene.add(new THREE.AmbientLight('#94a3b8', 0.55))
     scene.add(new THREE.HemisphereLight('#cbd5e1', '#0a0f1c', 0.5))
     const key = new THREE.DirectionalLight('#ffffff', 1.4)
-    key.position.set(14, 26, 16)
     key.castShadow = true
     key.shadow.mapSize.set(1024, 1024)
-    key.shadow.camera.near = 1
-    key.shadow.camera.far = 90
-    const sc = key.shadow.camera as THREE.OrthographicCamera
-    sc.left = -30; sc.right = 30; sc.top = 30; sc.bottom = -30
+    const sc = key.shadow.camera as THREE.OrthographicCamera // position + frustum sized per-build
     scene.add(key)
+    scene.add(key.target)
 
     // ── ground ────────────────────────────────────────────────────────────────
     const ground = new THREE.Mesh(
@@ -116,10 +113,20 @@ export function BuildingViewer({
 
       const { input: inp, mode: md, metric: mt, selected: sel } = propsRef.current
       const massing = buildMassing(inp)
-      const yOffset = massing.totalHeight / 2 // centre the building on the origin
 
       for (const f of massing.floors as FloorSpec[]) {
-        const geo = new THREE.BoxGeometry(f.halfW * 2, f.height, f.halfD * 2)
+        // extrude the floor's plan polygon (any shape) into a real prism
+        const shape = new THREE.Shape()
+        f.polygon.forEach((p, i) => (i ? shape.lineTo(p.x, -p.z) : shape.moveTo(p.x, -p.z)))
+        shape.closePath()
+        if (f.hole && f.hole.length >= 3) { // courtyard / atrium void
+          const hp = new THREE.Path()
+          f.hole.forEach((p, i) => (i ? hp.lineTo(p.x, -p.z) : hp.moveTo(p.x, -p.z)))
+          hp.closePath()
+          shape.holes.push(hp)
+        }
+        const geo = new THREE.ExtrudeGeometry(shape, { depth: f.height, bevelEnabled: false })
+        geo.rotateX(-Math.PI / 2) // plan (xy) → ground (xz), extrude up +y
         const isSel = sel === f.index
         const color = new THREE.Color(floorColor(md, f, mt))
         const mat = new THREE.MeshStandardMaterial({
@@ -132,7 +139,7 @@ export function BuildingViewer({
           emissiveIntensity: isSel ? 0.5 : 0,
         })
         const mesh = new THREE.Mesh(geo, mat)
-        mesh.position.y = f.y - yOffset
+        mesh.position.y = f.y - f.height / 2 // prism rises from the slab; floor 0 on the ground
         mesh.castShadow = true
         mesh.receiveShadow = true
         mesh.userData.index = f.index
@@ -144,22 +151,33 @@ export function BuildingViewer({
             new THREE.EdgesGeometry(geo),
             new THREE.LineBasicMaterial({ color: '#e2e8f0' }),
           )
-          edges.position.copy(mesh.position)
-          mesh.add(edges)
+          mesh.add(edges) // child of mesh → inherits its transform
         }
       }
       // frame the camera + fog to the building's actual size each rebuild, so
       // both short fit-outs and tall towers are fully visible.
       const h = massing.totalHeight
       const span = Math.max(h, massing.footprint * 2)
-      orbit.target.set(0, 0, 0)
+      const centre = h / 2 // building sits on the ground, so orbit around its mid-height
+      orbit.target.set(0, centre, 0)
       orbit.radius = Math.max(14, span * 1.5)
       scene.fog = new THREE.Fog('#0a0f1c', orbit.radius * 0.6, orbit.radius * 2.4)
       ground.scale.setScalar(Math.max(1, span / 24))
       grid.scale.setScalar(Math.max(1, span / 24))
+      // size the key light + shadow frustum to the building so tall towers are lit/shadowed
+      key.position.set(span * 0.8, h + span * 0.8, span * 0.6)
+      key.target.position.set(0, centre, 0)
+      sc.left = -span; sc.right = span; sc.top = h + span; sc.bottom = -span; sc.near = 0.1; sc.far = (h + span) * 3
+      sc.updateProjectionMatrix()
       applyCamera()
-      // debug hook for tests/automation — how many floor meshes are in the scene
-      ;(mount as HTMLElement & { __floorCount?: number }).__floorCount = floorMeshes.length
+      // debug hooks for tests/automation — floor count + the building's base height
+      // (lowest floor's underside; must be ≥0 so nothing dips below the ground)
+      const f0 = massing.floors[0]
+      ;(mount as HTMLElement & { __floorCount?: number; __baseY?: number; __platePts?: number }).__floorCount = floorMeshes.length
+      ;(mount as HTMLElement & { __baseY?: number }).__baseY = f0 ? f0.y - f0.height / 2 : 0
+      ;(mount as HTMLElement & { __platePts?: number }).__platePts = f0 ? f0.polygon.length : 0
+      ;(mount as HTMLElement & { __hasHole?: boolean }).__hasHole = !!(f0 && f0.hole)
+      ;(mount as HTMLElement & { __topPlatePts?: number }).__topPlatePts = massing.floors.length ? massing.floors[massing.floors.length - 1].polygon.length : 0
     }
     rebuildRef.current = buildFloors
 
@@ -255,9 +273,11 @@ export function BuildingViewer({
     return (
       <div style={{ height }} className="flex w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl bg-base/60 p-4" role="img" aria-label="Building floor stack (3D unavailable)">
         <div className="flex flex-col items-center gap-px">
-          {shown.map((f) => (
-            <div key={f.index} title={f.label} style={{ width: `${Math.max(28, f.halfW * 22)}px` }} className={`h-2 rounded-sm ${f.built ? 'bg-emerald-500/80' : 'bg-slate-600/60'}`} />
-          ))}
+          {shown.map((f) => {
+            const xs = f.polygon.map((p) => p.x)
+            const w = Math.max(...xs) - Math.min(...xs)
+            return <div key={f.index} title={f.label} style={{ width: `${Math.max(24, w * 11)}px` }} className={`h-2 rounded-sm ${f.built ? 'bg-emerald-500/80' : 'bg-slate-600/60'}`} />
+          })}
           <div className="mt-1.5 h-1 w-32 rounded bg-slate-700/70" />
         </div>
         <p className="flex items-center gap-1.5 text-[11px] text-slate-500"><Boxes className="h-3.5 w-3.5" /> {mass.storeys} storeys · {mass.builtPct}% built · 3D needs WebGL</p>

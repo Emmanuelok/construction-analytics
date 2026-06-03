@@ -26,6 +26,8 @@ import {
   Building,
   Bell,
   Code2,
+  Map,
+  Cable,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -70,6 +72,8 @@ export const NAV: NavItem[] = [
   // Intelligence engines (supporting analytics)
   { path: '/insights', label: 'Executive Insights', blurb: 'Portfolio KPIs, risk & decisions', icon: Gauge, accent: 'cyan', group: 'Intelligence' },
   { path: '/bim', label: 'BIM Intelligence', blurb: 'Parse, classify, clash & quantify models', icon: Boxes, accent: 'blue', group: 'Intelligence' },
+  { path: '/building-explorer', label: 'Building Explorer', blurb: 'Walk the building floor-by-floor — isolate levels, click any element, read schedules', icon: Building2, accent: 'sky', group: 'Intelligence', tag: 'NEW' },
+  { path: '/site-zoning', label: 'Site & Zoning', blurb: 'Site boundary, FAR/height/setback envelope & live compliance', icon: Map, accent: 'teal', group: 'Intelligence', tag: 'NEW' },
   { path: '/documents', label: 'Document Intelligence', blurb: 'Drawings, specs, contracts, RFIs', icon: FileText, accent: 'amber', group: 'Intelligence' },
   { path: '/cost-schedule', label: 'Cost & Schedule', blurb: 'Forecast overruns, delays & earned value', icon: CalendarClock, accent: 'rose', group: 'Intelligence' },
   { path: '/procurement', label: 'Procurement', blurb: 'Supplier scoring, bids & lead-time risk', icon: Truck, accent: 'lime', group: 'Intelligence' },
@@ -83,6 +87,7 @@ export const NAV: NavItem[] = [
   { path: '/ai-studio', label: 'AI Training Studio', blurb: 'Curate, label, anonymize & version', icon: BrainCircuit, accent: 'fuchsia', group: 'Platform', tag: 'AI' },
   { path: '/governance', label: 'Governance & Trust', blurb: 'Permissions, lineage, licensing & audit', icon: ShieldCheck, accent: 'teal', group: 'Platform' },
   { path: '/developer', label: 'Developer & API', blurb: 'Public dataset API — keys, docs & a live playground', icon: Code2, accent: 'violet', group: 'Platform', tag: 'NEW' },
+  { path: '/connections', label: 'Connections', blurb: 'Pull data + run tools across Autodesk, MCP servers & the studio engines', icon: Cable, accent: 'cyan', group: 'Platform', tag: 'NEW' },
 
   // Research
   { path: '/pain-points', label: 'Unsolved Pain Points', blurb: 'The industry gaps we exist to close', icon: Flame, accent: 'rose', group: 'Research', tag: 'NEW' },

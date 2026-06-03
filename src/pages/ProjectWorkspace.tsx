@@ -13,22 +13,35 @@ import {
   HardHat,
   Boxes,
   ShieldAlert,
+  Ruler,
+  Download,
+  FileJson,
+  Sun,
 } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge } from '@/components/ui'
 import { RadarViz } from '@/components/charts'
 const BuildingViewer = lazy(() => import('@/components/BuildingViewer').then((m) => ({ default: m.BuildingViewer })))
-import { COLOR_MODES, type ColorMode } from '@/lib/massing'
+const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
+import { COLOR_MODES, SHAPE_KINDS, buildMassing, massingSchedule, type ColorMode, type ShapeKind } from '@/lib/massing'
+import { buildBuilding } from '@/lib/building'
+import { sunPosition, momentOf } from '@/lib/sun'
+import { compass } from '@/lib/geo'
+import { unitShape } from '@/lib/shapes'
+import { type Pt } from '@/lib/zoning'
+import { PolygonEditor } from '@/components/PolygonEditor'
 import { PROJECTS, type Project } from '@/data/platform'
 import { deriveProjectModel, projectNarrative, type ProjectVitals, type ProjectModel } from '@/lib/project-model'
 import { formatMoney } from '@/lib/evm'
 import { ACCENT, type Accent } from '@/lib/nav'
 import { cn } from '@/lib/cn'
-import { formatNumber } from '@/lib/format'
+import { formatNumber, formatCurrency } from '@/lib/format'
 import { useScenarios } from '@/store/scenarios'
 import { ScenarioBar } from '@/components/ScenarioBar'
 import { ExportMenu } from '@/components/ExportMenu'
+import { ScrollableTable } from '@/components/ScrollableTable'
+import { downloadText, slug } from '@/lib/download'
 import { CollabBar } from '@/components/CollabBar'
-import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
+import { kpiToItem, tableToCsv, type ReportSpec, type ReportTable } from '@/lib/report'
 import type { KPI } from '@/lib/scenarios'
 
 const ACCENT_NAME: Accent = 'blue'
@@ -57,6 +70,12 @@ const LENSES: { to: string; label: string; icon: typeof CalendarClock; accent: A
 ]
 
 const DIM_TARGET = 90
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const fmtHour = (h: number) => {
+  const hr = Math.floor(h) % 24, mn = Math.round((h - Math.floor(h)) * 60)
+  const h12 = hr % 12 === 0 ? 12 : hr % 12
+  return `${h12}:${String(mn).padStart(2, '0')} ${hr < 12 ? 'AM' : 'PM'}`
+}
 
 export default function ProjectWorkspace() {
   const initialId = (() => { try { return localStorage.getItem(SEL_KEY) || PROJECTS[0].id } catch { return PROJECTS[0].id } })()
@@ -77,7 +96,58 @@ export default function ProjectWorkspace() {
   const reset = () => { setVitals(toVitals(baseProject)); setEdited(false) }
 
   const [colorMode, setColorMode] = useState<ColorMode>('progress')
+  const [viewMode, setViewMode] = useState<'building' | 'massing'>('building')
+  const [hidden3d, setHidden3d] = useState<{ glazing?: boolean; structure?: boolean; slabs?: boolean }>({})
   const [selectedFloor, setSelectedFloor] = useState<number | null>(null)
+  // sun & shadow study — real solar position from latitude/date/time
+  const [sunLat, setSunLat] = useState(40)
+  const [sunMonth, setSunMonth] = useState(6)
+  const [sunHour, setSunHour] = useState(13)
+  const [shadowsOn, setShadowsOn] = useState(true)
+  // massing form — real shapes + vertical articulation, not just a square stack
+  const [shape, setShape] = useState<ShapeKind>('rect')
+  const [customShape, setCustomShape] = useState<Pt[]>(() => unitShape('custom').map((p) => ({ x: p.x * 24, z: p.z * 24 })))
+  const [towerShape, setTowerShape] = useState<ShapeKind | undefined>(undefined)
+  const [aspect, setAspect] = useState(1)
+  const [taper, setTaper] = useState(0.2)
+  const [podium, setPodium] = useState(0)
+  const [towerSetback, setTowerSetback] = useState(0.35)
+  const [twist, setTwist] = useState(0)
+  // takeoff assumptions for the schedule/quantities
+  const [storeyHeight, setStoreyHeight] = useState(3.6)
+  const [slabThickness, setSlabThickness] = useState(0.3)
+  const [wwr, setWwr] = useState(0.4)
+  const [costPerM2, setCostPerM2] = useState(2800)
+
+  const massingInput = { gfa: vitals.gfa, progress: vitals.progress, shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist }
+  const massing = useMemo(() => buildMassing(massingInput), [vitals.gfa, vitals.progress, shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist])
+  const building = useMemo(() => buildBuilding(massing, { coreRatio: 0.16 }), [massing])
+  const sun = useMemo(() => sunPosition(momentOf(sunMonth, sunHour), sunLat, 0), [sunMonth, sunHour, sunLat])
+  const sched = useMemo(() => massingSchedule(massing, { storeyHeight, slabThickness, wwr, costPerM2 }), [massing, storeyHeight, slabThickness, wwr, costPerM2])
+  const schedCsv = () => {
+    const metrics = tableToCsv({
+      title: 'Quantities & metrics',
+      columns: ['Metric', 'Value', 'Unit'],
+      rows: [
+        ['Modeled GFA', Math.round(sched.grossFloorArea), 'm2'], ['Net usable area', Math.round(sched.netArea), 'm2'],
+        ['Footprint', Math.round(sched.footprint), 'm2'], ['Roof area', Math.round(sched.roofArea), 'm2'],
+        ['Building height', sched.height, 'm'], ['Gross volume', Math.round(sched.grossVolume), 'm3'],
+        ['Exterior surface', Math.round(sched.exteriorSurface), 'm2'], ['Facade area', Math.round(sched.facadeArea), 'm2'],
+        ['Glazing area', Math.round(sched.glazingArea), 'm2'], ['Opaque wall area', Math.round(sched.opaqueWallArea), 'm2'],
+        ['Slab concrete', Math.round(sched.slabVolume), 'm3'], ['Form factor', sched.formFactor, '1/m'],
+        ['Wall-to-floor', sched.wallToFloor, ''], ['Slenderness', sched.slenderness, ''],
+        ['Embodied carbon', sched.embodiedCarbon, 'kgCO2e'], ['Carbon intensity', sched.carbonIntensity, 'kgCO2e/m2'],
+        ['ROM cost', sched.romCost, 'currency'], ['Occupancy', sched.occupancy, 'persons'], ['Parking', sched.parkingStalls, 'stalls'],
+        ['Built area', Math.round(sched.builtArea), 'm2'], ['Planned area', Math.round(sched.plannedArea), 'm2'],
+      ],
+    })
+    const schedule = tableToCsv({
+      title: 'Floor schedule',
+      columns: ['Level', 'Elevation (m)', 'Plate area (m2)', 'Perimeter (m)', 'Facade (m2)', 'Volume (m3)', 'Status'],
+      rows: sched.floors.slice().reverse().map((f) => [f.label, f.elevation, Math.round(f.area), Math.round(f.perimeter), Math.round(f.facade), Math.round(f.volume), f.built ? 'Built' : 'Planned']),
+    })
+    return `${metrics}\n\n${schedule}`
+  }
   const m = useMemo(() => deriveProjectModel(vitals), [vitals])
 
   // the project-level metric the 3D model colours floors by, per mode
@@ -148,8 +218,23 @@ export default function ProjectWorkspace() {
             module="project"
             accent={ACCENT_NAME}
             scenarios={scenarios}
-            onSave={(name) => save(name, { projectId, vitals }, summary)}
-            onLoad={(s) => { const d = s.data as { projectId?: string; vitals?: ProjectVitals }; if (d.projectId) setProjectId(d.projectId); if (d.vitals) { setVitals(d.vitals); setEdited(true) } }}
+            onSave={(name) => save(name, { projectId, vitals, form: { shape, customShape, towerShape, aspect, taper, podium, towerSetback, twist } }, summary)}
+            onLoad={(s) => {
+              const d = s.data as { projectId?: string; vitals?: ProjectVitals; form?: Partial<{ shape: ShapeKind; customShape: Pt[]; towerShape: ShapeKind; aspect: number; taper: number; podium: number; towerSetback: number; twist: number }> }
+              if (d.projectId) setProjectId(d.projectId)
+              if (d.vitals) { setVitals(d.vitals); setEdited(true) }
+              const f = d.form
+              if (f) {
+                if (f.shape) setShape(f.shape)
+                if (f.customShape) setCustomShape(f.customShape)
+                setTowerShape(f.towerShape)
+                if (typeof f.aspect === 'number') setAspect(f.aspect)
+                if (typeof f.taper === 'number') setTaper(f.taper)
+                if (typeof f.podium === 'number') setPodium(f.podium)
+                if (typeof f.towerSetback === 'number') setTowerSetback(f.towerSetback)
+                if (typeof f.twist === 'number') setTwist(f.twist)
+              }
+            }}
             onRemove={remove}
           />
         </div>
@@ -173,45 +258,205 @@ export default function ProjectWorkspace() {
           icon={Boxes}
           accent={ACCENT_NAME}
           title="3D building model"
-          subtitle="Orbit · scroll to zoom · click a floor. Colour shows the selected analytics layer; in 4D mode, solid floors are built and ghosted floors are planned."
+          subtitle="A real building — floor slabs, a column grid, a glass curtain-wall façade and a core — generated from the project's GFA, storeys & form. Toggle trades, run a sun & shadow study (real solar position by latitude/date/time), or switch to the analytics Massing view (4D progress, risk, carbon…)."
           action={
-            <div className="flex flex-wrap gap-1.5">
-              {COLOR_MODES.map((cm) => (
-                <button
-                  key={cm.id}
-                  onClick={() => setColorMode(cm.id)}
-                  className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', colorMode === cm.id ? 'bg-blue-500/15 text-blue-200 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50 hover:text-slate-200')}
-                >
-                  {cm.label}
-                </button>
-              ))}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex overflow-hidden rounded-lg ring-1 ring-inset ring-edge/60">
+                {(['building', 'massing'] as const).map((v) => (
+                  <button key={v} onClick={() => setViewMode(v)} className={cn('px-2.5 py-1 text-xs font-medium transition-colors', viewMode === v ? 'bg-blue-500/20 text-blue-100' : 'text-slate-400 hover:bg-elevated/50 hover:text-slate-200')}>
+                    {v === 'building' ? 'Building' : 'Massing'}
+                  </button>
+                ))}
+              </div>
+              {viewMode === 'massing' ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {COLOR_MODES.map((cm) => (
+                    <button key={cm.id} onClick={() => setColorMode(cm.id)} className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', colorMode === cm.id ? 'bg-blue-500/15 text-blue-200 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50 hover:text-slate-200')}>{cm.label}</button>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {([['glazing', 'Façade'], ['structure', 'Structure'], ['slabs', 'Slabs']] as const).map(([k, label]) => (
+                    <button key={k} onClick={() => setHidden3d((h) => ({ ...h, [k]: !h[k] }))} aria-pressed={!hidden3d[k]} className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', hidden3d[k] ? 'text-slate-500 ring-edge/60' : 'bg-blue-500/15 text-blue-200 ring-blue-500/40')}>{label}</button>
+                  ))}
+                </div>
+              )}
             </div>
           }
         />
         <div className="grid gap-0 border-t border-edge/50 lg:grid-cols-[1.6fr_1fr]">
           <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-            <BuildingViewer input={{ gfa: vitals.gfa, progress: vitals.progress, taper: 0.35 }} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />
+            {viewMode === 'building'
+              ? <ComponentBuildingViewer model={building} hidden={hidden3d} sun={sun} shadows={shadowsOn} height={460} />
+              : <BuildingViewer input={massingInput} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />}
           </Suspense>
-          <div className="flex flex-col justify-center gap-3 border-t border-edge/50 p-5 lg:border-l lg:border-t-0">
+          <div className="flex flex-col gap-3 border-t border-edge/50 p-4 lg:border-l lg:border-t-0">
             <div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">Massing</div>
-              <div className="mt-1 text-sm text-slate-300">{Math.max(1, Math.round(vitals.gfa / 2500))} storeys · {formatNumber(vitals.gfa)} m² GFA</div>
+              <div className="mb-1.5 text-[11px] uppercase tracking-wide text-slate-500">Footprint shape</div>
+              <div className="flex flex-wrap gap-1.5">
+                {SHAPE_KINDS.map((s) => (
+                  <button key={s.id} onClick={() => setShape(s.id)} aria-pressed={shape === s.id}
+                    className={cn('rounded-lg px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors', shape === s.id ? 'bg-blue-500/15 text-blue-200 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50 hover:text-slate-200')}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">Construction (4D)</div>
-              <div className="mt-1 text-sm"><span className="font-semibold text-emerald-300">{vitals.progress}%</span> <span className="text-slate-400">complete — lower floors built first</span></div>
-            </div>
+            {shape === 'custom' && <PolygonEditor value={customShape} onChange={setCustomShape} accent="#60a5fa" height={200} />}
+            {shape !== 'custom' && <Slider label="Aspect ratio" value={aspect} min={0.4} max={2.5} step={0.05} onChange={setAspect} fmt={(v) => `${v.toFixed(2)}:1`} />}
+            <Slider label="Taper" value={taper} min={0} max={0.6} step={0.02} onChange={setTaper} fmt={(v) => `${Math.round(v * 100)}%`} />
+            <Slider label="Podium" value={podium} min={0} max={0.8} step={0.05} onChange={setPodium} fmt={(v) => (v === 0 ? 'none' : `${Math.round(v * 100)}%`)} />
+            <Slider label="Tower setback" value={towerSetback} min={0} max={0.6} step={0.02} onChange={setTowerSetback} fmt={(v) => `${Math.round(v * 100)}%`} />
+            {podium > 0 && (
+              <div>
+                <div className="mb-1.5 text-[11px] uppercase tracking-wide text-slate-500">Tower shape (above podium)</div>
+                <div className="flex flex-wrap gap-1.5">
+                  <button onClick={() => setTowerShape(undefined)} aria-pressed={!towerShape} className={cn('rounded-lg px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors', !towerShape ? 'bg-blue-500/15 text-blue-200 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50 hover:text-slate-200')}>Same</button>
+                  {SHAPE_KINDS.filter((s) => s.id !== 'custom').map((s) => (
+                    <button key={s.id} onClick={() => setTowerShape(s.id)} aria-pressed={towerShape === s.id} className={cn('rounded-lg px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors', towerShape === s.id ? 'bg-blue-500/15 text-blue-200 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50 hover:text-slate-200')}>{s.label}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <Slider label="Twist / floor" value={twist} min={0} max={8} step={0.5} onChange={setTwist} fmt={(v) => `${v}°`} />
+            {viewMode === 'building' && (
+              <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-amber-300/90">
+                    <Sun className="h-3.5 w-3.5" /> Sun &amp; shadow
+                  </div>
+                  <button onClick={() => setShadowsOn((s) => !s)} aria-pressed={shadowsOn}
+                    className={cn('rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset transition-colors', shadowsOn ? 'bg-amber-500/20 text-amber-100 ring-amber-500/40' : 'text-slate-400 ring-edge/60 hover:text-slate-200')}>
+                    Shadows {shadowsOn ? 'on' : 'off'}
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  <Slider label="Latitude" value={sunLat} min={-60} max={70} step={1} onChange={setSunLat} fmt={(v) => `${Math.abs(v)}° ${v >= 0 ? 'N' : 'S'}`} />
+                  <Slider label="Month" value={sunMonth} min={1} max={12} step={1} onChange={setSunMonth} fmt={(v) => MONTHS[v - 1]} />
+                  <Slider label="Time (solar)" value={sunHour} min={0} max={24} step={0.5} onChange={setSunHour} fmt={fmtHour} />
+                </div>
+                <div className="mt-2 rounded-md bg-base/50 px-2.5 py-1.5 text-[11px]">
+                  {sun.altitude > 0 ? (
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Altitude <span className="data-mono text-amber-200">{sun.altitude}°</span></span>
+                      <span className="text-slate-400">Azimuth <span className="data-mono text-amber-200">{Math.round(sun.azimuth)}° {compass(sun.azimuth)}</span></span>
+                    </div>
+                  ) : (
+                    <span className="text-slate-500">Sun below the horizon — night ({sun.altitude}°)</span>
+                  )}
+                </div>
+              </div>
+            )}
             {selectedFloor !== null && (
-              <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-3">
-                <div className="text-[11px] uppercase tracking-wide text-blue-300/80">Selected floor</div>
-                <div className="mt-0.5 text-sm font-semibold text-slate-100">{selectedFloor === 0 ? 'Ground floor' : `Level ${selectedFloor}`}</div>
+              <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-2.5">
+                <div className="text-[11px] uppercase tracking-wide text-blue-300/80">Selected floor · {selectedFloor === 0 ? 'Ground' : `Level ${selectedFloor}`}</div>
                 <div className="text-xs text-slate-400">{selectedFloor < Math.round((vitals.progress / 100) * Math.max(1, Math.round(vitals.gfa / 2500))) ? 'Built' : 'Planned'}</div>
               </div>
             )}
-            <p className="text-[11px] leading-relaxed text-slate-500">
-              Data-driven massing from project metrics. Full IFC mesh geometry (from an uploaded model) renders in BIM Intelligence.
-            </p>
+            <div className="mt-auto text-[11px] leading-relaxed text-slate-500">
+              {Math.max(1, Math.round(vitals.gfa / 2500))} storeys · {formatNumber(vitals.gfa)} m² · {vitals.progress}% built.{' '}
+              <Link to="/building-explorer" className="text-blue-300 underline-offset-2 hover:text-blue-200 hover:underline">Explore floor-by-floor & every element →</Link>
+            </div>
           </div>
+        </div>
+      </Card>
+
+      {/* schedule & quantities — structured data extracted from the 3D massing */}
+      <Card>
+        <CardHeader
+          icon={Ruler}
+          accent="cyan"
+          title="Massing schedule & quantities"
+          subtitle="Per-floor areas, perimeters, façade and volumes derived from the model geometry — tune the takeoff assumptions and export"
+          action={
+            <div className="flex flex-wrap gap-1.5">
+              <button onClick={() => downloadText(`${slug(vitals.name)}-massing-schedule.csv`, schedCsv(), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>
+              <button onClick={() => downloadText(`${slug(vitals.name)}-massing.json`, JSON.stringify({ project: vitals.name, target_gfa: vitals.gfa, ...sched }, null, 2), 'JSON')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><FileJson className="h-3.5 w-3.5" /> JSON</button>
+            </div>
+          }
+        />
+        <div className="space-y-5 border-t border-edge/50 p-5">
+          <div className="flex flex-wrap items-end gap-5">
+            <label className="block">
+              <span className="mb-1 block text-xs text-slate-400">Storey height (m)</span>
+              <input type="number" step={0.1} value={storeyHeight} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) setStoreyHeight(Math.max(2, n)) }} className="w-28 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/30" />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-slate-400">Slab thickness (m)</span>
+              <input type="number" step={0.05} value={slabThickness} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) setSlabThickness(Math.max(0, n)) }} className="w-28 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/30" />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-slate-400">Window-to-wall</span>
+              <input type="number" step={0.05} value={wwr} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) setWwr(Math.max(0, Math.min(0.95, n))) }} className="w-28 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/30" />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-slate-400">Build rate ($/m²)</span>
+              <input type="number" step={100} value={costPerM2} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) setCostPerM2(Math.max(0, n)) }} className="w-28 rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/30" />
+            </label>
+            <p className="max-w-md text-xs leading-relaxed text-slate-500">Quantities scale with the form — taper, podium/tower setback and the courtyard void all change the modeled GFA, façade and concrete. Carbon, cost and occupancy are indicative (assumptions stated).</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <DataTile label="Modeled GFA" value={`${formatNumber(Math.round(sched.grossFloorArea))} m²`} accent="cyan" sub={`${Math.round((sched.grossFloorArea / Math.max(1, vitals.gfa)) * 100)}% of ${formatNumber(vitals.gfa)} target`} />
+            <DataTile label="Footprint" value={`${formatNumber(Math.round(sched.footprint))} m²`} accent="blue" sub={`${sched.storeys} storeys`} />
+            <DataTile label="Building height" value={`${formatNumber(sched.height)} m`} accent="violet" sub={`${storeyHeight} m / storey`} />
+            <DataTile label="Gross volume" value={`${formatNumber(Math.round(sched.grossVolume))} m³`} accent="teal" />
+            <DataTile label="Façade area" value={`${formatNumber(Math.round(sched.facadeArea))} m²`} accent="amber" sub="incl. any atrium" />
+            <DataTile label="Slab concrete" value={`${formatNumber(Math.round(sched.slabVolume))} m³`} accent="rose" sub={`@ ${slabThickness} m`} />
+            <DataTile label="Built area (4D)" value={`${formatNumber(Math.round(sched.builtArea))} m²`} accent="emerald" sub={`${Math.round((sched.builtArea / Math.max(1, sched.grossFloorArea)) * 100)}% complete`} />
+            <DataTile label="Planned area" value={`${formatNumber(Math.round(sched.plannedArea))} m²`} accent="sky" />
+            <DataTile label="Built volume" value={`${formatNumber(Math.round(sched.builtVolume))} m³`} accent="lime" />
+            <DataTile label="Avg plate" value={`${formatNumber(Math.round(sched.avgPlate))} m²`} accent="cyan" />
+            <DataTile label="Roof area" value={`${formatNumber(Math.round(sched.roofArea))} m²`} accent="violet" />
+            <DataTile label="Floors" value={`${sched.storeys}`} accent="blue" sub={`G–L${sched.storeys - 1}`} />
+          </div>
+
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Performance, cost & yield</div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+              <DataTile label="Net usable area" value={`${formatNumber(Math.round(sched.netArea))} m²`} accent="emerald" sub={`${Math.round(sched.netEfficiency * 100)}% efficiency`} />
+              <DataTile label="Exterior surface" value={`${formatNumber(Math.round(sched.exteriorSurface))} m²`} accent="cyan" sub="façade + roof + ground" />
+              <DataTile label="Glazing area" value={`${formatNumber(Math.round(sched.glazingArea))} m²`} accent="sky" sub={`${Math.round(sched.wwr * 100)}% WWR`} />
+              <DataTile label="Form factor" value={`${sched.formFactor}`} accent="teal" sub="surface ÷ volume (1/m)" />
+              <DataTile label="Wall-to-floor" value={`${sched.wallToFloor}`} accent="violet" sub="façade ÷ GFA" />
+              <DataTile label="Slenderness" value={`${sched.slenderness}`} accent="amber" sub="height ÷ width" />
+              <DataTile label="Embodied carbon" value={`${formatNumber(Math.round(sched.embodiedCarbon / 1000))} t`} accent="rose" sub={`${sched.carbonIntensity} kgCO₂e/m²`} />
+              <DataTile label="ROM cost" value={formatCurrency(sched.romCost)} accent="lime" sub={`$${formatNumber(sched.costPerM2)}/m²`} />
+              <DataTile label="Occupancy" value={`${formatNumber(sched.occupancy)}`} accent="cyan" sub="persons @ 12 m²" />
+              <DataTile label="Parking" value={`${formatNumber(sched.parkingStalls)}`} accent="blue" sub="stalls @ 3/1,000 m²" />
+              <DataTile label="Opaque wall" value={`${formatNumber(Math.round(sched.opaqueWallArea))} m²`} accent="violet" />
+              <DataTile label="Avg plate" value={`${formatNumber(Math.round(sched.avgPlate))} m²`} accent="teal" />
+            </div>
+          </div>
+
+          <ScrollableTable label="Floor schedule" className="rounded-xl border border-edge/60">
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
+                  <th className="px-4 py-2.5 font-medium">Level</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Elev (m)</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Plate (m²)</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Perimeter (m)</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Façade (m²)</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Volume (m³)</th>
+                  <th className="px-3 py-2.5 text-center font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-edge/40">
+                {sched.floors.slice().reverse().map((f) => (
+                  <tr key={f.index} className="hover:bg-elevated/30">
+                    <td className="px-4 py-2 font-medium text-slate-200">{f.label}</td>
+                    <td className="px-3 py-2 text-right data-mono text-slate-400">{formatNumber(f.elevation)}</td>
+                    <td className="px-3 py-2 text-right data-mono text-slate-300">{formatNumber(Math.round(f.area))}</td>
+                    <td className="px-3 py-2 text-right data-mono text-slate-400">{formatNumber(Math.round(f.perimeter))}</td>
+                    <td className="px-3 py-2 text-right data-mono text-slate-400">{formatNumber(Math.round(f.facade))}</td>
+                    <td className="px-3 py-2 text-right data-mono text-slate-400">{formatNumber(Math.round(f.volume))}</td>
+                    <td className="px-3 py-2 text-center"><Badge variant={f.built ? 'success' : 'neutral'} dot>{f.built ? 'Built' : 'Planned'}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollableTable>
         </div>
       </Card>
 
@@ -298,6 +543,29 @@ export default function ProjectWorkspace() {
 }
 
 const clamp = (n: number) => Math.max(0, Math.min(100, n))
+
+function DataTile({ label, value, accent, sub }: { label: string; value: string; accent: Accent; sub?: string }) {
+  const a = ACCENT[accent]
+  return (
+    <div className={cn('rounded-xl p-3 ring-1', a.bg, a.ring)}>
+      <div className="text-[11px] text-slate-400">{label}</div>
+      <div className={cn('data-mono text-base font-semibold', a.text)}>{value}</div>
+      {sub && <div className="mt-0.5 text-[10px] leading-tight text-slate-500">{sub}</div>}
+    </div>
+  )
+}
+
+function Slider({ label, value, min, max, step, onChange, fmt }: { label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void; fmt?: (v: number) => string }) {
+  return (
+    <label className="block">
+      <div className="mb-1 flex items-center justify-between text-xs">
+        <span className="text-slate-300">{label}</span>
+        <span className="data-mono text-slate-200">{fmt ? fmt(value) : value}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-1 w-full cursor-pointer accent-blue-500" aria-label={label} />
+    </label>
+  )
+}
 
 function Param({ label, unit, value, onChange, step = 1 }: { label: string; unit: string; value: number; onChange: (v: number) => void; step?: number }) {
   return (

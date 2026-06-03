@@ -22,10 +22,22 @@ import { editLabel, removeLabel, actionLabel, percentValueText, toggleLabel } fr
 import { parseMentions, makeComment, threadFor, addComment, removeComment, toggleResolved, summarizeThread, encodeShareToken, decodeShareToken, shareUrl, logActivity, parseComments, subjectLabel, type Comment as CollabComment, type Author, type Activity } from './collab.ts'
 import { toPublic, parseListQuery, listDatasets, findDataset, generateApiKey, isValidKeyFormat, extractApiKey, ok as apiOk, err as apiErr, type CatalogLike, type PublicDataset } from './apikit.ts'
 import { mentionNotifications, shareNotifications, alertNotifications, buildFeed, unreadCount, isUnread, timeAgo, parseReadIds, subjectName, type Notification } from './notifications.ts'
-import { buildMassing, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
-import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR } from './ifc-model.ts'
+import { buildMassing, massingSchedule, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
+import { buildBuilding } from './building.ts'
+import { explodeBuilding, planForLevel, findElementGeom, levelColumns, levelPanels } from './building-explorer.ts'
+import { unitShape, holeFor, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, SHAPE_KINDS } from './shapes.ts'
+import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, type SelectedElement } from './ifc-model.ts'
 import { extractGeometry } from './ifc-geometry.ts'
 import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
+import { buildZoning, insetPolygon, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
+import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
+import { sunPosition, sunDirection, momentOf } from './sun.ts'
+import { slug } from './download.ts'
+import { summarizeModel, sampleObj } from './model-stats.ts'
+import { encodeUrn, decodeUrn, normalizeUrn, translationProgress, bucketKeyFor, objectKeyFor, isTranslatable } from './aps.ts'
+import { AGENT_TOOLS, runTool } from './agent-tools.ts'
+import { parseMcpServers, qualify, split } from './mcp-federation.ts'
+import { fieldsFromSchema, coerceArgs } from './tool-forms.ts'
 import type { Project as QProject, Supplier as QSupplier } from '@/data/platform'
 
 let pass = 0
@@ -657,15 +669,44 @@ section('massing')
   ok('footprint > 0 for real GFA', m.footprint > 0)
   ok('builtPct reflects whole floors', m.builtPct === Math.round((m.builtCount / 25) * 1000) / 10)
 
-  // taper shrinks upper plates
+  // taper shrinks upper plates (by polygon area now)
   const tap = buildMassing({ gfa: 100_000, progress: 50, storeys: 10, taper: 0.5 })
-  ok('taper shrinks top vs bottom plate', tap.floors[9].halfW < tap.floors[0].halfW)
-  ok('no taper → uniform plate', buildMassing({ gfa: 100_000, progress: 50, storeys: 10 }).floors.every((f, _i, arr) => Math.abs(f.halfW - arr[0].halfW) < 1e-9))
+  ok('taper shrinks top vs bottom plate', polygonArea(tap.floors[9].polygon) < polygonArea(tap.floors[0].polygon))
+  ok('no taper → uniform plate', buildMassing({ gfa: 100_000, progress: 50, storeys: 10 }).floors.every((f, _i, arr) => Math.abs(polygonArea(f.polygon) - polygonArea(arr[0].polygon)) < 1e-6))
+
+  // sophisticated forms: shape, podium/tower setback, twist
+  ok('default shape is a rectangle (4-pt plate)', m.floors[0].polygon.length === 4)
+  ok('shape selection changes the plate (cross = 12 pts, cylinder = 48)', buildMassing({ gfa: 80_000, progress: 0, storeys: 8, shape: 'cross' }).floors[0].polygon.length === 12 && buildMassing({ gfa: 80_000, progress: 0, storeys: 8, shape: 'cylinder' }).floors[0].polygon.length === 48)
+  const pt = buildMassing({ gfa: 120_000, progress: 0, storeys: 12, podium: 0.5, towerSetback: 0.4 })
+  ok('podium floors keep the base plate', Math.abs(polygonArea(pt.floors[0].polygon) - polygonArea(pt.floors[5].polygon)) < 1e-6)
+  ok('tower steps in above the podium (smaller plate)', polygonArea(pt.floors[6].polygon) < polygonArea(pt.floors[5].polygon))
+  const tw = buildMassing({ gfa: 90_000, progress: 0, storeys: 10, shape: 'rect', twist: 6 })
+  ok('twist rotates upper floors (plate orientation differs, area preserved)', Math.abs(tw.floors[5].polygon[0].x - tw.floors[0].polygon[0].x) > 1e-3 && Math.abs(polygonArea(tw.floors[5].polygon) - polygonArea(tw.floors[0].polygon)) < 1e-6)
+  // user-drawn custom footprint
+  const customPts = [{ x: 0, z: 0 }, { x: 6, z: 0 }, { x: 6, z: 2 }, { x: 3, z: 4 }, { x: 0, z: 2 }] // off-origin 5-gon
+  const cm = buildMassing({ gfa: 80_000, progress: 0, storeys: 8, shape: 'custom', customShape: customPts })
+  ok('custom shape uses the drawn polygon (5 pts, centred, scaled to plate area)', cm.floors[0].polygon.length === 5 && near(buildMassing({ gfa: 80_000, progress: 0, storeys: 8 }).floors[0].polygon.length, 4, 0))
+  ok('custom plate is centred on the origin', (() => { const ct = polygonCentroid(cm.floors[0].polygon); return near(ct.x, 0, 1e-6) && near(ct.z, 0, 1e-6) })())
+  ok('custom shape falls back to preset when fewer than 3 points', buildMassing({ gfa: 80_000, progress: 0, storeys: 8, shape: 'custom', customShape: [{ x: 0, z: 0 }] }).floors[0].polygon.length === 5)
+
+  // courtyard (true atrium hole)
+  ok('holeFor returns a void only for the courtyard', holeFor('court')!.length === 4 && holeFor('rect') === null)
+  const court = buildMassing({ gfa: 120_000, progress: 0, storeys: 10, shape: 'court' })
+  ok('courtyard floors carry an inner hole smaller than the outer plate', !!court.floors[0].hole && polygonArea(court.floors[0].hole!) > 0 && polygonArea(court.floors[0].hole!) < polygonArea(court.floors[0].polygon))
+  ok('solid shapes have no hole', buildMassing({ gfa: 120_000, progress: 0, storeys: 10, shape: 'rect' }).floors[0].hole === undefined)
+  ok('courtyard scales to the GFA net of the void (vs a solid rect of same GFA)', polygonArea(court.floors[0].polygon) > polygonArea(buildMassing({ gfa: 120_000, progress: 0, storeys: 10, shape: 'rect' }).floors[0].polygon))
+
+  // distinct tower plate above the podium (per-region shapes)
+  const ts = buildMassing({ gfa: 120_000, progress: 0, storeys: 10, shape: 'rect', podium: 0.4, towerShape: 'cylinder' })
+  ok('podium floors keep the base shape, tower floors switch shape', ts.floors[0].polygon.length === 4 && ts.floors[9].polygon.length === 48)
+  ok('the shape switches exactly at the podium boundary (floor 4)', ts.floors[3].polygon.length === 4 && ts.floors[4].polygon.length === 48)
+  ok('tower shape is ignored without a podium split', buildMassing({ gfa: 120_000, progress: 0, storeys: 10, shape: 'rect', towerShape: 'cylinder' }).floors.every((f) => f.polygon.length === 4))
+  ok('tower shape equal to base shape changes nothing', buildMassing({ gfa: 120_000, progress: 0, storeys: 10, shape: 'rect', podium: 0.4, towerShape: 'rect' }).floors.every((f) => f.polygon.length === 4))
 
   // progress extremes
   ok('0% → nothing built', buildMassing({ gfa: 50_000, progress: 0, storeys: 12 }).builtCount === 0)
   ok('100% → all built', buildMassing({ gfa: 50_000, progress: 100, storeys: 12 }).builtCount === 12)
-  ok('zero GFA safe (no NaN)', (() => { const z = buildMassing({ gfa: 0, progress: 50 }); return z.floors.every((f) => Number.isFinite(f.halfW) && Number.isFinite(f.y)) })())
+  ok('zero GFA safe (no NaN)', (() => { const z = buildMassing({ gfa: 0, progress: 50 }); return z.floors.every((f) => f.polygon.every((p) => Number.isFinite(p.x) && Number.isFinite(p.z)) && Number.isFinite(f.y)) })())
 
   // colour mapping
   const f0 = m.floors[0], fTop = m.floors[24]
@@ -675,6 +716,159 @@ section('massing')
   ok('safety mode: high safety green', floorColor('safety', f0, 96) === '#22c55e')
   ok('carbon mode: high carbon red', floorColor('carbon', f0, 800) === '#ef4444')
   ok('status mode: high health green', floorColor('status', f0, 90) === '#22c55e')
+
+  // floor schedule + quantity takeoff (real-world data from the geometry)
+  const sched = massingSchedule(buildMassing({ gfa: 100_000, progress: 50, storeys: 10, shape: 'rect' }), { storeyHeight: 3.6, slabThickness: 0.3 })
+  ok('schedule has one row per storey', sched.floors.length === 10)
+  ok('rect plate area ≈ GFA/storeys (10,000 m²)', near(sched.floors[0].area, 10000, 1), sched.floors[0].area)
+  ok('modeled GFA sums the plates (≈100,000 m²)', near(sched.grossFloorArea, 100000, 5), sched.grossFloorArea)
+  ok('100×100 plate → 400 m perimeter, 1,440 m² façade/floor', near(sched.floors[0].perimeter, 400, 1) && near(sched.floors[0].facade, 1440, 5))
+  ok('elevations step by the storey height', near(sched.floors[0].elevation, 0) && near(sched.floors[1].elevation, 3.6) && near(sched.height, 36))
+  ok('gross volume = GFA × storey height', near(sched.grossVolume, 100000 * 3.6, 100))
+  ok('slab concrete = GFA × thickness', near(sched.slabVolume, 100000 * 0.3, 50))
+  ok('built area = 5 of 10 floors (≈50,000 m²)', near(sched.builtArea, 50000, 5) && near(sched.plannedArea, 50000, 5))
+  ok('taper reduces modeled GFA below the nominal target', massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 10, taper: 0.4 })).grossFloorArea < 100000)
+  ok('courtyard façade includes the atrium walls (perimeter > solid plate)', massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 8, shape: 'court' })).floors[0].perimeter > massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 8, shape: 'rect' })).floors[0].perimeter)
+  ok('slug makes a filesystem-safe export name', slug('Meridian Tower!') === 'meridian-tower' && slug('  A/B  ') === 'a-b' && slug('') === 'export')
+
+  // performance, sustainability & yield metrics
+  const perf = massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 10, shape: 'rect' }), { storeyHeight: 3.6, slabThickness: 0.3, wwr: 0.4, netEfficiency: 0.82, costPerM2: 2800 })
+  ok('exterior surface = façade + roof + footprint', near(perf.exteriorSurface, perf.facadeArea + perf.roofArea + perf.footprint, 1))
+  ok('glazing + opaque wall = façade area (WWR split)', near(perf.glazingArea + perf.opaqueWallArea, perf.facadeArea, 1) && near(perf.glazingArea, perf.facadeArea * 0.4, 1))
+  ok('net area = GFA × efficiency', near(perf.netArea, 82000, 5))
+  ok('form factor = exterior surface ÷ gross volume', near(perf.formFactor, perf.exteriorSurface / perf.grossVolume, 0.001))
+  ok('wall-to-floor ratio reported', near(perf.wallToFloor, perf.facadeArea / perf.grossFloorArea, 0.001))
+  ok('slenderness = height ÷ min plan dim (36 / 100 = 0.36)', near(perf.slenderness, 0.36, 0.01), perf.slenderness)
+  ok('embodied carbon = slab×rate + façade×rate; intensity = ÷GFA', near(perf.embodiedCarbon, perf.slabVolume * 350 + perf.facadeArea * 80, 50) && near(perf.carbonIntensity, perf.embodiedCarbon / perf.grossFloorArea, 0.5))
+  ok('ROM cost = GFA × rate', near(perf.romCost, 100000 * 2800, 5000))
+  ok('occupancy + parking from yields', perf.occupancy === Math.round(perf.netArea / 12) && perf.parkingStalls === Math.round((perf.grossFloorArea / 1000) * 3))
+  ok('a flatter building has more skin per volume → higher form factor', massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 2, shape: 'rect' })).formFactor > massingSchedule(buildMassing({ gfa: 100_000, progress: 0, storeys: 20, shape: 'rect' })).formFactor)
+}
+
+// ── building (componentized building from the massing) ──────────────────────────
+section('building')
+{
+  const b = buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 10, shape: 'rect' }))
+  ok('one slab per storey + a roof', b.slabs.length === 10 && b.counts.slabs === 10 && b.roof !== null)
+  ok('a glazed façade panel per edge per floor (rect = 4×10)', b.glazing.length === 40 && b.counts.glazingPanels === 40)
+  ok('places a perimeter column grid (multiple of storeys, >0)', b.columns.length > 0 && b.columns.length % 10 === 0)
+  ok('columns span a storey height each', b.columns.every((c) => c.h > 0 && c.w > 0 && c.d > 0))
+  ok('a central core spanning full height by default', b.core !== null && Math.abs(b.core!.h - b.totalHeight) < 1e-9)
+  ok('cylinder footprint → far more façade panels than a box', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 10, shape: 'cylinder' })).glazing.length === 480)
+  ok('taller building → more columns', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 20, shape: 'rect' })).columns.length > b.columns.length)
+  ok('coreRatio 0 omits the core', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 5, shape: 'rect' }), { coreRatio: 0 }).core === null)
+  ok('every element is tagged with its level', b.slabs.every((s, i) => s.level === i) && b.columns.every((c) => c.level !== undefined) && b.glazing.every((g) => g.level !== undefined))
+  ok('roof is tagged as the level above the top floor', b.roof?.level === 10)
+}
+
+// ── building-explorer (Revit-style floor/element/schedule review) ───────────────
+section('building-explorer')
+{
+  const model = buildBuilding(buildMassing({ gfa: 120_000, progress: 100, storeys: 12, shape: 'rect' }), { coreRatio: 0.16 })
+  const ex = explodeBuilding(model, { storeyHeight: 3.6 })
+  ok('explodes one inspectable element per real part', ex.summary.columns === model.columns.length && ex.summary.panels === model.glazing.length)
+  ok('a floor element per storey + a roof, all addressable by id', !!(ex.byId['floor-0'] && ex.byId['floor-11'] && ex.byId['roof'] && ex.byId['col-0-0'] && ex.byId['core']))
+  ok('levels list = 12 storeys + roof', ex.levels.length === 13 && ex.levels[0].name === 'Ground' && ex.levels[12].isRoof)
+  ok('ground floor sits at elevation 0 with real area', ex.byId['floor-0'].data.elevation === 0 && Number(ex.byId['floor-0'].data.area) > 0)
+  ok('upper floor elevation = level × storey height', Number(ex.byId['floor-10'].data.elevation) === 36)
+  ok('column carries a real height (~storey) & concrete volume', Number(ex.byId['col-0-0'].data.height) > 3 && Number(ex.byId['col-0-0'].data.height) < 3.4 && Number(ex.byId['col-0-0'].data.volume) > 0)
+  ok('panel carries width/height/area + a compass facing', (() => { const p = ex.byId['pan-0-0'].data; return Number(p.area) > 0 && Number(p.facing) >= 0 && Number(p.facing) <= 360 && typeof p.orientation === 'string' })())
+  ok('core spans all storeys (level -1) with volume', ex.byId['core'].level === -1 && Number(ex.byId['core'].data.volume) > 0)
+  ok('column section/slab are tunable takeoff assumptions', explodeBuilding(model, { columnSection: 0.8 }).byId['col-0-0'].data.section === 0.8)
+  // schedules
+  const colSched = ex.schedules.find((s) => s.category === 'Column')!
+  ok('column schedule has a row per column with a concrete total', colSched.rows.length === model.columns.length && colSched.totals.volume > 0)
+  ok('floor schedule totals the GFA across storeys', (() => { const fs = ex.schedules.find((s) => s.group === 'Floors & Roof')!; return fs.rows.length === 13 && fs.totals.area > 0 })())
+  // level filtering is consistent
+  ok('per-level columns/panels partition the totals', (() => { let c = 0, p = 0; for (let i = 0; i < 12; i++) { c += levelColumns(model, i).length; p += levelPanels(model, i).length } return c === model.columns.length && p === model.glazing.length })())
+  // plan projection
+  const plan = planForLevel(model, 0)
+  ok('plan projection: outline + columns with ids that match the schedule', plan.outline.length >= 4 && plan.columns.length === levelColumns(model, 0).length && plan.columns[0].id === 'col-0-0')
+  ok('roof plan has no columns/panels', planForLevel(model, 12).isRoof && planForLevel(model, 12).columns.length === 0)
+  // highlight geometry
+  ok('findElementGeom locates a column box', (() => { const g = findElementGeom(model, 'col-0-0'); return !!g && Math.abs(g.size.x - model.columns[0].w) < 1e-9 })())
+  ok('findElementGeom gives a panel an edge direction', (() => { const g = findElementGeom(model, 'pan-0-0'); return !!g && !!g.dir })())
+  ok('findElementGeom returns null for an unknown id', findElementGeom(model, 'nope-9-9') === null)
+}
+
+// ── model-stats (uploaded mesh-model import) ────────────────────────────────────
+section('model-stats')
+{
+  const st = summarizeModel([{ name: 'a', triangles: 12, vertices: 24 }, { name: 'b', triangles: 6, vertices: 12 }], 2, { x: 10, y: 20, z: 5 })
+  ok('summarizes meshes / triangles / vertices / materials', st.meshes === 2 && st.triangles === 18 && st.vertices === 36 && st.materials === 2)
+  ok('carries the bounding-box dimensions', st.dimensions.x === 10 && st.dimensions.y === 20 && st.dimensions.z === 5)
+  const obj = sampleObj()
+  ok('sample OBJ has 3 objects, 24 vertices, 18 quad faces', (obj.match(/^o /gm) || []).length === 3 && (obj.match(/^v /gm) || []).length === 24 && (obj.match(/^f /gm) || []).length === 18)
+}
+
+// ── aps (Autodesk Platform Services — native CAD/BIM translate + view) ──────────
+section('aps')
+{
+  const oid = 'urn:adsk.objects:os.object:aecstudio/model.rvt'
+  const urn = encodeUrn(oid)
+  ok('URN is base64url with no padding', /^[A-Za-z0-9_-]+$/.test(urn) && !urn.includes('=') && !urn.includes('+') && !urn.includes('/'))
+  ok('encode → decode round-trips', decodeUrn(urn) === oid)
+  ok('normalizeUrn encodes a raw objectId', normalizeUrn(oid) === urn)
+  ok('normalizeUrn passes an already-encoded URN through (strips urn: prefix)', normalizeUrn(`urn:${urn}`) === urn && normalizeUrn(urn) === urn)
+  ok('translationProgress reads the manifest', translationProgress({ status: 'inprogress', progress: '57% complete' }).percent === 57 && translationProgress({ status: 'success' }).status === 'success' && translationProgress(null).status === 'none')
+  ok('translationProgress success is 100%', translationProgress({ status: 'success', progress: 'complete' }).percent === 100)
+  ok('bucketKey is APS-legal (lowercase, namespaced)', /^aecstudio[a-z0-9]+$/.test(bucketKeyFor('My-Client-ID 42!')))
+  ok('objectKey is unique + sanitized', /^\d+-/.test(objectKeyFor('My Model (final).rvt')) && !/[()\s]/.test(objectKeyFor('My Model (final).rvt')))
+  ok('isTranslatable knows native CAD/BIM', isTranslatable('tower.rvt') && isTranslatable('site.dwg') && isTranslatable('coord.nwd') && !isTranslatable('notes.txt'))
+}
+
+// ── agent-tools (unified tool layer for the MCP server + in-app AI agent) ───────
+section('agent-tools')
+{
+  ok('5 tools, each with a JSON-Schema object input', AGENT_TOOLS.length === 5 && AGENT_TOOLS.every((t) => t.name && t.description && (t.inputSchema as { type?: string }).type === 'object' && (t.inputSchema as { properties?: object }).properties))
+  ok('schemas declare required fields', (AGENT_TOOLS.find((t) => t.name === 'analyze_zoning')!.inputSchema as { required?: string[] }).required!.includes('far'))
+  const ms = (await runTool('massing_schedule', { gfa: 100000, storeys: 10, shape: 'rect' })) as { grossFloorArea: number; floors: unknown[]; embodiedCarbon: number }
+  ok('runTool massing_schedule computes a real schedule', ms.grossFloorArea > 0 && ms.floors.length === 10 && ms.embodiedCarbon > 0)
+  const az = (await runTool('analyze_zoning', { width: 60, depth: 45, far: 4, heightLimit: 60, setback: 6, maxCoverage: 55, proposedGFA: 9000, proposedStoreys: 14 })) as { maxGFA: number; compliance: { overall: boolean } }
+  ok('runTool analyze_zoning computes capacity + compliance', az.maxGFA === 10800 && typeof az.compliance.overall === 'boolean')
+  const ifc = (await runTool('parse_ifc', { ifc: SAMPLE_IFC_GEO })) as { entityCounts: unknown[] }
+  ok('runTool parse_ifc summarises a model', Array.isArray(ifc.entityCounts) && ifc.entityCounts.length > 0)
+  let threw = false
+  try { await runTool('does_not_exist', {}) } catch { threw = true }
+  ok('runTool throws on an unknown tool', threw)
+}
+
+// ── mcp-federation (agent calling external MCP servers) ─────────────────────────
+section('mcp-federation')
+{
+  ok('parseMcpServers: empty → []', parseMcpServers('').length === 0 && parseMcpServers(undefined).length === 0)
+  const arr = parseMcpServers('[{"name":"autodesk","url":"https://x/mcp"},{"name":"db","url":"http://y/mcp"}]')
+  ok('parseMcpServers: JSON array', arr.length === 2 && arr[0].name === 'autodesk' && arr[1].url === 'http://y/mcp')
+  ok('parseMcpServers: name=url pairs', (() => { const r = parseMcpServers('autodesk=https://a/mcp, db=https://b/mcp'); return r.length === 2 && r[0].name === 'autodesk' && r[1].url === 'https://b/mcp' })())
+  ok('parseMcpServers: drops non-http + sanitizes names', (() => { const r = parseMcpServers('[{"name":"a b!","url":"ftp://x"},{"name":"ok","url":"https://z/mcp"}]'); return r.length === 1 && r[0].name === 'ok' })())
+  ok('qualify/split round-trip', (() => { const q = qualify('autodesk', 'list_models'); const s = split(q); return q === 'autodesk__list_models' && s!.server === 'autodesk' && s!.tool === 'list_models' })())
+  ok('split returns null when unqualified', split('plain') === null)
+}
+
+// ── tool-forms (schema-driven Connections hub runner) ───────────────────────────
+section('tool-forms')
+{
+  const massing = AGENT_TOOLS.find((t) => t.name === 'massing_schedule')!.inputSchema
+  const fields = fieldsFromSchema(massing)
+  ok('fieldsFromSchema reads types, enums & required', (() => {
+    const gfa = fields.find((f) => f.name === 'gfa'); const shape = fields.find((f) => f.name === 'shape'); const storeys = fields.find((f) => f.name === 'storeys')
+    return gfa?.type === 'number' && gfa.required && shape?.type === 'enum' && shape.enum!.includes('court') && storeys?.type === 'integer'
+  })())
+  ok('required fields are ordered first', fields[0].required)
+  ok('coerceArgs types values + flags missing required', (() => {
+    const { args, errors } = coerceArgs(fields, { gfa: '100000', storeys: '10', shape: 'rect' })
+    return args.gfa === 100000 && args.storeys === 10 && args.shape === 'rect' && errors.length === 0
+  })())
+  ok('coerceArgs errors on missing required + bad number', (() => {
+    const r1 = coerceArgs(fields, { storeys: '10' }); const r2 = coerceArgs(fields, { gfa: 'abc' })
+    return r1.errors.some((e) => /gfa/.test(e)) && r2.errors.some((e) => /gfa/.test(e))
+  })())
+  const arr = fieldsFromSchema(AGENT_TOOLS.find((t) => t.name === 'score_suppliers')!.inputSchema)
+  ok('array inputs become JSON fields, parsed on coerce', (() => {
+    const f = arr.find((x) => x.name === 'suppliers'); const { args, errors } = coerceArgs(arr, { suppliers: '[{"id":"a"}]' })
+    return f?.type === 'json' && Array.isArray(args.suppliers) && errors.length === 0
+  })())
+  ok('invalid JSON is rejected', coerceArgs(arr, { suppliers: '{bad' }).errors.length === 1)
 }
 
 // ── ifc-model (3D reconstruction from IFC counts) ────────────────────────────
@@ -717,6 +911,12 @@ section('ifc-model')
   ok('storeys floored to ≥1', buildIfcScene({ entityCounts: counts, storeys: 0 }).storeys === 1)
 
   ok('discipline colours defined', DISCIPLINE_COLOR.struct.startsWith('#') && DISCIPLINE_COLOR.mep.startsWith('#'))
+
+  // selected-element summary (inspector panel / aria-label)
+  const geoSel: SelectedElement = { key: 'g0', source: 'geometry', ifcType: 'IFCCOLUMN', discipline: 'struct', expressID: 42, size: { x: 0.6, y: 3.2, z: 0.6 }, triangles: 12 }
+  ok('describeSelection summarises real geometry', describeSelection(geoSel) === 'IFCCOLUMN · Structural · #42 · 0.6 × 3.2 × 0.6 m · 12 triangles', describeSelection(geoSel))
+  const reconSel: SelectedElement = { key: 'e3', source: 'reconstruction', ifcType: 'IFCWALL', discipline: 'arch', storey: 2, size: { x: 4, y: 3, z: 0.2 } }
+  ok('describeSelection summarises reconstruction', describeSelection(reconSel) === 'IFCWALL · Architectural · storey 2 · 4.0 × 3.0 × 0.2 m', describeSelection(reconSel))
 }
 
 // ── ifc-geometry (real web-ifc tessellation of the bundled sample) ──────────────
@@ -739,11 +939,126 @@ section('ifc-geometry')
   ok('classifies discipline from real IFC type (36 struct, 6 arch)',
     res.meshes.filter((m) => m.discipline === 'struct').length === 36 && res.meshes.filter((m) => m.discipline === 'arch').length === 6,
     res.meshes.reduce<Record<string, number>>((a, m) => ({ ...a, [m.discipline]: (a[m.discipline] ?? 0) + 1 }), {}))
+  const names = new Set(res.meshes.map((m) => m.ifcTypeName))
+  ok('resolves readable IFC type names for the inspector', names.has('IFCCOLUMN') && names.has('IFCSLAB') && names.has('IFCBEAM') && names.has('IFCWALLSTANDARDCASE'), [...names])
   ok('bbox spans the four storeys vertically (~14m, Y-up)', !!res.bbox && near(res.bbox.max[1] - res.bbox.min[1], 14, 0.5), res.bbox)
   ok('bbox plan width ~16m', !!res.bbox && near(res.bbox.max[0] - res.bbox.min[0], 16, 0.5), res.bbox)
   // Robustness: garbage / empty bytes never throw, just yield an empty result.
   const junk = await extractGeometry(new TextEncoder().encode('not an ifc file'))
   ok('invalid input → empty result, no throw', junk.meshes.length === 0 && junk.bbox === null)
+}
+
+// ── shapes (footprint geometry library) ─────────────────────────────────────────
+section('shapes')
+{
+  ok('all SHAPE_KINDS generate ≥3-point polygons', SHAPE_KINDS.every((s) => unitShape(s.id).length >= 3))
+  ok('rect=4, l=6, u=8, cross=12, cylinder=48 points', unitShape('rect').length === 4 && unitShape('l').length === 6 && unitShape('u').length === 8 && unitShape('cross').length === 12 && unitShape('cylinder').length === 48)
+  ok('scaleToArea hits the target area', near(polygonArea(scaleToArea(unitShape('l'), 500)), 500, 0.01))
+  ok('scaleAbout shrinks area by k²', near(polygonArea(scaleAbout(unitShape('rect'), 0.5)), polygonArea(unitShape('rect')) * 0.25, 1e-6))
+  ok('rotatePolygon preserves area', near(polygonArea(rotatePolygon(unitShape('cross'), 0.7)), polygonArea(unitShape('cross')), 1e-9))
+  ok('aspect stretches width but holds area ~constant', (() => { const a = polygonArea(unitShape('rect', 2)), b = polygonArea(unitShape('rect', 1)); return near(a, b, 0.02) && shapeExtent(unitShape('rect', 2)).width > shapeExtent(unitShape('rect', 1)).width })())
+  ok('cross is non-convex (extent wider than a same-area rect arm)', shapeExtent(unitShape('cross')).width > 0)
+  ok('custom preset is an editable 5-point default', unitShape('custom').length === 5)
+  ok('centerPolygon moves the centroid to the origin', (() => { const c = centerPolygon([{ x: 10, z: 10 }, { x: 14, z: 10 }, { x: 14, z: 13 }, { x: 10, z: 13 }]); const ct = polygonCentroid(c); return near(ct.x, 0, 1e-9) && near(ct.z, 0, 1e-9) })())
+}
+
+// ── zoning (site boundary + envelope + compliance) ──────────────────────────────
+section('zoning')
+{
+  const site = rectSite(40, 30)
+  ok('rect site area / perimeter / centroid', polygonArea(site) === 1200 && polygonPerimeter(site) === 140 && near(polygonCentroid(site).x, 0) && near(polygonCentroid(site).z, 0))
+  const inset = insetPolygon(site, 5)
+  ok('inset by 5 → 30×20 (area 600)', inset.length === 4 && near(polygonArea(inset), 600, 0.001), polygonArea(inset))
+  ok('inset larger than the site collapses to empty', insetPolygon(site, 25).length === 0)
+  ok('scalePolygon halves area by k²', near(polygonArea(scalePolygon(site, 0.5)), 300, 0.001))
+
+  const z = buildZoning({ boundary: site, far: 3, heightLimit: 40, setback: 5, maxCoverage: 50, storeyHeight: 3.5, proposedGFA: 3000, proposedStoreys: 10 })
+  ok('site area 1200, maxGFA = FAR×area = 3600', z.siteArea === 1200 && z.maxGFA === 3600)
+  ok('buildable = inset area 600; coverage cap 600 → maxFootprint 600', near(z.buildableArea, 600, 0.001) && near(z.maxFootprint, 600, 0.001))
+  ok('proposed footprint = GFA/storeys = 300, height = 35', near(z.proposed.footprint, 300) && near(z.proposed.height, 35))
+  ok('compliant scheme passes all checks', z.compliance.overall && z.compliance.far && z.compliance.height && z.compliance.coverage && z.compliance.setback)
+  ok('utilisation = 3000/3600 ≈ 83.3%', near(z.utilisation, 83.33, 0.1), z.utilisation)
+
+  const over = buildZoning({ boundary: site, far: 3, heightLimit: 40, setback: 5, maxCoverage: 50, storeyHeight: 3.5, proposedGFA: 5000, proposedStoreys: 10 })
+  ok('over-FAR scheme fails FAR + overall', !over.compliance.far && !over.compliance.overall)
+  const tall = buildZoning({ boundary: site, far: 10, heightLimit: 20, setback: 5, maxCoverage: 90, storeyHeight: 3.5, proposedGFA: 4000, proposedStoreys: 10 })
+  ok('over-height scheme fails height (35 > 20)', !tall.compliance.height && !tall.compliance.overall)
+
+  // podium + tower massing (GFA-conserving, stepped)
+  ok('no podium → a single tier spanning the full height', z.tiers.length === 1 && z.tiers[0].base === 0 && near(z.tiers[0].top, 35))
+  const pod = buildZoning({ boundary: site, far: 3, heightLimit: 40, setback: 5, maxCoverage: 90, storeyHeight: 3.5, proposedGFA: 3000, proposedStoreys: 10, podium: 0.4, towerSetback: 0.4 })
+  ok('podium → two tiers, podium plate larger than tower', pod.tiers.length === 2 && pod.tiers[0].footprint > pod.tiers[1].footprint)
+  ok('tiers stack base→top to the full height', pod.tiers[0].base === 0 && near(pod.tiers[0].top, 14) && near(pod.tiers[1].top, 35))
+  ok('podium+tower conserves GFA', near(pod.tiers[0].footprint * 4 + pod.tiers[1].footprint * 6, 3000, 1))
+  ok('coverage binds on the larger podium plate', near(pod.proposed.footprint, pod.tiers[0].footprint, 1e-6))
+
+  // sky-exposure plane (stepped legal envelope)
+  ok('no sky plane → a single envelope tier to the height limit', z.envelopeTiers.length === 1 && z.compliance.skyPlane)
+  const sky = buildZoning({ boundary: site, far: 3, heightLimit: 40, setback: 5, maxCoverage: 90, storeyHeight: 3.5, proposedGFA: 3000, proposedStoreys: 10, skyBase: 10, skyStep: 0.4 })
+  ok('sky plane → two envelope tiers, upper stepped in above skyBase', sky.envelopeTiers.length === 2 && sky.envelopeTiers[1].base === 10 && sky.envelopeTiers[1].footprint < sky.envelopeTiers[0].footprint)
+  ok('upper envelope = buildable × (1−step)²', near(sky.envelopeTiers[1].footprint, 600 * 0.6 * 0.6, 0.01), sky.envelopeTiers[1].footprint)
+  ok('scheme busting the upper envelope fails the sky-plane check', !sky.compliance.skyPlane && !sky.compliance.overall) // 300 m² plate above 10 m > 216 m² upper env
+  const skyOk = buildZoning({ boundary: site, far: 3, heightLimit: 40, setback: 5, maxCoverage: 90, storeyHeight: 3.5, proposedGFA: 3000, proposedStoreys: 10, skyBase: 10, skyStep: 0.1 })
+  ok('a scheme within the upper envelope passes the sky-plane check', skyOk.compliance.skyPlane) // upper env 600×0.81=486 ≥ 300
+
+  // GeoJSON import — metre ring + lon/lat ring + Feature wrapper
+  const metres = parseGeoBoundary('[[0,0],[200,0],[200,150],[0,150]]')
+  ok('parses a bare metre ring (area 30000)', !!metres && near(polygonArea(metres!), 30000, 1), metres && polygonArea(metres))
+  const feat = parseGeoBoundary(JSON.stringify({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[0, 0], [300, 0], [300, 200], [0, 200], [0, 0]]] } }))
+  ok('parses a GeoJSON Feature polygon, drops closing vertex (4 pts, area 60000)', !!feat && feat!.length === 4 && near(polygonArea(feat!), 60000, 1))
+  const ll = parseGeoBoundary('[[-0.0005,-0.0005],[0.0005,-0.0005],[0.0005,0.0005],[-0.0005,0.0005]]')
+  ok('projects a lon/lat ring to metres (~12,300 m²)', !!ll && polygonArea(ll!) > 11000 && polygonArea(ll!) < 13500, ll && polygonArea(ll))
+  ok('rejects non-JSON input', parseGeoBoundary('not json') === null)
+}
+
+// ── geo (geospatial site analytics) ─────────────────────────────────────────────
+section('geo')
+{
+  const site = rectSite(40, 30)
+  const a = analyzeSite(site)
+  ok('area in m²/ha/acres/ft²', a.area.m2 === 1200 && near(a.area.ha, 0.12, 1e-6) && near(a.area.acres, 0.2965, 0.001) && near(a.area.ft2, 12917, 5))
+  ok('perimeter m + ft', a.perimeter.m === 140 && near(a.perimeter.ft, 459, 1))
+  ok('one edge per side with length + bearing', a.edges.length === 4 && a.edges[0].length === 40 && a.edges[1].length === 30)
+  ok('bearings: E side 90°, N side 0°', a.edges[0].bearing === 90 && a.edges[1].bearing === 0)
+  ok('frontage = longest edge (40 m)', a.frontage.length === 40)
+  ok('compactness (Polsby–Popper) ≈ 0.77 for a 40×30 rect', near(a.compactness, 0.769, 0.01), a.compactness)
+  ok('bbox = 40 × 30', a.bbox.width === 40 && a.bbox.depth === 30)
+  ok('a square is more compact than a long sliver', analyzeSite(rectSite(35, 35)).compactness > analyzeSite(rectSite(100, 8)).compactness)
+  // projection: local metres → lat/lng about an anchor
+  const anchor = { lat: 40, lng: -74 }
+  ok('toLatLng moves north by z and east by x', (() => { const ll = toLatLng({ x: 0, z: 110540 }, anchor); return near(ll.lat, 41, 1e-3) && near(ll.lng, -74, 1e-6) })())
+  ok('boundaryToLatLng maps every vertex + analyzeSite centroid', boundaryToLatLng(site, anchor).length === 4 && !!analyzeSite(site, anchor).centroidLatLng)
+  ok('compass labels a bearing', compass(90) === 'E' && compass(0) === 'N' && compass(225) === 'SW')
+  ok('toLatLng / fromLatLng round-trip', (() => { const p = { x: 137.4, z: -88.2 }; const back = fromLatLng(toLatLng(p, anchor), anchor); return near(back.x, p.x, 0.5) && near(back.z, p.z, 0.5) })())
+  // site survey — clickable, georeferenced parcel review
+  const sv = siteSurvey(site, anchor)
+  ok('survey lists every vertex with local metres + lat/lng', sv.vertices.length === 4 && sv.vertices[0].lat !== undefined && sv.vertices[0].lng !== undefined)
+  ok('survey lists every edge with length, bearing & compass + endpoints', sv.edges.length === 4 && sv.edges[0].compass === 'E' && sv.edges[0].from === 'V1' && sv.edges[0].to === 'V2')
+  ok('survey edge wraps the last vertex back to the first', sv.edges[3].to === 'V1')
+  ok('survey carries area, perimeter, frontage compass & georeferenced centroid', sv.area.m2 === 1200 && sv.perimeter.m === 140 && sv.frontage.compass === compass(sv.frontage.bearing) && sv.centroid.lat !== undefined)
+  ok('survey without an anchor omits lat/lng (local-only)', (() => { const s2 = siteSurvey(site); return s2.vertices[0].lat === undefined && s2.centroid.lat === undefined && s2.edges.length === 4 })())
+}
+
+// ── sun (solar position for the building sun/shadow study) ──────────────────────
+section('sun')
+{
+  const LAT = 51.5 // London; lng 0 so solar noon ≈ 12:00 UTC
+  const summerNoon = sunPosition(momentOf(6, 12), LAT, 0)
+  ok('summer-solstice solar noon altitude high (~62°)', summerNoon.altitude >= 58 && summerNoon.altitude <= 66, summerNoon.altitude)
+  ok('sun is due south at solar noon (azimuth ~180°)', summerNoon.azimuth >= 170 && summerNoon.azimuth <= 190, summerNoon.azimuth)
+  const winterNoon = sunPosition(momentOf(12, 12), LAT, 0)
+  ok('winter-solstice solar noon altitude low (~15°)', winterNoon.altitude >= 11 && winterNoon.altitude <= 19, winterNoon.altitude)
+  ok('sun climbs higher in summer than winter', summerNoon.altitude > winterNoon.altitude + 30)
+  ok('sun is below the horizon at solar midnight', sunPosition(momentOf(6, 0), LAT, 0).altitude < 0)
+  // direction vector (x=East, y=up, z=North)
+  const up = sunDirection(180, 90)
+  ok('overhead sun points straight up (y≈1)', near(up.y, 1, 0.01) && near(up.x, 0, 0.01) && near(up.z, 0, 0.01))
+  const south = sunDirection(180, 0)
+  ok('south horizon sun points -z (south), y≈0', near(south.z, -1, 0.01) && near(south.y, 0, 0.01))
+  const east = sunDirection(90, 0)
+  ok('east horizon sun points +x (east)', near(east.x, 1, 0.01) && near(east.y, 0, 0.01))
+  ok('sunDirection is a unit vector', near(Math.hypot(up.x, up.y, up.z), 1, 1e-6) && near(Math.hypot(east.x, east.y, east.z), 1, 1e-6))
+  ok('momentOf builds a mid-month UTC moment with fractional hours', (() => { const d = momentOf(3, 14.5); return d.getUTCMonth() === 2 && d.getUTCDate() === 15 && d.getUTCHours() === 14 && d.getUTCMinutes() === 30 })())
 }
 
 console.log(`\nengines: ${pass} passed, ${fail} failed`)

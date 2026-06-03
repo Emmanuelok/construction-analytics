@@ -1,0 +1,303 @@
+import { useEffect, useRef, useState } from 'react'
+import * as THREE from 'three'
+import { Building2 } from 'lucide-react'
+import type { BuildingModel, Plate } from '@/lib/building'
+import { sunDirection } from '@/lib/sun'
+import { findElementGeom } from '@/lib/building-explorer'
+
+function webglAvailable(): boolean {
+  try {
+    const c = document.createElement('canvas')
+    return !!(window.WebGLRenderingContext && (c.getContext('webgl') || c.getContext('experimental-webgl')))
+  } catch { return false }
+}
+
+const DEF_AZ = Math.PI * 0.26, DEF_POLAR = Math.PI * 0.36
+
+/* Renders the componentized building (from buildBuilding): floor slabs + roof,
+ * an instanced perimeter column grid, an instanced glass curtain-wall façade and a
+ * core — so it reads as an actual building. Trades toggle on/off; orbit/zoom/
+ * keyboard; graceful WebGL fallback. */
+export function ComponentBuildingViewer({
+  model,
+  hidden = {},
+  sun,
+  shadows = true,
+  isolateLevel = null,
+  selected = null,
+  onSelect,
+  height = 460,
+}: {
+  model: BuildingModel
+  hidden?: { glazing?: boolean; structure?: boolean; slabs?: boolean }
+  sun?: { azimuth: number; altitude: number }
+  shadows?: boolean
+  isolateLevel?: number | null
+  selected?: string | null
+  onSelect?: (id: string | null) => void
+  height?: number
+}) {
+  const mountRef = useRef<HTMLDivElement>(null)
+  const [failed, setFailed] = useState(false)
+  const propsRef = useRef({ model, hidden, sun, shadows, isolateLevel, selected, onSelect })
+  propsRef.current = { model, hidden, sun, shadows, isolateLevel, selected, onSelect }
+
+  const rebuildRef = useRef<(() => void) | null>(null)
+  const sunFnRef = useRef<(() => void) | null>(null)
+  const highlightRef = useRef<(() => void) | null>(null)
+  useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs, isolateLevel])
+  useEffect(() => { sunFnRef.current?.() }, [sun?.azimuth, sun?.altitude, shadows])
+  useEffect(() => { highlightRef.current?.() }, [selected, model])
+
+  useEffect(() => {
+    const mount = mountRef.current
+    if (!mount) return
+    if (!webglAvailable()) { setFailed(true); return }
+    const width = mount.clientWidth || 600
+
+    let renderer: THREE.WebGLRenderer
+    try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }) }
+    catch { setFailed(true); return }
+
+    const scene = new THREE.Scene()
+    scene.background = new THREE.Color('#0a0f1c')
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 4000)
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    renderer.setSize(width, height)
+    renderer.shadowMap.enabled = true
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    mount.appendChild(renderer.domElement)
+    renderer.domElement.style.cursor = 'grab'
+    renderer.domElement.setAttribute('aria-hidden', 'true')
+
+    const ambient = new THREE.AmbientLight('#9fb2cc', 0.55); scene.add(ambient)
+    const hemi = new THREE.HemisphereLight('#dbeafe', '#0a0f1c', 0.5); scene.add(hemi)
+    // The sun: a directional light positioned from azimuth/altitude, casting real shadows.
+    const sunLight = new THREE.DirectionalLight('#fff7e6', 1.2)
+    sunLight.position.set(1.2, 2, 1.4)
+    sunLight.shadow.mapSize.set(2048, 2048)
+    sunLight.shadow.bias = -0.0006
+    scene.add(sunLight); scene.add(sunLight.target)
+    const fill = new THREE.DirectionalLight('#93c5fd', 0.3); fill.position.set(-1.5, 0.6, -1); scene.add(fill)
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(200, 64), new THREE.MeshStandardMaterial({ color: '#0e1626', roughness: 1 }))
+    ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; ground.receiveShadow = true; scene.add(ground)
+    const grid = new THREE.GridHelper(400, 80, '#1e293b', '#16203a')
+    ;(grid.material as THREE.Material).transparent = true; (grid.material as THREE.Material).opacity = 0.35; scene.add(grid)
+
+    const slabMat = new THREE.MeshStandardMaterial({ color: '#b8c2d0', roughness: 0.85, metalness: 0.05 })
+    const colMat = new THREE.MeshStandardMaterial({ color: '#64748b', roughness: 0.6, metalness: 0.15 })
+    const coreMat = new THREE.MeshStandardMaterial({ color: '#475569', roughness: 0.8 })
+    const glassMat = new THREE.MeshStandardMaterial({ color: '#7dd3fc', transparent: true, opacity: 0.24, roughness: 0.08, metalness: 0.4, side: THREE.DoubleSide, depthWrite: false })
+    const unitBox = new THREE.BoxGeometry(1, 1, 1)
+    const unitPlane = new THREE.PlaneGeometry(1, 1)
+
+    const group = new THREE.Group(); scene.add(group)
+    let disposables: THREE.BufferGeometry[] = []
+    const objects: THREE.Object3D[] = []
+
+    // click-to-inspect: raycast against the parts; a wireframe box highlights the pick
+    const raycaster = new THREE.Raycaster()
+    const ndc = new THREE.Vector2()
+    const hlBox = new THREE.BoxGeometry(1, 1, 1)
+    const hlEdgesGeo = new THREE.EdgesGeometry(hlBox)
+    const hlFillMat = new THREE.MeshBasicMaterial({ color: '#fbbf24', transparent: true, opacity: 0.16, depthWrite: false })
+    const hlLineMat = new THREE.LineBasicMaterial({ color: '#fbbf24' })
+    const highlight = new THREE.Group()
+    highlight.add(new THREE.Mesh(hlBox, hlFillMat), new THREE.LineSegments(hlEdgesGeo, hlLineMat))
+    highlight.visible = false; highlight.renderOrder = 2; scene.add(highlight)
+
+    const orbit = { az: DEF_AZ, polar: DEF_POLAR, radius: 60, target: new THREE.Vector3() }
+    const applyCamera = () => {
+      camera.position.set(
+        orbit.target.x + orbit.radius * Math.sin(orbit.polar) * Math.sin(orbit.az),
+        orbit.target.y + orbit.radius * Math.cos(orbit.polar),
+        orbit.target.z + orbit.radius * Math.sin(orbit.polar) * Math.cos(orbit.az),
+      )
+      camera.lookAt(orbit.target)
+    }
+
+    const plate = (p: Plate, mat: THREE.Material, id: string) => {
+      const shape = new THREE.Shape()
+      p.polygon.forEach((q, i) => (i ? shape.lineTo(q.x, -q.z) : shape.moveTo(q.x, -q.z)))
+      shape.closePath()
+      if (p.hole && p.hole.length >= 3) { const h = new THREE.Path(); p.hole.forEach((q, i) => (i ? h.lineTo(q.x, -q.z) : h.moveTo(q.x, -q.z))); h.closePath(); shape.holes.push(h) }
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: p.thickness, bevelEnabled: false }); geo.rotateX(-Math.PI / 2)
+      disposables.push(geo)
+      const mesh = new THREE.Mesh(geo, mat); mesh.position.y = p.y; mesh.castShadow = true; mesh.receiveShadow = true; mesh.userData.id = id; group.add(mesh); objects.push(mesh)
+    }
+
+    const clear = () => {
+      for (const o of objects) group.remove(o)
+      objects.length = 0
+      for (const g of disposables) g.dispose(); disposables = []
+    }
+
+    // Position the sun light from azimuth/altitude, size its shadow camera to the
+    // building, and dim the scene at night. Runs on build + whenever sun/shadows change.
+    const applySun = () => {
+      const { model: m, sun, shadows } = propsRef.current
+      const span = Math.max(m.totalHeight, m.footprint * 1.5, 8)
+      sunLight.target.position.set(0, m.totalHeight * 0.4, 0); sunLight.target.updateMatrixWorld()
+      const sc = sunLight.shadow.camera as THREE.OrthographicCamera
+      sc.left = -span * 1.7; sc.right = span * 1.7; sc.top = span * 1.7; sc.bottom = -span * 1.7
+      sc.near = 0.5; sc.far = span * 8; sc.updateProjectionMatrix()
+      if (sun) {
+        const dir = sunDirection(sun.azimuth, sun.altitude)
+        const dist = span * 2.4
+        sunLight.position.set(dir.x * dist, Math.max(dir.y, 0.04) * dist, dir.z * dist)
+        const day = sun.altitude > 0
+        sunLight.intensity = day ? 0.55 + (Math.min(sun.altitude, 60) / 60) * 1.05 : 0.04
+        sunLight.castShadow = shadows !== false && day
+        ambient.intensity = day ? 0.5 : 0.22
+        hemi.intensity = day ? 0.5 : 0.16
+        scene.background = new THREE.Color(day ? '#0a0f1c' : '#05070e')
+      } else {
+        sunLight.position.set(1.2, 2, 1.4).multiplyScalar(span)
+        sunLight.intensity = 1.2
+        sunLight.castShadow = shadows !== false
+        ambient.intensity = 0.55; hemi.intensity = 0.5
+        scene.background = new THREE.Color('#0a0f1c')
+      }
+      ;(mount as HTMLElement & { __sun?: object }).__sun = {
+        castShadow: sunLight.castShadow,
+        intensity: Math.round(sunLight.intensity * 100) / 100,
+        x: Math.round(sunLight.position.x * 10) / 10,
+        y: Math.round(sunLight.position.y * 10) / 10,
+        z: Math.round(sunLight.position.z * 10) / 10,
+      }
+    }
+    sunFnRef.current = applySun
+
+    const build = () => {
+      clear()
+      const { model: m, hidden: h, isolateLevel: iso } = propsRef.current
+      const storeys = m.counts.storeys
+      const isolating = iso != null
+      const showFloor = (lvl?: number) => !isolating || lvl === iso
+      // precompute stable per-level element ids (match building-explorer)
+      const colCount: Record<number, number> = {}
+      const colIds = m.columns.map((c) => { const lv = c.level ?? 0; const i = colCount[lv] ?? 0; colCount[lv] = i + 1; return `col-${lv}-${i}` })
+      const panCount: Record<number, number> = {}
+      const panIds = m.glazing.map((g) => { const lv = g.level ?? 0; const i = panCount[lv] ?? 0; panCount[lv] = i + 1; return `pan-${lv}-${i}` })
+
+      if (!h.slabs) {
+        for (const s of m.slabs) if (showFloor(s.level)) plate(s, slabMat, `floor-${s.level ?? 0}`)
+        if (m.roof && (!isolating || iso >= storeys)) plate(m.roof, slabMat, 'roof')
+      }
+      if (!h.structure) {
+        const cols = m.columns.map((c, i) => ({ c, id: colIds[i] })).filter(({ c }) => showFloor(c.level))
+        if (cols.length) {
+          const inst = new THREE.InstancedMesh(unitBox, colMat, cols.length)
+          inst.castShadow = true; inst.receiveShadow = true
+          const mat = new THREE.Matrix4()
+          cols.forEach(({ c }, i) => { mat.compose(new THREE.Vector3(c.x, c.y, c.z), new THREE.Quaternion(), new THREE.Vector3(c.w, c.h, c.d)); inst.setMatrixAt(i, mat) })
+          inst.instanceMatrix.needsUpdate = true; inst.userData.ids = cols.map(({ id }) => id); group.add(inst); objects.push(inst)
+        }
+        if (m.core && !(isolating && iso >= storeys)) {
+          // when isolating a storey, show just that storey's slice of the core
+          let cy = m.core.y, ch = m.core.h
+          if (isolating) { const sceneSh = m.totalHeight / Math.max(1, storeys); cy = iso * sceneSh + sceneSh / 2; ch = sceneSh * 0.92 }
+          const cm = new THREE.Mesh(unitBox, coreMat); cm.scale.set(m.core.w, ch, m.core.d); cm.position.set(m.core.x, cy, m.core.z); cm.castShadow = true; cm.receiveShadow = true; cm.userData.id = 'core'; group.add(cm); objects.push(cm)
+        }
+      }
+      if (!h.glazing) {
+        const pans = m.glazing.map((g, i) => ({ g, id: panIds[i] })).filter(({ g }) => showFloor(g.level))
+        if (pans.length) {
+          const inst = new THREE.InstancedMesh(unitPlane, glassMat, pans.length)
+          const mat = new THREE.Matrix4(); const q = new THREE.Quaternion(); const up = new THREE.Vector3(0, 1, 0)
+          const ex = new THREE.Vector3(), ez = new THREE.Vector3()
+          pans.forEach(({ g }, i) => {
+            ex.set(g.b.x - g.a.x, 0, g.b.z - g.a.z); const L = ex.length() || 1; ex.normalize()
+            ez.crossVectors(ex, up).normalize()
+            q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(ex, up, ez))
+            mat.compose(new THREE.Vector3((g.a.x + g.b.x) / 2, g.y + g.h / 2, (g.a.z + g.b.z) / 2), q, new THREE.Vector3(L, g.h, 1))
+            inst.setMatrixAt(i, mat)
+          })
+          inst.instanceMatrix.needsUpdate = true; inst.userData.ids = pans.map(({ id }) => id); group.add(inst); objects.push(inst)
+        }
+      }
+      const span = Math.max(m.totalHeight, m.footprint * 1.5, 8)
+      if (isolating && iso < storeys) { const sceneSh = m.totalHeight / Math.max(1, storeys); orbit.target.set(0, iso * sceneSh + sceneSh / 2, 0); orbit.radius = Math.max(m.footprint * 1.6, 10) }
+      else { orbit.target.set(0, m.totalHeight / 2, 0); orbit.radius = span * 1.7 }
+      scene.fog = new THREE.Fog('#0a0f1c', orbit.radius * 0.9, orbit.radius * 3.2)
+      applyCamera(); applySun(); applyHighlight()
+      ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, glazing: m.counts.glazingPanels, slabs: m.counts.slabs }
+    }
+    rebuildRef.current = build
+
+    // selection highlight — a wireframe box sized/oriented to the picked element
+    const applyHighlight = () => {
+      const { model: m, selected } = propsRef.current
+      const g = selected ? findElementGeom(m, selected) : null
+      if (!g) { highlight.visible = false; ;(mount as HTMLElement & { __selected?: string | null }).__selected = null; return }
+      highlight.visible = true
+      highlight.position.set(g.center.x, g.center.y, g.center.z)
+      if (g.dir) {
+        const ex = new THREE.Vector3(g.dir.x, 0, g.dir.z).normalize(), up = new THREE.Vector3(0, 1, 0)
+        const ez = new THREE.Vector3().crossVectors(ex, up).normalize()
+        highlight.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(ex, up, ez))
+      } else highlight.quaternion.identity()
+      highlight.scale.set(Math.max(g.size.x, 0.06) * 1.08, Math.max(g.size.y, 0.06) * 1.08, Math.max(g.size.z, 0.06) * 1.08)
+      ;(mount as HTMLElement & { __selected?: string | null }).__selected = selected ?? null
+    }
+    highlightRef.current = applyHighlight
+
+    const pick = (e: PointerEvent) => {
+      const { onSelect } = propsRef.current
+      if (!onSelect) return
+      const rect = el.getBoundingClientRect()
+      ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+      ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+      raycaster.setFromCamera(ndc, camera)
+      for (const hit of raycaster.intersectObjects(group.children, true)) {
+        const o = hit.object as THREE.Object3D & { userData: { id?: string; ids?: string[] } }
+        if ((o as THREE.InstancedMesh).isInstancedMesh && hit.instanceId != null) { const id = o.userData.ids?.[hit.instanceId]; if (id) { onSelect(id); return } }
+        else if (o.userData?.id) { onSelect(o.userData.id); return }
+      }
+      onSelect(null)
+    }
+
+    let dragging = false, lastX = 0, lastY = 0, spin = true, moved = 0
+    const onDown = (e: PointerEvent) => { dragging = true; spin = false; lastX = e.clientX; lastY = e.clientY; moved = 0; renderer.domElement.style.cursor = 'grabbing' }
+    const onMove = (e: PointerEvent) => { if (!dragging) return; moved += Math.abs(e.clientX - lastX) + Math.abs(e.clientY - lastY); orbit.az -= (e.clientX - lastX) * 0.01; orbit.polar = Math.max(0.08, Math.min(Math.PI / 2 - 0.03, orbit.polar - (e.clientY - lastY) * 0.01)); lastX = e.clientX; lastY = e.clientY; applyCamera() }
+    const onUp = (e: PointerEvent) => { const wasDown = dragging; dragging = false; renderer.domElement.style.cursor = 'grab'; if (wasDown && moved < 6) pick(e) }
+    const onWheel = (e: WheelEvent) => { e.preventDefault(); orbit.radius = Math.max(6, Math.min(800, orbit.radius + e.deltaY * 0.07)); applyCamera() }
+    const clampP = (p: number) => Math.max(0.08, Math.min(Math.PI / 2 - 0.03, p))
+    const onKey = (e: KeyboardEvent) => {
+      let h = true
+      switch (e.key) { case 'ArrowLeft': orbit.az += 0.12; break; case 'ArrowRight': orbit.az -= 0.12; break; case 'ArrowUp': orbit.polar = clampP(orbit.polar - 0.12); break; case 'ArrowDown': orbit.polar = clampP(orbit.polar + 0.12); break; case '+': case '=': orbit.radius = Math.max(6, orbit.radius - 4); break; case '-': case '_': orbit.radius = Math.min(800, orbit.radius + 4); break; default: h = false }
+      if (!h) return; e.preventDefault(); spin = false; applyCamera()
+    }
+    const el = renderer.domElement
+    el.addEventListener('pointerdown', onDown); window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); el.addEventListener('wheel', onWheel, { passive: false }); mount.addEventListener('keydown', onKey)
+    const ro = new ResizeObserver(() => { const w = mount.clientWidth || 600; camera.aspect = w / height; camera.updateProjectionMatrix(); renderer.setSize(w, height) }); ro.observe(mount)
+
+    build()
+    let raf = 0
+    const loop = () => { raf = requestAnimationFrame(loop); if (spin) { orbit.az += 0.0014; applyCamera() } renderer.render(scene, camera) }
+    loop()
+
+    return () => {
+      cancelAnimationFrame(raf); ro.disconnect()
+      el.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); mount.removeEventListener('keydown', onKey)
+      clear(); unitBox.dispose(); unitPlane.dispose(); [slabMat, colMat, coreMat, glassMat].forEach((m) => m.dispose())
+      hlBox.dispose(); hlEdgesGeo.dispose(); hlFillMat.dispose(); hlLineMat.dispose()
+      ground.geometry.dispose(); (ground.material as THREE.Material).dispose()
+      renderer.dispose(); if (el.parentNode === mount) mount.removeChild(el)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [height])
+
+  if (failed) {
+    return (
+      <div style={{ height }} className="flex w-full flex-col items-center justify-center gap-2 rounded-xl bg-base/60 p-4 text-center" role="img" aria-label="Building model (3D unavailable)">
+        <Building2 className="h-7 w-7 text-slate-600" />
+        <p className="text-sm text-slate-300">{model.counts.storeys} storeys · {model.counts.columns} columns · {model.counts.glazingPanels} façade panels</p>
+        <p className="text-[11px] text-slate-500">3D needs WebGL — component counts are computed from the model.</p>
+      </div>
+    )
+  }
+  return (
+    <div ref={mountRef} style={{ height }} tabIndex={0} role="application" aria-label="3D building model with components. Click an element to inspect it. Arrow keys orbit, +/- zoom." className="w-full overflow-hidden rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60" />
+  )
+}

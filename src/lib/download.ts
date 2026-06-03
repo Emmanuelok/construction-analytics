@@ -1,3 +1,8 @@
+/** Filesystem-safe slug from a label (e.g. a project or site name). Pure. */
+export function slug(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'export'
+}
+
 /** Trigger a real client-side file download from generated text content. */
 export const MIME: Record<string, string> = {
   CSV: 'text/csv;charset=utf-8',

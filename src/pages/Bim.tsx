@@ -17,6 +17,7 @@ import {
   Gauge,
   Wrench,
   Activity,
+  Download,
 } from 'lucide-react'
 import {
   PageHeader,
@@ -36,15 +37,20 @@ import { ScenarioBar } from '@/components/ScenarioBar'
 import { ScrollableTable } from '@/components/ScrollableTable'
 import { ExportMenu } from '@/components/ExportMenu'
 import { CollabBar } from '@/components/CollabBar'
-import { kpiToItem, type ReportSpec, type ReportTable } from '@/lib/report'
+import { kpiToItem, tableToCsv, type ReportSpec, type ReportTable } from '@/lib/report'
+import { downloadText } from '@/lib/download'
+import { sampleObj, type ModelStats } from '@/lib/model-stats'
 import type { KPI } from '@/lib/scenarios'
 import { parseIfc, type ParsedIfc } from '@/lib/ifc'
-import { buildIfcScene, DISCIPLINE_COLOR, DISCIPLINE_LABEL, type Discipline } from '@/lib/ifc-model'
+import { buildIfcScene, DISCIPLINE_COLOR, DISCIPLINE_LABEL, describeSelection, type Discipline, type SelectedElement } from '@/lib/ifc-model'
 import type { IfcMesh } from '@/lib/ifc-geometry'
 import { locateWasm } from '@/lib/ifc-wasm-url'
 const IfcModelViewer = lazy(() => import('@/components/IfcModelViewer').then((m) => ({ default: m.IfcModelViewer })))
 import { SAMPLE_IFC } from '@/lib/ifc-sample'
 import { SAMPLE_IFC_GEO } from '@/lib/ifc-sample-geo'
+const MeshModelViewer = lazy(() => import('@/components/MeshModelViewer').then((m) => ({ default: m.MeshModelViewer })))
+import type { ModelFormat } from '@/components/MeshModelViewer'
+import { ApsImport } from '@/components/ApsImport'
 import {
   computeHealth,
   clashNarrative,
@@ -107,6 +113,32 @@ export default function Bim() {
     if (!f) return
     runParse(await f.text(), f.name)
     e.target.value = ''
+  }
+
+  // ---- import a neutral 3D model (glTF/GLB/OBJ/STL): view + extract stats ----
+  const modelRef = useRef<HTMLInputElement>(null)
+  const [model, setModel] = useState<{ data: ArrayBuffer; format: ModelFormat; name: string } | null>(null)
+  const [modelStats, setModelStats] = useState<ModelStats | null>(null)
+  const [modelError, setModelError] = useState<string | null>(null)
+  const openModel = (data: ArrayBuffer, format: ModelFormat, name: string) => { setModelStats(null); setModelError(null); setModel({ data, format, name }) }
+  const clearModel = () => { setModel(null); setModelStats(null); setModelError(null) }
+  async function onModelFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (!f) return
+    const ext = f.name.split('.').pop()?.toLowerCase()
+    const format: ModelFormat = ext === 'glb' ? 'glb' : ext === 'gltf' ? 'gltf' : ext === 'stl' ? 'stl' : 'obj'
+    openModel(await f.arrayBuffer(), format, f.name)
+    e.target.value = ''
+  }
+  const loadSampleModel = () => openModel(new TextEncoder().encode(sampleObj()).buffer, 'obj', 'sample-massing.obj')
+  const modelCsv = () => {
+    if (!modelStats) return ''
+    const summary = tableToCsv({ title: 'Model summary', columns: ['Metric', 'Value', 'Unit'], rows: [
+      ['Meshes', modelStats.meshes, ''], ['Triangles', modelStats.triangles, ''], ['Vertices', modelStats.vertices, ''], ['Materials', modelStats.materials, ''],
+      ['Width', modelStats.dimensions.x, 'units'], ['Height', modelStats.dimensions.y, 'units'], ['Depth', modelStats.dimensions.z, 'units'],
+    ] })
+    const parts = tableToCsv({ title: 'Parts', columns: ['Part', 'Triangles', 'Vertices'], rows: modelStats.parts.map((p) => [p.name, p.triangles, p.vertices]) })
+    return `${summary}\n\n${parts}`
   }
 
   // ---- operable clash / model-health workbench ----
@@ -180,6 +212,89 @@ export default function Bim() {
       )}
 
       {parsed && <ParsedModel data={parsed} source={source ?? ''} onClear={() => { setParsed(null); setSource(null) }} />}
+
+      {/* import a neutral 3D model (glTF / OBJ / STL) — view + extract geometry data.
+          Revit → export IFC (above) or glTF/OBJ → drop it here. */}
+      <Card>
+        <CardHeader
+          icon={Boxes}
+          accent="violet"
+          title="Import a 3D model — glTF · GLB · OBJ · STL"
+          subtitle="Upload a model exported from Revit, SketchUp, Rhino, Blender, etc. — view it and extract geometry data (meshes, triangles, dimensions, parts)."
+          action={
+            <div className="flex flex-wrap gap-1.5">
+              <button onClick={() => modelRef.current?.click()} className="btn-ghost"><Upload className="h-4 w-4" /> Upload model</button>
+              <button onClick={loadSampleModel} className="btn-primary"><Boxes className="h-4 w-4" /> Load sample</button>
+              {model && <button onClick={clearModel} className="btn-ghost"><X className="h-4 w-4" /> Clear</button>}
+              <input ref={modelRef} type="file" accept=".glb,.gltf,.obj,.stl,model/gltf-binary,model/gltf+json" className="hidden" onChange={onModelFile} />
+            </div>
+          }
+        />
+        {model ? (
+          <div className="border-t border-edge/50">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-edge/60 bg-elevated/30 px-4 py-2.5">
+              <span className="flex items-center gap-2 text-sm font-medium text-slate-200">
+                <Boxes className="h-4 w-4 text-violet-400" /> {model.name}
+                <Badge variant="neutral">{model.format.toUpperCase()}</Badge>
+                {modelStats && <span className="text-[11px] text-slate-400">{formatNumber(modelStats.meshes)} meshes · {formatNumber(modelStats.triangles)} triangles</span>}
+              </span>
+              {modelStats && (
+                <div className="flex flex-wrap gap-1.5">
+                  <button onClick={() => downloadText('model-stats.csv', modelCsv(), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>
+                  <button onClick={() => downloadText('model-stats.json', JSON.stringify({ name: model.name, format: model.format, ...modelStats }, null, 2), 'JSON')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><FileCheck2 className="h-3.5 w-3.5" /> JSON</button>
+                </div>
+              )}
+            </div>
+            <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading viewer…</div>}>
+              <MeshModelViewer data={model.data} format={model.format} onStats={setModelStats} onError={setModelError} height={460} />
+            </Suspense>
+            {modelError && <p className="flex items-center gap-2 border-t border-edge/60 px-4 py-2 text-xs text-rose-300"><AlertTriangle className="h-3.5 w-3.5" /> {modelError}</p>}
+            {modelStats && (
+              <div className="space-y-4 border-t border-edge/60 p-5">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                  <MiniStat label="Meshes" value={formatNumber(modelStats.meshes)} accent="violet" />
+                  <MiniStat label="Triangles" value={formatNumber(modelStats.triangles)} accent="blue" />
+                  <MiniStat label="Vertices" value={formatNumber(modelStats.vertices)} accent="cyan" />
+                  <MiniStat label="Materials" value={formatNumber(modelStats.materials)} accent="amber" />
+                  <MiniStat label="Footprint" value={`${formatNumber(Math.round(modelStats.dimensions.x))}×${formatNumber(Math.round(modelStats.dimensions.z))}`} accent="teal" />
+                  <MiniStat label="Height" value={`${formatNumber(Math.round(modelStats.dimensions.y))}`} accent="emerald" />
+                </div>
+                {modelStats.parts.length > 0 && (
+                  <ScrollableTable label="Model parts" className="rounded-xl border border-edge/60">
+                    <table className="w-full min-w-[420px] text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500">
+                          <th className="px-4 py-2.5 font-medium">Part</th>
+                          <th className="px-3 py-2.5 text-right font-medium">Triangles</th>
+                          <th className="px-3 py-2.5 text-right font-medium">Vertices</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-edge/40">
+                        {modelStats.parts.slice(0, 200).map((p, i) => (
+                          <tr key={i} className="hover:bg-elevated/30">
+                            <td className="px-4 py-2 font-medium text-slate-200">{p.name}</td>
+                            <td className="px-3 py-2 text-right data-mono text-slate-300">{formatNumber(p.triangles)}</td>
+                            <td className="px-3 py-2 text-right data-mono text-slate-400">{formatNumber(p.vertices)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </ScrollableTable>
+                )}
+                <p className="text-[11px] leading-relaxed text-slate-500">
+                  Drag or arrow-keys to orbit · scroll to zoom. Imported models are view + extract (not editable here — the editable generative models live in Project Workspace and Site &amp; Zoning). Native <code className="text-slate-400">.rvt</code> isn&apos;t web-readable — export IFC (parsed above) or glTF/OBJ from Revit.
+                </p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="border-t border-edge/50 px-5 py-8 text-center text-sm text-slate-500">
+            Upload a <span className="text-slate-300">.glb / .gltf / .obj / .stl</span> model, or load the sample, to view it and pull out geometry data. For native Revit/AutoCAD, use the Autodesk connector below — or export <span className="text-slate-300">IFC</span> (uploader at the top).
+          </div>
+        )}
+      </Card>
+
+      <ApsImport />
 
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
@@ -419,9 +534,13 @@ function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: strin
   // actual triangulated solids; otherwise we keep the count-based reconstruction.
   const [meshes, setMeshes] = useState<IfcMesh[] | null>(null)
   const [geoState, setGeoState] = useState<'loading' | 'real' | 'recon'>('loading')
+  const [selected, setSelected] = useState<SelectedElement | null>(null)
+  const [explode, setExplode] = useState(0)
+  const [section, setSection] = useState(1)
+  const [resetNonce, setResetNonce] = useState(0)
   useEffect(() => {
     let cancelled = false
-    setMeshes(null); setGeoState('loading'); setHidden({})
+    setMeshes(null); setGeoState('loading'); setHidden({}); setSelected(null); setExplode(0); setSection(1)
     if (!source) { setGeoState('recon'); return }
     import('@/lib/ifc-geometry')
       .then(({ extractGeometry }) => extractGeometry(new TextEncoder().encode(source), { locateFile: locateWasm }))
@@ -491,13 +610,47 @@ function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: strin
                 ))}
               </div>
             </div>
-            <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-              <IfcModelViewer input={sceneInput} meshes={real ? meshes! : undefined} hidden={hidden} height={460} />
-            </Suspense>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-edge/60 bg-elevated/20 px-4 py-2 text-xs">
+              <label className="flex items-center gap-2 text-slate-400">
+                <span>Explode</span>
+                <input type="range" min={0} max={1} step={0.02} value={explode} onChange={(e) => setExplode(Number(e.target.value))} className="h-1 w-28 cursor-pointer accent-blue-500" aria-label="Explode model by height" />
+              </label>
+              <label className="flex items-center gap-2 text-slate-400">
+                <span>Section</span>
+                <input type="range" min={0.05} max={1} step={0.01} value={section} onChange={(e) => setSection(Number(e.target.value))} className="h-1 w-28 cursor-pointer accent-blue-500" aria-label="Section cut height" />
+              </label>
+              <button onClick={() => { setExplode(0); setSection(1); setSelected(null); setResetNonce((n) => n + 1) }} className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 font-medium text-slate-300 ring-1 ring-inset ring-edge/70 hover:bg-elevated/60">
+                <RotateCcw className="h-3.5 w-3.5" /> Reset view
+              </button>
+              <span className="text-slate-500">Drag or arrow-keys to orbit · scroll to zoom · click to inspect</span>
+            </div>
+            <div className="relative">
+              <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
+                <IfcModelViewer input={sceneInput} meshes={real ? meshes! : undefined} hidden={hidden} selectedKey={selected?.key ?? null} onSelect={setSelected} explode={explode} section={section} resetNonce={resetNonce} height={460} />
+              </Suspense>
+              {selected && (
+                <div className="absolute left-3 top-3 w-60 rounded-lg border border-edge/70 bg-base/90 p-3 text-xs shadow-xl backdrop-blur" role="status" aria-label={describeSelection(selected)}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="data-mono font-semibold text-slate-100">{selected.ifcType}</span>
+                    <button onClick={() => setSelected(null)} aria-label="Clear selection" className="text-slate-500 hover:text-slate-200"><X className="h-3.5 w-3.5" /></button>
+                  </div>
+                  <dl className="mt-2 space-y-1 text-slate-400">
+                    <div className="flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-sm" style={{ background: DISCIPLINE_COLOR[selected.discipline] }} />
+                      {DISCIPLINE_LABEL[selected.discipline]}
+                    </div>
+                    {selected.expressID != null && <div className="flex justify-between"><dt>Express ID</dt><dd className="data-mono text-slate-300">#{selected.expressID}</dd></div>}
+                    {selected.storey != null && <div className="flex justify-between"><dt>Storey</dt><dd className="data-mono text-slate-300">{selected.storey}</dd></div>}
+                    {selected.size && <div className="flex justify-between gap-2"><dt>Size</dt><dd className="data-mono text-slate-300">{selected.size.x.toFixed(1)} × {selected.size.y.toFixed(1)} × {selected.size.z.toFixed(1)} m</dd></div>}
+                    {selected.triangles != null && <div className="flex justify-between"><dt>Triangles</dt><dd className="data-mono text-slate-300">{formatNumber(selected.triangles)}</dd></div>}
+                  </dl>
+                </div>
+              )}
+            </div>
             <p className="border-t border-edge/60 px-4 py-2 text-[11px] text-slate-500">
               {real
-                ? <>Real triangulated geometry tessellated from the IFC file by the web-ifc WASM kernel, coloured by discipline. Drag to orbit, scroll to zoom, toggle disciplines above.</>
-                : <>This file carries no mesh geometry, so the model is reconstructed from its real element counts and storeys (columns on a grid, walls at the perimeter, slabs per floor, beams + MEP risers). Drag to orbit, scroll to zoom, toggle disciplines above.</>}
+                ? <>Real triangulated geometry tessellated from the IFC file by the web-ifc WASM kernel, coloured by discipline. Drag to orbit, scroll to zoom, click an element to inspect it, toggle disciplines above.</>
+                : <>This file carries no mesh geometry, so the model is reconstructed from its real element counts and storeys (columns on a grid, walls at the perimeter, slabs per floor, beams + MEP risers). Drag to orbit, scroll to zoom, click an element to inspect it, toggle disciplines above.</>}
             </p>
           </div>
         )}

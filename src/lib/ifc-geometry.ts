@@ -10,6 +10,7 @@ import type { Discipline } from './ifc-model.ts'
 export type IfcMesh = {
   expressID: number
   ifcType: number // web-ifc numeric type code
+  ifcTypeName: string // e.g. "IFCCOLUMN" — for the inspector
   discipline: Discipline // mapped from ifcType, for consistent colouring/toggles
   positions: Float32Array // xyz triples (local geometry space)
   normals: Float32Array
@@ -33,8 +34,9 @@ export type ExtractOptions = {
   locateFile?: (path: string, prefix: string) => string
 }
 
+type TypeResolver = { disciplineOf: (code: number) => Discipline; nameOf: (code: number) => string }
 let apiPromise: Promise<import('web-ifc').IfcAPI> | null = null
-let disciplinePromise: Promise<(code: number) => Discipline> | null = null
+let typeResolverPromise: Promise<TypeResolver> | null = null
 
 /** Lazily construct + init a single shared IfcAPI. On failure the cached promise
  *  is cleared so a later call (e.g. after a transient fetch error) can retry. */
@@ -51,20 +53,29 @@ function getApi(opts: ExtractOptions): Promise<import('web-ifc').IfcAPI> {
   return apiPromise
 }
 
-/** Map a web-ifc numeric type code → discipline, mirroring the reconstruction's
- *  classification so real geometry and reconstruction colour identically. */
-function getDisciplineMapper(): Promise<(code: number) => Discipline> {
-  if (!disciplinePromise) {
-    disciplinePromise = (async () => {
-      const W = (await import('web-ifc')) as unknown as Record<string, number>
+/** Map a web-ifc numeric type code → discipline (mirroring the reconstruction's
+ *  classification so real geometry and reconstruction colour identically) and →
+ *  a readable type name (e.g. "IFCCOLUMN") for the inspector. */
+function getTypeResolver(): Promise<TypeResolver> {
+  if (!typeResolverPromise) {
+    typeResolverPromise = (async () => {
+      const W = (await import('web-ifc')) as unknown as Record<string, unknown>
+      // Reverse the package's IFC* numeric constants into code → name.
+      const nameByCode = new Map<number, string>()
+      for (const [k, v] of Object.entries(W)) {
+        if (typeof v === 'number' && /^IFC[A-Z0-9]+$/.test(k) && !nameByCode.has(v)) nameByCode.set(v, k)
+      }
       const set = (...names: string[]) => new Set(names.map((n) => W[n]).filter((v): v is number => typeof v === 'number'))
       const struct = set('IFCCOLUMN', 'IFCPILE', 'IFCBEAM', 'IFCMEMBER', 'IFCSLAB', 'IFCROOF', 'IFCPLATE', 'IFCFOOTING', 'IFCREINFORCINGBAR')
       const arch = set('IFCWALL', 'IFCWALLSTANDARDCASE', 'IFCCURTAINWALL', 'IFCDOOR', 'IFCWINDOW', 'IFCSTAIR', 'IFCSTAIRFLIGHT', 'IFCRAILING', 'IFCRAMP', 'IFCCOVERING')
       const mep = set('IFCDUCTSEGMENT', 'IFCPIPESEGMENT', 'IFCDUCTFITTING', 'IFCPIPEFITTING', 'IFCFLOWSEGMENT', 'IFCFLOWTERMINAL', 'IFCAIRTERMINAL', 'IFCCABLECARRIERSEGMENT', 'IFCCABLESEGMENT')
-      return (code: number): Discipline => (struct.has(code) ? 'struct' : arch.has(code) ? 'arch' : mep.has(code) ? 'mep' : 'other')
+      return {
+        disciplineOf: (code: number): Discipline => (struct.has(code) ? 'struct' : arch.has(code) ? 'arch' : mep.has(code) ? 'mep' : 'other'),
+        nameOf: (code: number): string => nameByCode.get(code) ?? `IFC#${code}`,
+      }
     })()
   }
-  return disciplinePromise
+  return typeResolverPromise
 }
 
 /** Tessellate IFC bytes → meshes. Never throws; returns an empty result on any
@@ -72,10 +83,10 @@ function getDisciplineMapper(): Promise<(code: number) => Discipline> {
 export async function extractGeometry(bytes: Uint8Array, opts: ExtractOptions = {}): Promise<IfcGeometryResult> {
   const empty: IfcGeometryResult = { meshes: [], vertexCount: 0, triangleCount: 0, bbox: null }
   let api: import('web-ifc').IfcAPI
-  let disciplineOf: (code: number) => Discipline
+  let resolver: TypeResolver
   try {
     api = await getApi(opts)
-    disciplineOf = await getDisciplineMapper()
+    resolver = await getTypeResolver()
   } catch {
     return empty
   }
@@ -114,7 +125,8 @@ export async function extractGeometry(bytes: Uint8Array, opts: ExtractOptions = 
         meshes.push({
           expressID: mesh.expressID,
           ifcType,
-          discipline: disciplineOf(ifcType),
+          ifcTypeName: resolver.nameOf(ifcType),
+          discipline: resolver.disciplineOf(ifcType),
           positions,
           normals,
           indices: new Uint32Array(idx),

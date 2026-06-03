@@ -26,6 +26,19 @@ export type IfcSceneInput = {
   storeys: number
 }
 
+/* An element the user clicked in the 3D viewer — normalised across the real
+ * tessellated geometry and the reconstruction so the inspector panel is uniform. */
+export type SelectedElement = {
+  key: string // stable id within the current scene build
+  source: 'geometry' | 'reconstruction'
+  ifcType: string // e.g. "IFCCOLUMN"
+  discipline: Discipline
+  expressID?: number // real geometry only
+  storey?: number // reconstruction only
+  triangles?: number // real geometry only
+  size?: { x: number; y: number; z: number } // world-space bbox dimensions (m)
+}
+
 export type IfcScene = {
   instances: IfcInstance[]
   storeys: number
@@ -177,3 +190,13 @@ export const DISCIPLINE_COLOR: Record<Discipline, string> = {
 export const DISCIPLINE_LABEL: Record<Discipline, string> = { struct: 'Structural', arch: 'Architectural', mep: 'MEP', other: 'Other' }
 export const KIND_LABEL: Record<ElementKind, string> = { column: 'Columns', wall: 'Walls', slab: 'Slabs', beam: 'Beams', mep: 'MEP', other: 'Other' }
 export { kindOf }
+
+/** One-line, screen-reader-friendly summary of a selected element. */
+export function describeSelection(el: SelectedElement): string {
+  const parts: string[] = [el.ifcType, DISCIPLINE_LABEL[el.discipline]]
+  if (el.expressID != null) parts.push(`#${el.expressID}`)
+  if (el.storey != null) parts.push(`storey ${el.storey}`)
+  if (el.size) parts.push(`${el.size.x.toFixed(1)} × ${el.size.y.toFixed(1)} × ${el.size.z.toFixed(1)} m`)
+  if (el.triangles != null) parts.push(`${el.triangles} triangles`)
+  return parts.join(' · ')
+}
