@@ -118,13 +118,26 @@ export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: n
     const e = add(`IFCBEAM('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shapeOf(beamSolid(b))},'${esc(mark)}',.BEAM.)`)
     inStorey(e, lvl); pset(e, mark, lvlName(lvl), [['Depth', b.depth * sh]])
   }
-  // a stepped IfcStair — each tread becomes an extruded box; all solids in one body rep
+  // an axis-aligned box → extruded solid (treads, landings, rails)
+  const boxSolid = (b: Box) => vSolid(rect(b.w * LEN, b.d * LEN), ifc(b.x, b.y - b.h / 2, b.z), [1, 0, 0], b.h * sh)
+  // a half-turn IfcStair: assembly decomposed (IfcRelAggregates) into IfcStairFlight ×2,
+  // an IfcSlab landing and IfcRailing handrails — each with real extruded geometry
   const stair = (s: Stair, mark: string) => {
-    const solids = s.treads.map((t) => vSolid(rect(t.w * LEN, t.d * LEN), ifc(t.x, t.y - t.h / 2, t.z), [1, 0, 0], t.h * sh))
-    const shp = solids.length ? shapeOfMany(solids) : '$'
-    const e = add(`IFCSTAIR('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},${shp === '$' ? '$' : `#${shp}`},'${esc(mark)}',.STRAIGHT_RUN_STAIR.)`)
+    const parts: number[] = []
+    s.flights.forEach((fl, fi) => {
+      const solids = fl.treads.map(boxSolid)
+      const shp = solids.length ? `#${shapeOfMany(solids)}` : '$'
+      const fm = `${mark}-F${fi + 1}`
+      const rise = fl.top > fl.base ? ((fl.top - fl.base) / Math.max(1, fl.risers)) * sh : 0.18
+      const e = add(`IFCSTAIRFLIGHT('${guid()}',#${OWNER},'${esc(fm)}',$,$,#${idP},${shp},'${esc(fm)}',${fl.risers},${Math.max(1, fl.risers - 1)},${R(rise)},${R(fl.treadDepth * LEN)},.STRAIGHT.)`)
+      parts.push(e); pset(e, fm, lvlName(s.level), [['TreadLength', fl.treadDepth * LEN], ['RiserHeight', rise]])
+    })
+    for (const ld of s.landings) parts.push(add(`IFCSLAB('${guid()}',#${OWNER},'${esc(mark)} landing',$,$,#${idP},#${shapeOf(boxSolid(ld))},'${esc(mark)}-L',.LANDING.)`))
+    for (const rl of s.rails) parts.push(add(`IFCRAILING('${guid()}',#${OWNER},'${esc(mark)} rail',$,$,#${idP},#${shapeOf(boxSolid(rl))},'${esc(mark)}-R',.HANDRAIL.)`))
+    const e = add(`IFCSTAIR('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},$,'${esc(mark)}',.HALF_TURN_STAIR.)`)
     const rise = ((s.top - s.base) / Math.max(1, s.risers)) * sh
-    inStorey(e, s.level); pset(e, mark, lvlName(s.level), [['Width', s.widthScene * LEN], ['Going', s.treadDepth * LEN], ['RiserHeight', rise]])
+    inStorey(e, s.level); pset(e, mark, lvlName(s.level), [['Width', s.widthScene * LEN], ['RiserHeight', rise]])
+    if (parts.length) add(`IFCRELAGGREGATES('${guid()}',#${OWNER},$,$,#${e},(${parts.map((p) => `#${p}`).join(',')}))`)
   }
 
   const pad = (n: number) => String(n + 1).padStart(2, '0')
@@ -136,6 +149,7 @@ export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: n
   m.partitions.forEach((q, i) => panel(q, 'WALL', q.id ?? `P-${pad(i)}`, q.level ?? 0, 0.1, 'PARTITIONING'))
   m.glazing.forEach((q, i) => panel(q, 'WINDOW', q.id ?? `W-${pad(i)}`, q.level ?? 0, 0.06))
   m.doors.forEach((q, i) => panel(q, 'DOOR', q.id ?? `D-${pad(i)}`, q.level ?? 0, 0.1))
+  m.interiorDoors.forEach((q, i) => panel(q, 'DOOR', q.id ?? `ID-${pad(i)}`, q.level ?? 0, 0.05))
   m.stairs.forEach((s) => stair(s, s.id))
   if (m.core) { const c = m.core; const solid = vSolid(rect(c.w * LEN, c.d * LEN), ifc(c.x, c.y - c.h / 2, c.z), [1, 0, 0], c.h * sh); const e = add(`IFCBUILDINGELEMENTPROXY('${guid()}',#${OWNER},'Core',$,$,#${idP},#${shapeOf(solid)},'CORE',$)`); inStorey(e, 0); pset(e, 'CORE', 'All levels', [['Width', c.w * LEN]]) }
   // interior spaces (IfcSpace) — extrude each room up to a clear height

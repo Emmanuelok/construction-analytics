@@ -20,7 +20,7 @@ import { downloadText, slug } from '@/lib/download'
 
 const SEL_KEY = 'aec-active-project'
 const ROW_CAP = 300 // cap rendered schedule rows (export covers all)
-const CAT_ICON: Record<string, typeof Columns3> = { Floor: SquareStack, Column: Columns3, Beam: Rows3, Window: Frame, Door: DoorOpen, Wall: Square, Partition: Square, Room: Square, Stair: Rows3, Core: BoxIcon, Roof: SquareStack }
+const CAT_ICON: Record<string, typeof Columns3> = { Floor: SquareStack, Column: Columns3, Beam: Rows3, Window: Frame, Door: DoorOpen, 'Interior Door': DoorOpen, Wall: Square, Partition: Square, Room: Square, Stair: Rows3, Core: BoxIcon, Roof: SquareStack }
 
 const fmtCell = (v: number | string) => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v)
 const csvCell = (v: number | string) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
@@ -187,7 +187,7 @@ export default function BuildingExplorer() {
         <StatTile label="Elements" value={formatNumber(ex.summary.elements)} accent="cyan" />
         <StatTile label="Columns + beams" value={`${formatNumber(ex.summary.columns)} · ${formatNumber(ex.summary.beams)}`} accent="violet" />
         <StatTile label="Windows + doors" value={`${formatNumber(ex.summary.windows)} · ${formatNumber(ex.summary.doors)}`} accent="sky" />
-        <StatTile label="Partitions · stairs" value={`${formatNumber(ex.summary.partitions)} · ${formatNumber(ex.summary.stairs)}`} accent="fuchsia" />
+        <StatTile label="Partitions · doors · stairs" value={`${formatNumber(ex.summary.partitions)} · ${formatNumber(ex.summary.interiorDoors)} · ${formatNumber(ex.summary.stairs)}`} accent="fuchsia" />
         <StatTile label="Rooms · net" value={`${formatNumber(ex.summary.rooms)} · ${formatNumber(ex.summary.netArea)} m²`} accent="teal" />
         <StatTile label="Gross floor area" value={`${formatNumber(ex.summary.gfa)} m²`} accent="emerald" />
         <StatTile label="Concrete" value={`${formatNumber(ex.summary.concreteVolume)} m³`} accent="amber" />
@@ -290,6 +290,7 @@ export default function BuildingExplorer() {
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#16243c] ring-1 ring-[#2c4a6e]" /> Room</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" /> Column</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-[#6b7a93]" /> Partition</span>
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-[#d6a85f]" /> Int. door</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-sky-400" /> Window</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-emerald-400" /> Door</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 border border-[#6b7a93] bg-[#1f2c44]" /> Stair</span>

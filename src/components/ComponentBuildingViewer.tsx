@@ -93,6 +93,7 @@ export function ComponentBuildingViewer({
     const coreMat = new THREE.MeshStandardMaterial({ color: '#475569', roughness: 0.8 })
     const wallMat = new THREE.MeshStandardMaterial({ color: '#9aa7b8', roughness: 0.9, metalness: 0.04, side: THREE.DoubleSide })
     const partMat = new THREE.MeshStandardMaterial({ color: '#7e8aa0', roughness: 0.95, metalness: 0.02, side: THREE.DoubleSide })
+    const idoorMat = new THREE.MeshStandardMaterial({ color: '#8a6f4a', roughness: 0.7, metalness: 0.05, side: THREE.DoubleSide })
     const stairMat = new THREE.MeshStandardMaterial({ color: '#8a93a6', roughness: 0.7, metalness: 0.12 })
     const glassMat = new THREE.MeshStandardMaterial({ color: '#7dd3fc', transparent: true, opacity: 0.32, roughness: 0.06, metalness: 0.5, side: THREE.DoubleSide, depthWrite: false })
     const doorMat = new THREE.MeshStandardMaterial({ color: '#1f2a3a', transparent: true, opacity: 0.78, roughness: 0.2, metalness: 0.4, side: THREE.DoubleSide })
@@ -243,7 +244,7 @@ export function ComponentBuildingViewer({
       const storeys = m.counts.storeys
       const isolating = iso != null
       const show = (lvl?: number) => !isolating || lvl === iso
-      const colIds = idsFor(m.columns, 'col'), panIds = idsFor(m.glazing, 'pan'), wallIds = idsFor(m.walls, 'wall'), doorIds = idsFor(m.doors, 'door'), beamIds = idsFor(m.beams, 'beam'), partIds = idsFor(m.partitions, 'part')
+      const colIds = idsFor(m.columns, 'col'), panIds = idsFor(m.glazing, 'pan'), wallIds = idsFor(m.walls, 'wall'), doorIds = idsFor(m.doors, 'door'), beamIds = idsFor(m.beams, 'beam'), partIds = idsFor(m.partitions, 'part'), idoorIds = idsFor(m.interiorDoors, 'idoor')
 
       if (!h.slabs) {
         for (const s of m.slabs) if (show(s.level)) plate(s, slabMat, s.id ?? `floor-${s.level ?? 0}`)
@@ -268,10 +269,11 @@ export function ComponentBuildingViewer({
       }
       if (!h.interior) {
         planeInst(m.partitions.map((g, i) => ({ g, id: g.id ?? partIds[i] })).filter(({ g }) => show(g.level)), partMat)
-        boxInst(m.stairs.flatMap((s) => s.treads.map((t) => ({ c: t, id: s.id }))).filter(({ c }) => show(c.level)), stairMat)
+        planeInst(m.interiorDoors.map((g, i) => ({ g, id: g.id ?? idoorIds[i] })).filter(({ g }) => show(g.level)), idoorMat, { outset: 0.02 })
+        boxInst(m.stairs.flatMap((s) => [...s.treads, ...s.landings, ...s.rails].map((t) => ({ c: t, id: s.id }))).filter(({ c }) => show(c.level)), stairMat)
       }
       applySun(); applyHighlight()
-      ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, windows: m.counts.windows, glazing: m.counts.windows, beams: m.counts.beams, doors: m.counts.doors, slabs: m.counts.slabs, partitions: m.counts.partitions, stairs: m.counts.stairs }
+      ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, windows: m.counts.windows, glazing: m.counts.windows, beams: m.counts.beams, doors: m.counts.doors, slabs: m.counts.slabs, partitions: m.counts.partitions, interiorDoors: m.counts.interiorDoors, stairs: m.counts.stairs }
     }
     rebuildRef.current = build
 
@@ -361,7 +363,7 @@ export function ComponentBuildingViewer({
     return () => {
       cancelAnimationFrame(raf); ro.disconnect()
       el.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); el.removeEventListener('contextmenu', onCtx); mount.removeEventListener('keydown', onKey)
-      clear(); unitBox.dispose(); unitPlane.dispose(); [slabMat, colMat, beamMat, coreMat, wallMat, partMat, stairMat, glassMat, doorMat, mullionMat].forEach((m) => m.dispose())
+      clear(); unitBox.dispose(); unitPlane.dispose(); [slabMat, colMat, beamMat, coreMat, wallMat, partMat, idoorMat, stairMat, glassMat, doorMat, mullionMat].forEach((m) => m.dispose())
       hlBox.dispose(); hlEdgesGeo.dispose(); hlFillMat.dispose(); hlLineMat.dispose()
       ground.geometry.dispose(); (ground.material as THREE.Material).dispose()
       renderer.dispose(); if (el.parentNode === mount) mount.removeChild(el)
