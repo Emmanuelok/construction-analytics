@@ -8,6 +8,8 @@
 
 import { type Pt, polygonCentroid } from './zoning'
 import { PLATE_SCALE, type Massing } from './massing'
+import { floorRooms, type Room } from './building-rooms'
+export type { Room } from './building-rooms'
 
 export type Box = { x: number; y: number; z: number; w: number; h: number; d: number; level?: number; id?: string } // centre + full size
 export type Quad = { a: Pt; b: Pt; y: number; h: number; level?: number; id?: string } // vertical panel along edge a→b, base y, height h
@@ -24,9 +26,10 @@ export type BuildingModel = {
   mullions: Box[] // vertical façade framing between windows
   core: Box | null
   roof: Plate | null
+  rooms: Room[] // interior spaces, per floor
   totalHeight: number
   footprint: number
-  counts: { storeys: number; columns: number; beams: number; windows: number; doors: number; walls: number; mullions: number; slabs: number }
+  counts: { storeys: number; columns: number; beams: number; windows: number; doors: number; walls: number; mullions: number; slabs: number; rooms: number }
 }
 
 const dist = (a: Pt, b: Pt) => Math.hypot(b.x - a.x, b.z - a.z)
@@ -132,10 +135,14 @@ export function buildBuilding(m: Massing, opts?: {
   const top = m.floors[m.floors.length - 1]
   const roof = top ? { polygon: top.polygon, hole: top.hole, y: top.y + top.height / 2 - slabT, thickness: slabT, level: m.floors.length, id: 'roof' } : null
 
+  const coreBox = core ? { x: core.x, z: core.z, w: core.w, d: core.d } : null
+  const rooms: Room[] = []
+  for (const f of m.floors) rooms.push(...floorRooms(f.polygon, { level: f.index, core: coreBox }))
+
   return {
-    slabs, columns, beams, walls, glazing, doors, mullions, core, roof,
+    slabs, columns, beams, walls, glazing, doors, mullions, core, roof, rooms,
     totalHeight: m.totalHeight,
     footprint: m.footprint,
-    counts: { storeys: m.storeys, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: mullions.length, slabs: slabs.length },
+    counts: { storeys: m.storeys, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: mullions.length, slabs: slabs.length, rooms: rooms.length },
   }
 }

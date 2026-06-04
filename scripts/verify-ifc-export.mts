@@ -13,7 +13,7 @@ const ok = (n: string, c: boolean, extra?: unknown) => { if (c) console.log(`✓
 const model = buildBuilding(buildMassing({ gfa: 30_000, progress: 100, storeys: 4, shape: 'rect' }), { coreRatio: 0.16 })
 const ifc = toIfc(model, 'Roundtrip Tower')
 
-const { IfcAPI, IFCBUILDINGSTOREY, IFCCOLUMN, IFCSLAB, IFCWINDOW, IFCWALL, IFCBEAM } = await import('web-ifc')
+const { IfcAPI, IFCBUILDINGSTOREY, IFCCOLUMN, IFCSLAB, IFCWINDOW, IFCWALL, IFCBEAM, IFCSPACE } = await import('web-ifc')
 const api = new IfcAPI()
 await api.Init((p: string, prefix: string) => (p.endsWith('.wasm') ? `${process.cwd()}/node_modules/web-ifc/${p}` : prefix + p))
 const mid = api.OpenModel(new TextEncoder().encode(ifc))
@@ -21,6 +21,7 @@ ok('web-ifc opens the generated IFC (valid model)', mid >= 0, { mid })
 
 const n = (t: number) => { try { return api.GetLineIDsWithType(mid, t).size() } catch { return -1 } }
 ok('storeys round-trip (4 IfcBuildingStorey)', n(IFCBUILDINGSTOREY) === 4, { storeys: n(IFCBUILDINGSTOREY) })
+ok('interior rooms round-trip as IfcSpace', n(IFCSPACE) === model.rooms.length && model.rooms.length > 0, { spaces: n(IFCSPACE), rooms: model.rooms.length })
 ok('typed products round-trip (columns/slabs/walls/windows/beams)', n(IFCCOLUMN) === model.columns.length && n(IFCSLAB) === model.slabs.length + 1 && n(IFCWALL) === model.walls.length && n(IFCWINDOW) === model.glazing.length && n(IFCBEAM) === model.beams.length,
   { col: n(IFCCOLUMN), slab: n(IFCSLAB), wall: n(IFCWALL), win: n(IFCWINDOW), beam: n(IFCBEAM) })
 

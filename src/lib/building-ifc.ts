@@ -127,6 +127,13 @@ export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: n
   m.glazing.forEach((q, i) => panel(q, 'WINDOW', q.id ?? `W-${pad(i)}`, q.level ?? 0, 0.06))
   m.doors.forEach((q, i) => panel(q, 'DOOR', q.id ?? `D-${pad(i)}`, q.level ?? 0, 0.1))
   if (m.core) { const c = m.core; const solid = vSolid(rect(c.w * LEN, c.d * LEN), ifc(c.x, c.y - c.h / 2, c.z), [1, 0, 0], c.h * sh); const e = add(`IFCBUILDINGELEMENTPROXY('${guid()}',#${OWNER},'Core',$,$,#${idP},#${shapeOf(solid)},'CORE',$)`); inStorey(e, 0); pset(e, 'CORE', 'All levels', [['Width', c.w * LEN]]) }
+  // interior spaces (IfcSpace) — extrude each room up to a clear height
+  for (const r of m.rooms) {
+    const slabY = m.slabs.find((s) => s.level === r.level)?.y ?? r.level
+    const solid = extrude(arbProfile(r.polygon), place(ifc(0, slabY + 0.12, 0), null, null), 0.8 * sh)
+    const e = add(`IFCSPACE('${guid()}',#${OWNER},'${esc(r.name)}',$,$,#${idP},#${shapeOf(solid)},$,.ELEMENT.,.INTERNAL.,$)`)
+    inStorey(e, r.level); pset(e, r.name, lvlName(r.level), [])
+  }
 
   storeyIds.forEach((sid, i) => { if (byStorey[i].length) add(`IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid()}',#${OWNER},$,$,(${byStorey[i].map((e) => `#${e}`).join(',')}),#${sid})`) })
   for (const r of psetRels) add(r)

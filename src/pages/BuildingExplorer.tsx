@@ -160,11 +160,12 @@ export default function BuildingExplorer() {
       ) : (
       <>
       {/* summary */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
         <StatTile label="Storeys" value={String(ex.summary.storeys)} accent="blue" />
         <StatTile label="Elements" value={formatNumber(ex.summary.elements)} accent="cyan" />
         <StatTile label="Columns + beams" value={`${formatNumber(ex.summary.columns)} · ${formatNumber(ex.summary.beams)}`} accent="violet" />
         <StatTile label="Windows + doors" value={`${formatNumber(ex.summary.windows)} · ${formatNumber(ex.summary.doors)}`} accent="sky" />
+        <StatTile label="Rooms · net" value={`${formatNumber(ex.summary.rooms)} · ${formatNumber(ex.summary.netArea)} m²`} accent="teal" />
         <StatTile label="Gross floor area" value={`${formatNumber(ex.summary.gfa)} m²`} accent="emerald" />
         <StatTile label="Concrete" value={`${formatNumber(ex.summary.concreteVolume)} m³`} accent="amber" />
       </div>
@@ -257,6 +258,7 @@ export default function BuildingExplorer() {
               onMoveElement={(id, dx, dz) => edit((e) => nudge(e, id, { x: dx, y: 0, z: dz }))}
               onAddAt={(x, z) => { edit((e) => addColumnAt(e, model, activeLevel < 0 ? 0 : Math.min(activeLevel, storeys - 1), x, z)); setAddMode(false) }} />
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#16243c] ring-1 ring-[#2c4a6e]" /> Room</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" /> Column</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-sky-400" /> Window</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-emerald-400" /> Door</span>

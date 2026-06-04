@@ -75,7 +75,7 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
   return (
     <svg ref={svgRef} viewBox={`${-pad} ${-pad} ${w + 2 * pad} ${h + 2 * pad}`} style={{ height }}
       className={`w-full rounded-xl bg-[#0a0f1c] ring-1 ring-edge/60 ${addMode ? 'cursor-crosshair' : 'cursor-grab'}`}
-      role="img" aria-label={`Floor plan, ${plan.isRoof ? 'roof' : `level ${plan.level}`}: ${plan.columns.length} columns, ${plan.panels.length} windows, ${plan.doors.length} doors`}
+      role="img" aria-label={`Floor plan, ${plan.isRoof ? 'roof' : `level ${plan.level}`}: ${plan.rooms.length} rooms, ${plan.columns.length} columns, ${plan.panels.length} windows, ${plan.doors.length} doors`}
       onWheel={onWheel} onPointerDown={onBgDown}>
       <g ref={gRef} transform={`translate(${view.ox} ${view.oy}) scale(${view.k})`}>
         {/* add-column capture layer (only active in Add mode) */}
@@ -88,6 +88,19 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
           : <polygon points={outline} fill="#11203a" stroke="none" />}
         <polygon points={outline} fill="none" stroke={selected === `floor-${plan.level}` || (plan.isRoof && selected === 'roof') ? '#fbbf24' : '#3b5a82'} strokeWidth={selected?.startsWith('floor') || selected === 'roof' ? 2.5 : 1.5} vectorEffect="non-scaling-stroke" className="cursor-pointer" onClick={() => !addMode && onSelect(plan.isRoof ? 'roof' : `floor-${plan.level}`)} />
         {hole && <polygon points={hole} fill="none" stroke="#3b5a82" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />}
+        {/* interior rooms / spaces */}
+        <g>
+          {plan.rooms.map((r) => {
+            const on = selected === r.id
+            const cx = r.polygon.reduce((s, p) => s + p.x, 0) / r.polygon.length, cz = r.polygon.reduce((s, p) => s + p.z, 0) / r.polygon.length
+            return (
+              <g key={r.id} className="cursor-pointer" onClick={() => !addMode && onSelect(r.id)}>
+                <polygon points={r.polygon.map((p) => `${toX(p.x)},${toY(p.z)}`).join(' ')} fill={on ? '#fbbf2422' : '#16243c80'} stroke={on ? '#fbbf24' : '#2c4a6e'} strokeWidth={on ? 1.6 : 0.8} vectorEffect="non-scaling-stroke" />
+                <text x={toX(cx)} y={toY(cz)} fontSize={ext * 0.026} fill={on ? '#fbbf24' : '#7c93b2'} textAnchor="middle" className="pointer-events-none select-none">{r.area} m²</text>
+              </g>
+            )
+          })}
+        </g>
         {/* windows + doors (draggable) */}
         <g>{plan.panels.map((p) => lineGroup(p.id, p.a, p.b, '#38bdf8', 2.5))}</g>
         <g>{plan.doors.map((p) => lineGroup(p.id, p.a, p.b, '#34d399', 4))}</g>
