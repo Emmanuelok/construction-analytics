@@ -32,6 +32,7 @@ import { floorRooms, floorGrid } from './building-rooms.ts'
 import { floorPartitions } from './building-partitions.ts'
 import { coreStairs } from './building-stairs.ts'
 import { explodeIfc, meshGeom, friendlyType, sliceMeshes, cutHeightFor } from './ifc-explorer.ts'
+import { ifcToModel } from './ifc-to-model.ts'
 import type { IfcGeometryResult, IfcMesh } from './ifc-geometry.ts'
 import { unitShape, holeFor, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, SHAPE_KINDS } from './shapes.ts'
 import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, type SelectedElement } from './ifc-model.ts'
@@ -974,6 +975,42 @@ section('ifc-explorer')
   ok('slice perimeter ≈ 4 for a unit cube', near(segs.reduce((t, s) => t + Math.hypot(s.bx - s.ax, s.bz - s.az), 0), 4, 1e-6))
   ok('a plane above the geometry yields no segments', sliceMeshes([cube], 2).length === 0)
   ok('cutHeightFor cuts above the floor (30% up a unit cube)', near(cutHeightFor([cube]), 0.3, 1e-9))
+}
+
+// ── ifc-to-model (rationalize an uploaded IFC into the editable parametric model) ─
+section('ifc-to-model')
+{
+  const cubePos = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1])
+  const cubeIdx = new Uint32Array([1, 2, 6, 1, 6, 5, 0, 4, 7, 0, 7, 3, 2, 3, 7, 2, 7, 6, 0, 1, 5, 0, 5, 4, 4, 5, 6, 4, 6, 7, 0, 3, 2, 0, 2, 1])
+  // a unit cube scaled (sx,sy,sz) & translated (px,py,pz) → world bbox [p, p+s]
+  const M = (sx: number, sy: number, sz: number, px: number, py: number, pz: number) => [sx, 0, 0, 0, 0, sy, 0, 0, 0, 0, sz, 0, px, py, pz, 1]
+  const mesh = (expressID: number, ifcTypeName: string, storey: number | undefined, s: [number, number, number], p: [number, number, number], name?: string): IfcMesh => ({ expressID, ifcType: 0, ifcTypeName, discipline: 'other', positions: cubePos, normals: new Float32Array(0), indices: cubeIdx, matrix: M(s[0], s[1], s[2], p[0], p[1], p[2]), color: { r: 0, g: 0, b: 0, a: 1 }, storey, name })
+  const res: IfcGeometryResult = {
+    meshes: [
+      mesh(10, 'IFCCOLUMN', 100, [0.4, 3, 0.4], [0, 0, 0]),
+      mesh(11, 'IFCWALLSTANDARDCASE', 100, [6, 3, 0.2], [0, 0, 0], 'Ext Wall'),
+      mesh(12, 'IFCSLAB', 100, [8, 0.3, 8], [-1, -0.3, -1]),
+      mesh(13, 'IFCWINDOW', 100, [1.5, 1.5, 0.1], [1, 1, 0]),
+      mesh(14, 'IFCBEAM', 100, [5, 0.4, 0.3], [0, 3, 0]),
+      mesh(20, 'IFCCOLUMN', 200, [0.4, 3, 0.4], [0, 3, 0]),
+      mesh(21, 'IFCSPACE', 200, [5, 3, 5], [0, 3, 0], 'Office 201'),
+      mesh(22, 'IFCFURNITURE', undefined, [0.6, 0.8, 0.6], [2, 3, 2]), // unassigned + unknown type
+    ],
+    vertexCount: 0, triangleCount: 0, bbox: null,
+    storeys: [{ expressID: 200, name: 'Level 1', elevation: 3 }, { expressID: 100, name: 'Ground', elevation: 0 }],
+  }
+  const { model, storeyHeight } = ifcToModel(res)
+  ok('reconstructs the storeys at the IFC storey height', model.counts.storeys === 2 && near(storeyHeight, 3, 1e-9))
+  ok('buckets IFC products into editable primitives by type', model.columns.length >= 2 && model.walls.length === 1 && model.glazing.length === 1 && model.beams.length === 1 && model.rooms.length === 1)
+  ok('an unknown product is rationalized by shape (furniture → a box column)', model.columns.some((c) => c.id === 'ifc-22'))
+  ok('one floor slab per level, id floor-N (plan + isolate work)', model.slabs.length === 2 && !!model.slabs.find((s) => s.id === 'floor-0') && !!model.slabs.find((s) => s.id === 'floor-1'))
+  ok('an unassigned element is placed on a storey by elevation', (() => { const c = model.columns.find((c) => c.id === 'ifc-22'); return !!c && c.level === 1 })())
+  ok('stable ifc-expressID ids drive selection geometry', model.columns.every((c) => c.id!.startsWith('ifc-')) && !!findElementGeom(model, 'ifc-10') && !!findElementGeom(model, 'ifc-21'))
+  ok('the imported model explodes into Revit-style schedules', (() => { const ex = explodeBuilding(model, { storeyHeight }); return ex.summary.columns === model.columns.length && ex.schedules.some((s) => s.category === 'Window') })())
+  ok('the imported model is editable (delete + move flow through)', applyEdits(model, removeElement(emptyEdits(), 'ifc-10')).columns.length === model.columns.length - 1)
+  ok('the imported model re-exports to IFC + OBJ', /IFCCOLUMN\(/.test(toIfc(model)) && /\ng Columns/.test(toObj(model)) && /\ng Windows/.test(toObj(model)))
+  ok('a space becomes an editable Room with a real area', (() => { const r = model.rooms[0]; return r.name === 'Office 201' && r.area > 0 && r.polygon.length >= 3 })())
+  ok('empty geometry → a safe empty model', ifcToModel({ meshes: [], vertexCount: 0, triangleCount: 0, bbox: null, storeys: [] }).model.counts.storeys === 1)
 }
 
 // ── model-stats (uploaded mesh-model import) ────────────────────────────────────
