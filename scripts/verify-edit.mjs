@@ -17,7 +17,7 @@ await page.evaluateOnNewDocument(() => {
   sessionStorage.setItem('aec-onb-seen', '1')
 })
 
-const comps = () => page.evaluate(() => document.querySelector('[aria-label^="3D building model with components"]').__components)
+const comps = () => page.evaluate(() => document.querySelector('[aria-label^="3D building model"]').__components)
 const clickBtn = (re) => page.evaluate((rs) => { const b = [...document.querySelectorAll('button')].find((x) => new RegExp(rs).test((x.textContent || '').trim())); if (b) { b.click(); return true } return false }, re.source)
 const clickTab = (name) => page.evaluate((n) => { const b = [...document.querySelectorAll('button')].find((x) => (x.textContent || '').trim().startsWith(n + ' (')); b?.click() }, name)
 const clickRow = () => page.evaluate(() => document.querySelector('tbody tr')?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
@@ -25,7 +25,7 @@ const inspectorVal = (label) => page.evaluate((lbl) => { const dt = [...document
 
 try {
   await page.goto(BASE + '/building-explorer', { waitUntil: 'domcontentloaded', timeout: 30000 })
-  await page.waitForSelector('[aria-label^="3D building model with components"]', { timeout: 20000 })
+  await page.waitForSelector('[aria-label^="3D building model"]', { timeout: 20000 })
   await new Promise((r) => setTimeout(r, 1600))
   const base = await comps()
   ok('building loaded with columns + windows', base.columns > 0 && base.windows > 0, base)

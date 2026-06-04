@@ -287,9 +287,9 @@ export default function ProjectWorkspace() {
           }
         />
         <div className="grid gap-0 border-t border-edge/50 lg:grid-cols-[1.6fr_1fr]">
-          <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
+          <Suspense fallback={<div style={{ height: 600 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
             {viewMode === 'building'
-              ? <ComponentBuildingViewer model={building} hidden={hidden3d} sun={sun} shadows={shadowsOn} height={460} />
+              ? <ComponentBuildingViewer model={building} hidden={hidden3d} sun={sun} shadows={shadowsOn} height={600} />
               : <BuildingViewer input={massingInput} mode={colorMode} metric={colorMetric} selected={selectedFloor} onSelectFloor={setSelectedFloor} height={460} />}
           </Suspense>
           <div className="flex flex-col gap-3 border-t border-edge/50 p-4 lg:border-l lg:border-t-0">

@@ -45,7 +45,7 @@ export type LevelInfo = {
 
 export type Schedule = { group: string; category: ElementCategory; columns: ScheduleCol[]; rows: (Record<string, number | string> & { id: string })[]; totals: Record<string, number> }
 
-export type ExplodeOpts = { storeyHeight?: number; slabThickness?: number; columnSection?: number }
+export type ExplodeOpts = { storeyHeight?: number; slabThickness?: number }
 
 export type BuildingExplosion = {
   elements: BuildingElement[]
@@ -136,7 +136,6 @@ const plateBBox = (poly: Pt[]) => {
 export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): BuildingExplosion {
   const sh = Math.max(0.1, opts.storeyHeight ?? 3.6)
   const slabT = Math.max(0.05, opts.slabThickness ?? 0.3)
-  const colSec = Math.max(0.1, opts.columnSection ?? 0.6)
   const storeys = m.counts.storeys
   const elements: BuildingElement[] = []
 
@@ -172,13 +171,13 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
   // columns
   for (let level = 0; level < storeys; level++) {
     levelColumns(m, level).forEach((c, i) => {
-      const height = c.h * sh
-      const volume = colSec * colSec * height
+      const height = c.h * sh, section = r2(c.w * LEN)
+      const volume = c.w * LEN * (c.d * LEN) * height
       const mark = `C-${level === 0 ? 'G' : pad(level)}-${pad(i + 1)}`
       elements.push({
         id: c.id ?? `col-${level}-${i}`, category: 'Column', level, levelName: levelName(level, storeys), mark,
         title: `Column ${mark}`, cols: COLUMN_COLS,
-        data: { mark, level: levelName(level, storeys), section: colSec, height: r2(height), volume: r2(volume), x: r1(c.x * LEN), z: r1(c.z * LEN) },
+        data: { mark, level: levelName(level, storeys), section, height: r2(height), volume: r2(volume), x: r1(c.x * LEN), z: r1(c.z * LEN) },
       })
     })
   }
@@ -278,7 +277,7 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
       gfa: r1(gfa), grossVolume: r1(grossVolume), facadeArea: r1(facadeArea), height: r1(storeys * sh),
       concreteVolume: r1(concreteVolume), coreVolume: coreEls.length ? Number(coreEls[0].data.volume) : 0,
     },
-    opts: { storeyHeight: sh, slabThickness: slabT, columnSection: colSec },
+    opts: { storeyHeight: sh, slabThickness: slabT },
   }
 }
 

@@ -786,7 +786,7 @@ section('building-explorer')
   ok('beam/door/wall schedules exist with totals', ['Beam', 'Wall'].every((c) => ex.schedules.some((s) => s.category === c)) && ex.schedules.find((s) => s.category === 'Beam')!.totals.volume > 0)
   ok('findElementGeom locates a beam (oriented) + a door', (() => { const g1 = findElementGeom(model, 'beam-0-0'); const g2 = findElementGeom(model, 'door-0-0'); return !!g1 && !!g1.dir && !!g2 })())
   ok('core spans all storeys (level -1) with volume', ex.byId['core'].level === -1 && Number(ex.byId['core'].data.volume) > 0)
-  ok('column section/slab are tunable takeoff assumptions', explodeBuilding(model, { columnSection: 0.8 }).byId['col-0-0'].data.section === 0.8)
+  ok('column section is derived from the column geometry', near(Number(ex.byId['col-0-0'].data.section), model.columns[0].w * 6.25, 0.01))
   // schedules
   const colSched = ex.schedules.find((s) => s.category === 'Column')!
   ok('column schedule has a row per column with a concrete total', colSched.rows.length === model.columns.length && colSched.totals.volume > 0)
