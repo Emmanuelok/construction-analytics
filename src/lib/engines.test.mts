@@ -28,6 +28,7 @@ import { explodeBuilding, planForLevel, findElementGeom, levelColumns, levelPane
 import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, duplicateColumn, editCount } from './building-edits.ts'
 import { toObj, objStats } from './building-export.ts'
 import { toIfc } from './building-ifc.ts'
+import { floorRooms } from './building-rooms.ts'
 import { explodeIfc, meshGeom, friendlyType, sliceMeshes, cutHeightFor } from './ifc-explorer.ts'
 import type { IfcGeometryResult, IfcMesh } from './ifc-geometry.ts'
 import { unitShape, holeFor, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, SHAPE_KINDS } from './shapes.ts'
@@ -799,6 +800,9 @@ section('building-explorer')
   const plan = planForLevel(model, 0)
   ok('plan projection: outline + columns with ids that match the schedule', plan.outline.length >= 4 && plan.columns.length === levelColumns(model, 0).length && plan.columns[0].id === 'col-0-0')
   ok('roof plan has no columns/panels', planForLevel(model, 12).isRoof && planForLevel(model, 12).columns.length === 0)
+  // interior rooms flow through schedules + plan + summary
+  ok('a Rooms schedule + room elements + net area', ex.schedules.some((s) => s.category === 'Room') && ex.summary.rooms > 0 && ex.summary.netArea > 0 && ex.elements.some((e) => e.category === 'Room'))
+  ok('the level plan carries clickable rooms', planForLevel(model, 0).rooms.length > 0 && findElementGeom(model, planForLevel(model, 0).rooms[0].id) !== null)
   // highlight geometry
   ok('findElementGeom locates a column box', (() => { const g = findElementGeom(model, 'col-0-0'); return !!g && Math.abs(g.size.x - model.columns[0].w) < 1e-9 })())
   ok('findElementGeom gives a panel an edge direction', (() => { const g = findElementGeom(model, 'pan-0-0'); return !!g && !!g.dir })())
@@ -845,6 +849,20 @@ section('building-edits')
   ok('edited model still explodes into a schedule', explodeBuilding(applyEdits(model, removeElement(emptyEdits(), col0))).summary.columns === model.columns.length - 1)
 }
 
+// ── building-rooms (interior spaces) ────────────────────────────────────────────
+section('building-rooms')
+{
+  const m = buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0.16 })
+  const AREA = 6.25 * 6.25 // (1/PLATE_SCALE)²
+  ok('the building generates interior rooms, level-tagged', m.rooms.length > 0 && m.counts.rooms === m.rooms.length && new Set(m.rooms.map((r) => r.level)).size === 6)
+  ok('every room has a real area + a valid polygon', m.rooms.every((r) => r.area > 0 && r.polygon.length >= 3 && r.perimeter > 0))
+  const fp = m.slabs[0].polygon
+  const rooms = floorRooms(fp, { roomSize: 8 })
+  ok('floorRooms tiles a floor (room areas ≈ floor area)', near(rooms.reduce((s, r) => s + r.area, 0), polygonArea(fp) * AREA, polygonArea(fp) * AREA * 0.08))
+  ok('rooms inside the core are dropped (circulation)', floorRooms(fp, { core: { x: m.core!.x, z: m.core!.z, w: m.core!.w, d: m.core!.d } }).length < rooms.length)
+  ok('a larger room size → fewer, bigger rooms', floorRooms(fp, { roomSize: 16 }).length < rooms.length)
+}
+
 // ── building-export (OBJ round-trip) ────────────────────────────────────────────
 section('building-export')
 {
@@ -871,6 +889,7 @@ section('building-ifc')
   ok('typed products: columns, slabs, beams, walls, windows, doors', count('IFCCOLUMN') === model.columns.length && count('IFCSLAB') === model.slabs.length + 1 && count('IFCBEAM') === model.beams.length && count('IFCWALL') === model.walls.length && count('IFCWINDOW') === model.glazing.length && count('IFCDOOR') === model.doors.length)
   ok('parametric extruded-solid geometry + property sets', count('IFCEXTRUDEDAREASOLID') > 0 && count('IFCPROPERTYSET') > 0 && count('IFCRELDEFINESBYPROPERTIES') > 0)
   ok('spatial structure is aggregated + elements contained', count('IFCRELAGGREGATES') === 3 && count('IFCRELCONTAINEDINSPATIALSTRUCTURE') >= 1)
+  ok('interior rooms export as IfcSpace', count('IFCSPACE') === model.rooms.length && model.rooms.length > 0)
   // every #ref resolves to a defined #id (no dangling references)
   ok('every entity reference resolves (well-formed model)', (() => {
     const defined = new Set([...ifc.matchAll(/^#(\d+)=/gm)].map((x) => x[1]))

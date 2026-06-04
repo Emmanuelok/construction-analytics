@@ -32,6 +32,13 @@ try {
   })
   ok('floor plan renders columns (circles) + panels (lines)', !!planCounts && planCounts.circles > 0 && planCounts.lines > 0, planCounts)
 
+  // interior rooms render in the plan + a Rooms schedule exists
+  const roomInfo = await page.evaluate(() => {
+    const svg = [...document.querySelectorAll('svg')].find((s) => s.getAttribute('aria-label')?.startsWith('Floor plan'))
+    return { polys: svg ? svg.querySelectorAll('polygon').length : 0, roomsTab: [...document.querySelectorAll('button')].some((b) => /^Rooms \(/.test((b.textContent || '').trim())) }
+  })
+  ok('plan shows interior rooms + a Rooms schedule tab', roomInfo.polys > 2 && roomInfo.roomsTab, roomInfo)
+
   // selecting a column in the plan drives the shared selection + inspector + 3D highlight
   const clickedId = await page.evaluate(() => {
     const svg = [...document.querySelectorAll('svg')].find((s) => s.getAttribute('aria-label')?.startsWith('Floor plan'))

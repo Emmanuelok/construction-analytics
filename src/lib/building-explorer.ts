@@ -16,7 +16,7 @@ const AREA = LEN * LEN
 const r1 = (n: number) => Math.round(n * 10) / 10
 const r2 = (n: number) => Math.round(n * 100) / 100
 
-export type ElementCategory = 'Floor' | 'Column' | 'Beam' | 'Wall' | 'Window' | 'Door' | 'Core' | 'Roof'
+export type ElementCategory = 'Floor' | 'Column' | 'Beam' | 'Wall' | 'Window' | 'Door' | 'Room' | 'Core' | 'Roof'
 export type ScheduleCol = { key: string; label: string; unit?: string; numeric?: boolean; total?: boolean }
 
 export type BuildingElement = {
@@ -54,7 +54,7 @@ export type BuildingExplosion = {
   schedules: Schedule[]
   summary: {
     elements: number; storeys: number; columns: number; panels: number
-    beams: number; windows: number; doors: number; walls: number
+    beams: number; windows: number; doors: number; walls: number; rooms: number; netArea: number
     gfa: number; grossVolume: number; facadeArea: number; height: number
     concreteVolume: number; coreVolume: number
   }
@@ -116,8 +116,16 @@ const WALL_COLS: ScheduleCol[] = [
   { key: 'orientation', label: 'Faces' },
 ]
 
+const ROOM_COLS: ScheduleCol[] = [
+  { key: 'mark', label: 'Room' },
+  { key: 'level', label: 'Level' },
+  { key: 'area', label: 'Area', unit: 'm²', numeric: true, total: true },
+  { key: 'perimeter', label: 'Perimeter', unit: 'm', numeric: true },
+]
+
 const levelName = (i: number, storeys: number) => (i === 0 ? 'Ground' : i >= storeys ? 'Roof' : `Level ${i}`)
 const pad = (n: number) => String(n).padStart(2, '0')
+export const levelRooms = (m: BuildingModel, level: number) => m.rooms.filter((r) => r.level === level)
 
 /** Columns belonging to a level, in stable order (shared by schedule, plan & viewer). */
 export const levelColumns = (m: BuildingModel, level: number): Box[] => m.columns.filter((c) => c.level === level)
@@ -215,6 +223,13 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
     })
   }
 
+  // interior rooms / spaces (per floor)
+  for (const r of m.rooms) {
+    const lvl = levelName(r.level, storeys)
+    elements.push({ id: r.id, category: 'Room', level: r.level, levelName: lvl, mark: r.name, title: r.name, cols: ROOM_COLS,
+      data: { mark: r.name, level: lvl, area: r.area, perimeter: r.perimeter } })
+  }
+
   // core
   if (m.core) {
     const footprint = m.core.w * m.core.d * AREA
@@ -253,9 +268,10 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
   }
   const ofCat = (cat: ElementCategory) => elements.filter((e) => e.category === cat)
   const floorEls = elements.filter((e) => e.category === 'Floor' || e.category === 'Roof')
-  const colEls = ofCat('Column'), beamEls = ofCat('Beam'), winEls = ofCat('Window'), doorEls = ofCat('Door'), wallEls = ofCat('Wall'), coreEls = ofCat('Core')
+  const colEls = ofCat('Column'), beamEls = ofCat('Beam'), winEls = ofCat('Window'), doorEls = ofCat('Door'), wallEls = ofCat('Wall'), roomEls = ofCat('Room'), coreEls = ofCat('Core')
   const schedules: Schedule[] = [
     sched('Floors & Roof', 'Floor', FLOOR_COLS, floorEls),
+    sched('Rooms', 'Room', ROOM_COLS, roomEls),
     sched('Columns', 'Column', COLUMN_COLS, colEls),
     sched('Beams', 'Beam', BEAM_COLS, beamEls),
     sched('Windows', 'Window', OPENING_COLS, winEls),
@@ -274,6 +290,7 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
     summary: {
       elements: elements.length, storeys, columns: colEls.length, panels: winEls.length,
       beams: beamEls.length, windows: winEls.length, doors: doorEls.length, walls: wallEls.length,
+      rooms: roomEls.length, netArea: r1(roomEls.reduce((s, e) => s + Number(e.data.area), 0)),
       gfa: r1(gfa), grossVolume: r1(grossVolume), facadeArea: r1(facadeArea), height: r1(storeys * sh),
       concreteVolume: r1(concreteVolume), coreVolume: coreEls.length ? Number(coreEls[0].data.volume) : 0,
     },
@@ -286,11 +303,13 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
 export type PlanColumn = { id: string; x: number; z: number; w: number; d: number }
 export type PlanPanel = { id: string; a: Pt; b: Pt; facing: number }
 export type PlanDoor = { id: string; a: Pt; b: Pt }
+export type PlanRoom = { id: string; polygon: Pt[]; name: string; area: number }
 export type LevelPlan = {
   level: number
   isRoof: boolean
   outline: Pt[]
   hole?: Pt[]
+  rooms: PlanRoom[]
   columns: PlanColumn[]
   panels: PlanPanel[]
   doors: PlanDoor[]
@@ -312,6 +331,7 @@ export function planForLevel(m: BuildingModel, level: number): LevelPlan {
     level, isRoof,
     outline,
     hole: slab?.hole,
+    rooms: isRoof ? [] : levelRooms(m, level).map((r) => ({ id: r.id, polygon: r.polygon, name: r.name, area: r.area })),
     columns: cols.map((col, i) => ({ id: col.id ?? `col-${level}-${i}`, x: col.x, z: col.z, w: col.w, d: col.d })),
     panels: pans.map((g, i) => ({ id: g.id ?? `pan-${level}-${i}`, a: g.a, b: g.b, facing: bearing(c, { x: (g.a.x + g.b.x) / 2, z: (g.a.z + g.b.z) / 2 }) })),
     doors: isRoof ? [] : levelDoors(m, level).map((g, i) => ({ id: g.id ?? `door-${level}-${i}`, a: g.a, b: g.b })),
@@ -332,6 +352,7 @@ export function findElementGeom(m: BuildingModel, id: string): ElementGeom | nul
   const quadGeom = (g: Quad, thick: number): ElementGeom => ({ center: { x: (g.a.x + g.b.x) / 2, y: g.y + g.h / 2, z: (g.a.z + g.b.z) / 2 }, size: { x: dist(g.a, g.b), y: g.h, z: thick }, dir: { x: g.b.x - g.a.x, z: g.b.z - g.a.z } })
   if (m.core && m.core.id === id) return boxGeom(m.core)
   if (m.roof && m.roof.id === id) return plateGeom(m.roof)
+  for (const r of m.rooms) if (r.id === id) { const b = plateBBox(r.polygon); const s = m.slabs.find((x) => x.level === r.level); return { center: { x: (b.minX + b.maxX) / 2, y: (s ? s.y : 0) + 0.1, z: (b.minZ + b.maxZ) / 2 }, size: { x: b.maxX - b.minX, y: 0.12, z: b.maxZ - b.minZ } } }
   for (const c of m.columns) if (c.id === id) return boxGeom(c)
   for (const c of m.mullions) if (c.id === id) return boxGeom(c)
   for (const s of m.slabs) if (s.id === id) return plateGeom(s)

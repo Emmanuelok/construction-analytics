@@ -56,9 +56,9 @@ export function applyEdits(m: BuildingModel, ed: BuildingEdits): BuildingModel {
   const core = m.core && !del.has('core') ? editBox(m.core, ed.edits['core']) : null
   const roof = m.roof && !del.has('roof') ? editPlate(m.roof, ed.edits['roof']) : null
   return {
-    slabs, columns, beams, walls, glazing, doors, mullions, core, roof,
+    slabs, columns, beams, walls, glazing, doors, mullions, core, roof, rooms: m.rooms,
     totalHeight: m.totalHeight, footprint: m.footprint,
-    counts: { storeys: m.counts.storeys, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: mullions.length, slabs: slabs.length },
+    counts: { storeys: m.counts.storeys, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: mullions.length, slabs: slabs.length, rooms: m.counts.rooms },
   }
 }
 
