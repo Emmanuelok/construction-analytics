@@ -220,25 +220,25 @@ export function ComponentBuildingViewer({
       const colIds = idsFor(m.columns, 'col'), panIds = idsFor(m.glazing, 'pan'), wallIds = idsFor(m.walls, 'wall'), doorIds = idsFor(m.doors, 'door'), beamIds = idsFor(m.beams, 'beam')
 
       if (!h.slabs) {
-        for (const s of m.slabs) if (show(s.level)) plate(s, slabMat, `floor-${s.level ?? 0}`)
-        if (m.roof && (!isolating || iso >= storeys)) plate(m.roof, slabMat, 'roof')
+        for (const s of m.slabs) if (show(s.level)) plate(s, slabMat, s.id ?? `floor-${s.level ?? 0}`)
+        if (m.roof && (!isolating || iso >= storeys)) plate(m.roof, slabMat, m.roof.id ?? 'roof')
       }
       if (!h.structure) {
-        boxInst(m.columns.map((c, i) => ({ c, id: colIds[i] })).filter(({ c }) => show(c.level)), colMat)
-        beamInst(m.beams.map((b, i) => ({ b, id: beamIds[i] })).filter(({ b }) => show(b.level)), beamMat)
+        boxInst(m.columns.map((c, i) => ({ c, id: c.id ?? colIds[i] })).filter(({ c }) => show(c.level)), colMat)
+        beamInst(m.beams.map((b, i) => ({ b, id: b.id ?? beamIds[i] })).filter(({ b }) => show(b.level)), beamMat)
         if (m.core && !(isolating && iso >= storeys)) {
           let cy = m.core.y, ch = m.core.h
           if (isolating) { const sceneSh = m.totalHeight / Math.max(1, storeys); cy = iso * sceneSh + sceneSh / 2; ch = sceneSh * 0.92 }
-          const cm = new THREE.Mesh(unitBox, coreMat); cm.scale.set(m.core.w, ch, m.core.d); cm.position.set(m.core.x, cy, m.core.z); cm.castShadow = true; cm.receiveShadow = true; cm.userData.id = 'core'; group.add(cm); objects.push(cm)
+          const cm = new THREE.Mesh(unitBox, coreMat); cm.scale.set(m.core.w, ch, m.core.d); cm.position.set(m.core.x, cy, m.core.z); cm.castShadow = true; cm.receiveShadow = true; cm.userData.id = m.core.id ?? 'core'; group.add(cm); objects.push(cm)
         }
       }
       if (!h.facade) {
-        planeInst(m.walls.map((g, i) => ({ g, id: wallIds[i] })).filter(({ g }) => show(g.level)), wallMat)
+        planeInst(m.walls.map((g, i) => ({ g, id: g.id ?? wallIds[i] })).filter(({ g }) => show(g.level)), wallMat)
         boxInst(m.mullions.filter((c) => show(c.level)).map((c) => ({ c })), mullionMat) // framing — visual only
       }
       if (!h.glazing) {
-        planeInst(m.glazing.map((g, i) => ({ g, id: panIds[i] })).filter(({ g }) => show(g.level)), glassMat, { shadow: false, outset: 0.02 })
-        planeInst(m.doors.map((g, i) => ({ g, id: doorIds[i] })).filter(({ g }) => show(g.level)), doorMat, { outset: 0.02 })
+        planeInst(m.glazing.map((g, i) => ({ g, id: g.id ?? panIds[i] })).filter(({ g }) => show(g.level)), glassMat, { shadow: false, outset: 0.02 })
+        planeInst(m.doors.map((g, i) => ({ g, id: g.id ?? doorIds[i] })).filter(({ g }) => show(g.level)), doorMat, { outset: 0.02 })
       }
       const span = Math.max(m.totalHeight, m.footprint * 1.5, 8)
       if (isolating && iso < storeys) { const sceneSh = m.totalHeight / Math.max(1, storeys); orbit.target.set(0, iso * sceneSh + sceneSh / 2, 0); orbit.radius = Math.max(m.footprint * 1.6, 10) }

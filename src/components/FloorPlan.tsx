@@ -1,17 +1,20 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import type { LevelPlan } from '@/lib/building-explorer'
 import { compass } from '@/lib/geo'
 
 /* A top-down 2D floor plan of a single level — slab outline (+ any void), the
- * structural column grid and the curtain-wall panels, drawn from the same element
- * ids as the 3D viewer and schedules. Click a column or panel to inspect it; the
- * selected element is highlighted. North is up (scene x = East, z = North). Strokes
- * are non-scaling so the plan stays crisp at any size. View-only geometry — the
- * schedules below give the keyboard-accessible path to the same elements. */
-export function FloorPlan({ plan, selected, onSelect, height = 320 }: {
+ * structural column grid, windows and doors, drawn from the same element ids as the
+ * 3D viewer and schedules. Click an element to inspect it; the selection is
+ * highlighted. In edit mode, drag a column to move it, or (with Add active) click
+ * the plan to drop a new column. North is up (scene x = East, z = North). */
+export function FloorPlan({ plan, selected, onSelect, editable = false, addMode = false, onMoveColumn, onAddAt, height = 320 }: {
   plan: LevelPlan
   selected: string | null
   onSelect: (id: string) => void
+  editable?: boolean
+  addMode?: boolean
+  onMoveColumn?: (id: string, dx: number, dz: number) => void
+  onAddAt?: (x: number, z: number) => void
   height?: number
 }) {
   const { b, w, h, pad, toX, toY, ext } = useMemo(() => {
@@ -19,10 +22,26 @@ export function FloorPlan({ plan, selected, onSelect, height = 320 }: {
     const w = Math.max(0.001, b.maxX - b.minX), h = Math.max(0.001, b.maxZ - b.minZ)
     const ext = Math.max(w, h)
     const pad = ext * 0.12
-    const toX = (x: number) => x - b.minX
-    const toY = (z: number) => b.maxZ - z // flip so North is up
-    return { b, w, h, pad, toX, toY, ext }
+    return { b, w, h, pad, ext, toX: (x: number) => x - b.minX, toY: (z: number) => b.maxZ - z }
   }, [plan])
+
+  const svgRef = useRef<SVGSVGElement>(null)
+  const viewRef = useRef({ minX: b.minX, maxZ: b.maxZ }); viewRef.current = { minX: b.minX, maxZ: b.maxZ }
+  const dragRef = useRef<{ id: string; lx: number; lz: number; moved: boolean } | null>(null)
+  const worldAt = (cx: number, cy: number) => {
+    const svg = svgRef.current; if (!svg) return { x: 0, z: 0 }
+    const u = new DOMPoint(cx, cy).matrixTransform(svg.getScreenCTM()!.inverse())
+    return { x: u.x + viewRef.current.minX, z: viewRef.current.maxZ - u.y }
+  }
+  const onDrag = (e: PointerEvent) => { const d = dragRef.current; if (!d || !onMoveColumn) return; const p = worldAt(e.clientX, e.clientY); const dx = p.x - d.lx, dz = p.z - d.lz; if (Math.abs(dx) + Math.abs(dz) > 1e-4) { d.moved = true; onMoveColumn(d.id, dx, dz); d.lx = p.x; d.lz = p.z } }
+  const endDrag = () => { dragRef.current = null; window.removeEventListener('pointermove', onDrag); window.removeEventListener('pointerup', endDrag) }
+  const startDrag = (e: React.PointerEvent, id: string) => {
+    if (!editable || !onMoveColumn) return
+    e.stopPropagation()
+    const p = worldAt(e.clientX, e.clientY)
+    dragRef.current = { id, lx: p.x, lz: p.z, moved: false }
+    window.addEventListener('pointermove', onDrag); window.addEventListener('pointerup', endDrag)
+  }
 
   const outline = plan.outline.map((p) => `${toX(p.x)},${toY(p.z)}`).join(' ')
   const hole = plan.hole && plan.hole.length >= 3 ? plan.hole.map((p) => `${toX(p.x)},${toY(p.z)}`).join(' ') : null
@@ -30,22 +49,28 @@ export function FloorPlan({ plan, selected, onSelect, height = 320 }: {
 
   return (
     <svg
+      ref={svgRef}
       viewBox={`${-pad} ${-pad} ${w + 2 * pad} ${h + 2 * pad}`}
       style={{ height }}
-      className="w-full rounded-xl bg-[#0a0f1c] ring-1 ring-edge/60"
+      className={`w-full rounded-xl bg-[#0a0f1c] ring-1 ring-edge/60 ${addMode ? 'cursor-crosshair' : ''}`}
       role="img"
-      aria-label={`Floor plan, ${plan.isRoof ? 'roof' : `level ${plan.level}`}: ${plan.columns.length} columns, ${plan.panels.length} curtain panels`}
+      aria-label={`Floor plan, ${plan.isRoof ? 'roof' : `level ${plan.level}`}: ${plan.columns.length} columns, ${plan.panels.length} windows, ${plan.doors.length} doors`}
     >
+      {/* add-column capture layer (only active in Add mode) */}
+      {addMode && onAddAt && (
+        <rect x={-pad} y={-pad} width={w + 2 * pad} height={h + 2 * pad} fill="transparent"
+          onClick={(e) => { const p = worldAt(e.clientX, e.clientY); onAddAt(p.x, p.z) }} />
+      )}
       {/* slab fill + outline (with optional courtyard void) */}
       <g>
         {hole
           ? <path d={`M ${outline.replace(/ /g, ' L ')} Z M ${hole.replace(/ /g, ' L ')} Z`} fillRule="evenodd" fill="#11203a" stroke="none" />
           : <polygon points={outline} fill="#11203a" stroke="none" />}
         <polygon points={outline} fill="none" stroke={selected === `floor-${plan.level}` || (plan.isRoof && selected === 'roof') ? '#fbbf24' : '#3b5a82'} strokeWidth={selected?.startsWith('floor') || selected === 'roof' ? 2.5 : 1.5} vectorEffect="non-scaling-stroke"
-          className="cursor-pointer" onClick={() => onSelect(plan.isRoof ? 'roof' : `floor-${plan.level}`)} />
+          className="cursor-pointer" onClick={() => !addMode && onSelect(plan.isRoof ? 'roof' : `floor-${plan.level}`)} />
         {hole && <polygon points={hole} fill="none" stroke="#3b5a82" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />}
       </g>
-      {/* curtain-wall panels */}
+      {/* windows */}
       <g>
         {plan.panels.map((p) => {
           const on = selected === p.id
@@ -69,11 +94,12 @@ export function FloorPlan({ plan, selected, onSelect, height = 320 }: {
           )
         })}
       </g>
-      {/* structural columns */}
+      {/* structural columns (draggable in edit mode) */}
       <g>
         {plan.columns.map((c) => {
           const on = selected === c.id
-          return <circle key={c.id} cx={toX(c.x)} cy={toY(c.z)} r={on ? colR * 1.7 : colR} fill={on ? '#fbbf24' : '#94a3b8'} stroke="#0a0f1c" strokeWidth={0.6} vectorEffect="non-scaling-stroke" className="cursor-pointer" onClick={() => onSelect(c.id)} />
+          return <circle key={c.id} cx={toX(c.x)} cy={toY(c.z)} r={on ? colR * 1.7 : colR} fill={on ? '#fbbf24' : '#94a3b8'} stroke="#0a0f1c" strokeWidth={0.6} vectorEffect="non-scaling-stroke"
+            className={editable ? 'cursor-grab' : 'cursor-pointer'} onPointerDown={(e) => startDrag(e, c.id)} onClick={() => { if (!dragRef.current?.moved) onSelect(c.id) }} />
         })}
       </g>
       {/* core footprint */}
@@ -81,7 +107,7 @@ export function FloorPlan({ plan, selected, onSelect, height = 320 }: {
         <rect
           x={toX(plan.core.x) - (plan.core.w / 2)} y={toY(plan.core.z) - (plan.core.d / 2)} width={plan.core.w} height={plan.core.d}
           fill={selected === 'core' ? '#fbbf2433' : '#33415566'} stroke={selected === 'core' ? '#fbbf24' : '#64748b'} strokeWidth={selected === 'core' ? 2.5 : 1.2} vectorEffect="non-scaling-stroke"
-          className="cursor-pointer" onClick={() => onSelect('core')}
+          className="cursor-pointer" onClick={() => !addMode && onSelect('core')}
         />
       )}
       {/* north arrow */}

@@ -25,6 +25,7 @@ import { mentionNotifications, shareNotifications, alertNotifications, buildFeed
 import { buildMassing, massingSchedule, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
 import { buildBuilding } from './building.ts'
 import { explodeBuilding, planForLevel, findElementGeom, levelColumns, levelPanels } from './building-explorer.ts'
+import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, duplicateColumn, editCount } from './building-edits.ts'
 import { explodeIfc, meshGeom, friendlyType, sliceMeshes, cutHeightFor } from './ifc-explorer.ts'
 import type { IfcGeometryResult, IfcMesh } from './ifc-geometry.ts'
 import { unitShape, holeFor, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, SHAPE_KINDS } from './shapes.ts'
@@ -800,6 +801,46 @@ section('building-explorer')
   ok('findElementGeom locates a column box', (() => { const g = findElementGeom(model, 'col-0-0'); return !!g && Math.abs(g.size.x - model.columns[0].w) < 1e-9 })())
   ok('findElementGeom gives a panel an edge direction', (() => { const g = findElementGeom(model, 'pan-0-0'); return !!g && !!g.dir })())
   ok('findElementGeom returns null for an unknown id', findElementGeom(model, 'nope-9-9') === null)
+}
+
+// ── building-edits (direct manipulation: move / resize / delete / add) ──────────
+section('building-edits')
+{
+  const model = buildBuilding(buildMassing({ gfa: 80_000, progress: 100, storeys: 8, shape: 'rect' }), { coreRatio: 0.16 })
+  ok('every model element carries a stable id', model.columns.every((c) => !!c.id) && model.glazing.every((g) => !!g.id) && model.beams.every((b) => !!b.id) && model.core?.id === 'core')
+  ok('applyEdits with no edits is a no-op (same counts)', (() => { const a = applyEdits(model, emptyEdits()); return a.columns.length === model.columns.length && a.glazing.length === model.glazing.length })())
+
+  // move a column
+  const col0 = model.columns[0].id!
+  const moved = applyEdits(model, nudge(emptyEdits(), col0, { x: 5, y: 0, z: -3 }))
+  ok('move: nudging a column shifts its position', (() => { const c = moved.columns.find((c) => c.id === col0)!; return near(c.x, model.columns[0].x + 5) && near(c.z, model.columns[0].z - 3) })())
+
+  // resize a column (section scale)
+  const grown = applyEdits(model, rescale(emptyEdits(), col0, 1.5))
+  ok('resize: rescaling a column grows its section', (() => { const c = grown.columns.find((c) => c.id === col0)!; return near(c.w, model.columns[0].w * 1.5) && near(c.d, model.columns[0].d * 1.5) })())
+
+  // delete a column
+  const del = applyEdits(model, removeElement(emptyEdits(), col0))
+  ok('delete: removing a column drops it (count −1, id gone)', del.columns.length === model.columns.length - 1 && !del.columns.some((c) => c.id === col0))
+
+  // resize a window (height + width via scale)
+  const win0 = model.glazing[0].id!
+  const winEd = applyEdits(model, rescale(nudge(emptyEdits(), win0, { x: 0, y: 1, z: 0 }), win0, 0.5))
+  ok('move+resize a window: lifts it & shrinks its width', (() => { const g = winEd.glazing.find((g) => g.id === win0)!; const w0 = Math.hypot(model.glazing[0].b.x - model.glazing[0].a.x, model.glazing[0].b.z - model.glazing[0].a.z); const w1 = Math.hypot(g.b.x - g.a.x, g.b.z - g.a.z); return near(g.y, model.glazing[0].y + 1) && near(w1, w0 * 0.5, 1e-6) })())
+
+  // add a column at a plan point on level 2
+  const added = applyEdits(model, addColumnAt(emptyEdits(), model, 2, 1.5, 2.5))
+  ok('add: a new column appears on the chosen level', added.columns.length === model.columns.length + 1 && added.columns.some((c) => c.level === 2 && near(c.x, 1.5) && near(c.z, 2.5)))
+
+  // duplicate a column
+  ok('duplicate: copies a column (count +1)', applyEdits(model, duplicateColumn(emptyEdits(), model, col0)).columns.length === model.columns.length + 1)
+
+  // an added column can itself be deleted, and edits explode + schedule live
+  const ed = addColumnAt(emptyEdits(), model, 0, 0, 0)
+  const addId = ed.added[0].id
+  ok('an added column can be removed again', applyEdits(model, removeElement(ed, addId)).columns.length === model.columns.length)
+  ok('editCount tracks moves + deletes + adds', editCount(nudge(removeElement(addColumnAt(emptyEdits(), model, 0, 0, 0), col0), model.beams[0].id!, { x: 1, y: 0, z: 0 })) === 3)
+  ok('edited model still explodes into a schedule', explodeBuilding(applyEdits(model, removeElement(emptyEdits(), col0))).summary.columns === model.columns.length - 1)
 }
 
 // ── ifc-explorer (review a real uploaded IFC model floor-by-floor) ──────────────

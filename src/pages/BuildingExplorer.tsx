@@ -1,5 +1,5 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
-import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square } from 'lucide-react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge, Tabs } from '@/components/ui'
 import { ScrollableTable } from '@/components/ScrollableTable'
 const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
@@ -8,6 +8,8 @@ import { FloorPlan } from '@/components/FloorPlan'
 import { buildMassing, deriveStoreys, SHAPE_KINDS, type ShapeKind } from '@/lib/massing'
 import { buildBuilding } from '@/lib/building'
 import { explodeBuilding, planForLevel, type Schedule, type ScheduleCol, type BuildingElement } from '@/lib/building-explorer'
+import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, duplicateColumn, editCount, type BuildingEdits } from '@/lib/building-edits'
+import { PLATE_SCALE } from '@/lib/massing'
 import { PROJECTS } from '@/data/platform'
 import { ACCENT } from '@/lib/nav'
 import { cn } from '@/lib/cn'
@@ -48,10 +50,21 @@ export default function BuildingExplorer() {
   const [wwr, setWwr] = useState(0.55)
   const [bayWidth, setBayWidth] = useState(3.4)
   const [mullions, setMullions] = useState(true)
+  const [editMode, setEditMode] = useState(false)
+  const [addMode, setAddMode] = useState(false)
+  const [edits, setEdits] = useState<BuildingEdits>(emptyEdits)
 
-  const model = useMemo(() => buildBuilding(buildMassing({ gfa: project.gfa, progress: 100, storeys, shape: shape === 'custom' ? 'rect' : shape, aspect }), { coreRatio: 0.16, wwr, bayWidth, mullions }), [project.gfa, storeys, shape, aspect, wwr, bayWidth, mullions])
+  const baseModel = useMemo(() => buildBuilding(buildMassing({ gfa: project.gfa, progress: 100, storeys, shape: shape === 'custom' ? 'rect' : shape, aspect }), { coreRatio: 0.16, wwr, bayWidth, mullions }), [project.gfa, storeys, shape, aspect, wwr, bayWidth, mullions])
+  // regenerating the base (different params) invalidates id-keyed edits → start clean
+  useEffect(() => { setEdits(emptyEdits()) }, [baseModel])
+  const model = useMemo(() => applyEdits(baseModel, edits), [baseModel, edits])
   const ex = useMemo(() => explodeBuilding(model, { storeyHeight, slabThickness, columnSection }), [model, storeyHeight, slabThickness, columnSection])
   const plan = useMemo(() => planForLevel(model, activeLevel), [model, activeLevel])
+  const nEdits = editCount(edits)
+  // nudge steps: 1 m in plan → scene via PLATE_SCALE; 0.5 m vertical → scene via storey height
+  const stepXZ = 1 * PLATE_SCALE, stepY = 0.5 / storeyHeight
+  const edit = (fn: (e: BuildingEdits) => BuildingEdits) => setEdits((e) => fn(e))
+  const del = (id: string) => { setEdits((e) => removeElement(e, id)); setSelectedId(null) }
   const selectedEl: BuildingElement | null = selectedId ? ex.byId[selectedId] ?? null : null
   const activeSchedule = ex.schedules.find((s) => s.category === schedTab) ?? ex.schedules[0]
 
@@ -136,11 +149,16 @@ export default function BuildingExplorer() {
       <div className="grid gap-6 lg:grid-cols-[1.55fr_1fr]">
         <Card className="overflow-hidden">
           <CardHeader
-            icon={Eye} accent="blue" title="3D model" subtitle="Click any slab, column, panel or the core to inspect it. Use the levels panel to isolate a single floor."
+            icon={Eye} accent="blue" title="3D model" subtitle="Click any element to inspect it; isolate a floor from the levels panel. Turn on Edit to move / resize / delete / duplicate elements (or drag a column in the plan) and add columns — the schedules update live."
             action={
               <div className="flex flex-wrap items-center gap-2">
                 {isolate && <Badge variant="cyan">Isolated · {activeLevelInfo?.name ?? `Level ${activeLevel}`}</Badge>}
                 <button onClick={() => setIsolate(false)} disabled={!isolate} className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', isolate ? 'text-slate-300 ring-edge/60 hover:bg-elevated/50' : 'cursor-default text-slate-600 ring-edge/40')}>Whole building</button>
+                <button onClick={() => { setEditMode((v) => !v); setAddMode(false) }} aria-pressed={editMode} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', editMode ? 'bg-amber-500/20 text-amber-100 ring-amber-500/40' : 'text-slate-300 ring-edge/60 hover:bg-elevated/50')}><Pencil className="h-3.5 w-3.5" /> Edit</button>
+                {editMode && <>
+                  <button onClick={() => setAddMode((v) => !v)} aria-pressed={addMode} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', addMode ? 'bg-emerald-500/20 text-emerald-100 ring-emerald-500/40' : 'text-slate-300 ring-edge/60 hover:bg-elevated/50')}><Plus className="h-3.5 w-3.5" /> Add column</button>
+                  <button onClick={() => { setEdits(emptyEdits()); setAddMode(false) }} disabled={!nEdits} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', nEdits ? 'text-slate-300 ring-edge/60 hover:bg-elevated/50' : 'cursor-default text-slate-600 ring-edge/40')}><RotateCcw className="h-3.5 w-3.5" /> Reset{nEdits ? ` (${nEdits})` : ''}</button>
+                </>}
                 <div className="flex flex-wrap gap-1.5">
                   {([['structure', 'Structure'], ['facade', 'Walls'], ['glazing', 'Windows'], ['slabs', 'Slabs']] as const).map(([k, label]) => (
                     <button key={k} onClick={() => setHidden((h) => ({ ...h, [k]: !h[k] }))} aria-pressed={!hidden[k]} className={cn('rounded-lg px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors', hidden[k] ? 'text-slate-500 ring-edge/60' : 'bg-blue-500/15 text-blue-200 ring-blue-500/40')}>{label}</button>
@@ -186,7 +204,10 @@ export default function BuildingExplorer() {
         <Card className="overflow-hidden">
           <CardHeader icon={Table2} accent="teal" title={`Floor plan — ${activeLevelInfo?.name ?? `Level ${activeLevel}`}`} subtitle="Plan of the active level. Click a column or panel to inspect it; the selection syncs with the 3D model & schedules." />
           <div className="border-t border-edge/50 p-4">
-            <FloorPlan plan={plan} selected={selectedId} onSelect={selectEl} height={340} />
+            <FloorPlan plan={plan} selected={selectedId} onSelect={selectEl} height={340}
+              editable={editMode} addMode={addMode}
+              onMoveColumn={(id, dx, dz) => edit((e) => nudge(e, id, { x: dx, y: 0, z: dz }))}
+              onAddAt={(x, z) => { edit((e) => addColumnAt(e, model, activeLevel < 0 ? 0 : Math.min(activeLevel, storeys - 1), x, z)); setAddMode(false) }} />
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" /> Column</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-sky-400" /> Window</span>
@@ -218,6 +239,26 @@ export default function BuildingExplorer() {
                     </div>
                   ))}
                 </dl>
+                {editMode && selectedId && (
+                  <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] p-3">
+                    <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-amber-300/90"><Move className="h-3.5 w-3.5" /> Edit element</div>
+                    <div className="grid grid-cols-3 gap-1.5 text-xs">
+                      <NudgeBtn label="◀ X" onClick={() => edit((e) => nudge(e, selectedId, { x: -stepXZ, y: 0, z: 0 }))} />
+                      <NudgeBtn label="▲ N" onClick={() => edit((e) => nudge(e, selectedId, { x: 0, y: 0, z: stepXZ }))} />
+                      <NudgeBtn label="X ▶" onClick={() => edit((e) => nudge(e, selectedId, { x: stepXZ, y: 0, z: 0 }))} />
+                      <NudgeBtn label="Up" onClick={() => edit((e) => nudge(e, selectedId, { x: 0, y: stepY, z: 0 }))} />
+                      <NudgeBtn label="▼ S" onClick={() => edit((e) => nudge(e, selectedId, { x: 0, y: 0, z: -stepXZ }))} />
+                      <NudgeBtn label="Down" onClick={() => edit((e) => nudge(e, selectedId, { x: 0, y: -stepY, z: 0 }))} />
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <NudgeBtn label="Bigger" onClick={() => edit((e) => rescale(e, selectedId, 1.15))} />
+                      <NudgeBtn label="Smaller" onClick={() => edit((e) => rescale(e, selectedId, 1 / 1.15))} />
+                      {selectedEl.category === 'Column' && <NudgeBtn label="Duplicate" icon={Copy} onClick={() => edit((e) => duplicateColumn(e, model, selectedId))} />}
+                      <button onClick={() => del(selectedId)} className="inline-flex items-center gap-1.5 rounded-md bg-rose-500/15 px-2.5 py-1 text-xs font-medium text-rose-200 ring-1 ring-inset ring-rose-500/40 hover:bg-rose-500/25"><Trash2 className="h-3.5 w-3.5" /> Delete</button>
+                    </div>
+                    <p className="mt-2 text-[11px] text-slate-500">Or drag the column in the plan. Move steps: 1 m plan · 0.5 m vertical.</p>
+                  </div>
+                )}
                 <button onClick={() => selectEl(null)} className="mt-3 text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline">Clear selection</button>
               </div>
             ) : (
@@ -270,6 +311,14 @@ export default function BuildingExplorer() {
       </>
       )}
     </div>
+  )
+}
+
+function NudgeBtn({ label, icon: Icon, onClick }: { label: string; icon?: typeof Copy; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="inline-flex items-center justify-center gap-1 rounded-md bg-base/70 px-2.5 py-1 text-xs font-medium text-slate-200 ring-1 ring-inset ring-edge/60 transition-colors hover:bg-elevated/70 active:bg-amber-500/20">
+      {Icon && <Icon className="h-3.5 w-3.5" />} {label}
+    </button>
   )
 }
 
