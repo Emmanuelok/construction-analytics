@@ -28,6 +28,7 @@ import { explodeBuilding, planForLevel, findElementGeom, levelColumns, levelPane
 import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, duplicateColumn, editCount } from './building-edits.ts'
 import { toObj, objStats } from './building-export.ts'
 import { toIfc } from './building-ifc.ts'
+import { handleMcpRpc, MCP_PROTOCOL, SERVER_INFO } from './mcp-rpc.ts'
 import { floorRooms, floorGrid } from './building-rooms.ts'
 import { floorPartitions } from './building-partitions.ts'
 import { coreStairs } from './building-stairs.ts'
@@ -1067,6 +1068,26 @@ section('agent-tools')
   let threw = false
   try { await runTool('does_not_exist', {}) } catch { threw = true }
   ok('runTool throws on an unknown tool', threw)
+}
+
+// ── mcp-rpc (the studio's own MCP server over HTTP) ─────────────────────────────
+section('mcp-rpc')
+{
+  const init = (await handleMcpRpc({ id: 1, method: 'initialize', params: {} }))!.result as { protocolVersion: string; serverInfo: { name: string }; capabilities: { tools?: unknown } }
+  ok('initialize returns protocol + serverInfo + a tools capability', init.protocolVersion === MCP_PROTOCOL && init.serverInfo.name === SERVER_INFO.name && !!init.capabilities.tools)
+  const list = (await handleMcpRpc({ id: 2, method: 'tools/list' }))!.result as { tools: { name: string; inputSchema: unknown }[] }
+  ok('tools/list returns every studio tool with a schema', list.tools.length === 6 && list.tools.every((t) => t.name && t.inputSchema) && list.tools.some((t) => t.name === 'export_building'))
+  const call = (await handleMcpRpc({ id: 3, method: 'tools/call', params: { name: 'export_building', arguments: { gfa: 40000, storeys: 6, format: 'ifc' } } }))!.result as { isError?: boolean; content: { text: string }[] }
+  ok('tools/call export_building returns a real IFC in its content', !call.isError && /ISO-10303-21;/.test((JSON.parse(call.content[0].text) as { content: string }).content))
+  const ms = (await handleMcpRpc({ id: 4, method: 'tools/call', params: { name: 'massing_schedule', arguments: { gfa: 100000, storeys: 10 } } }))!.result as { content: { text: string }[] }
+  ok('tools/call massing_schedule returns JSON content', (JSON.parse(ms.content[0].text) as { grossFloorArea: number }).grossFloorArea > 0)
+  const bad = (await handleMcpRpc({ id: 5, method: 'tools/call', params: { name: 'nope' } }))!.result as { isError?: boolean }
+  ok('tools/call on an unknown tool → isError result', bad.isError === true)
+  const um = (await handleMcpRpc({ id: 6, method: 'frobnicate' }))!
+  ok('an unknown method → JSON-RPC error -32601', um.error?.code === -32601)
+  ok('a notification (no id / notifications/*) gets no response', (await handleMcpRpc({ method: 'notifications/initialized' })) === null)
+  const png = (await handleMcpRpc({ id: 7, method: 'ping' }))!.result as Record<string, unknown>
+  ok('ping → empty result', !!png && Object.keys(png).length === 0)
 }
 
 // ── mcp-federation (agent calling external MCP servers) ─────────────────────────
