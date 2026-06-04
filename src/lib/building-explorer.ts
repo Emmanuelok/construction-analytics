@@ -9,7 +9,7 @@
 import { type Pt, polygonArea, polygonPerimeter, polygonCentroid } from './zoning'
 import { bearing, compass } from './geo'
 import { SCENE_LEN_TO_M } from './massing'
-import type { BuildingModel, Box, Quad, Beam } from './building'
+import type { BuildingModel, Box, Quad, Beam, Plate } from './building'
 
 const LEN = SCENE_LEN_TO_M // scene plan unit → metres
 const AREA = LEN * LEN
@@ -176,7 +176,7 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
       const volume = colSec * colSec * height
       const mark = `C-${level === 0 ? 'G' : pad(level)}-${pad(i + 1)}`
       elements.push({
-        id: `col-${level}-${i}`, category: 'Column', level, levelName: levelName(level, storeys), mark,
+        id: c.id ?? `col-${level}-${i}`, category: 'Column', level, levelName: levelName(level, storeys), mark,
         title: `Column ${mark}`, cols: COLUMN_COLS,
         data: { mark, level: levelName(level, storeys), section: colSec, height: r2(height), volume: r2(volume), x: r1(c.x * LEN), z: r1(c.z * LEN) },
       })
@@ -193,25 +193,25 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
     levelPanels(m, level).forEach((g, i) => {
       const width = dist(g.a, g.b) * LEN, height = g.h * sh
       const mark = `W-${level === 0 ? 'G' : pad(level)}-${pad(i + 1)}`
-      elements.push({ id: `pan-${level}-${i}`, category: 'Window', level, levelName: lvl, mark, title: `Window ${mark}`, cols: OPENING_COLS,
+      elements.push({ id: g.id ?? `pan-${level}-${i}`, category: 'Window', level, levelName: lvl, mark, title: `Window ${mark}`, cols: OPENING_COLS,
         data: { mark, level: lvl, width: r2(width), height: r2(height), area: r2(width * height), sill: r2(g.y * sh), orientation: faces(g) } })
     })
     levelDoors(m, level).forEach((g, i) => {
       const width = dist(g.a, g.b) * LEN, height = g.h * sh
       const mark = `D-${pad(i + 1)}`
-      elements.push({ id: `door-${level}-${i}`, category: 'Door', level, levelName: lvl, mark, title: `Entrance door ${mark}`, cols: OPENING_COLS,
+      elements.push({ id: g.id ?? `door-${level}-${i}`, category: 'Door', level, levelName: lvl, mark, title: `Entrance door ${mark}`, cols: OPENING_COLS,
         data: { mark, level: lvl, width: r2(width), height: r2(height), area: r2(width * height), sill: 0, orientation: faces(g) } })
     })
     levelWalls(m, level).forEach((g, i) => {
       const length = dist(g.a, g.b) * LEN, height = g.h * sh
       const mark = `WL-${level === 0 ? 'G' : pad(level)}-${pad(i + 1)}`
-      elements.push({ id: `wall-${level}-${i}`, category: 'Wall', level, levelName: lvl, mark, title: `Façade wall ${mark}`, cols: WALL_COLS,
+      elements.push({ id: g.id ?? `wall-${level}-${i}`, category: 'Wall', level, levelName: lvl, mark, title: `Façade wall ${mark}`, cols: WALL_COLS,
         data: { mark, level: lvl, length: r2(length), height: r2(height), area: r2(length * height), orientation: faces(g) } })
     })
     levelBeams(m, level).forEach((bm, i) => {
       const length = dist(bm.a, bm.b) * LEN, depth = bm.depth * sh
       const mark = `B-${level === 0 ? 'G' : pad(level)}-${pad(i + 1)}`
-      elements.push({ id: `beam-${level}-${i}`, category: 'Beam', level, levelName: lvl, mark, title: `Edge beam ${mark}`, cols: BEAM_COLS,
+      elements.push({ id: bm.id ?? `beam-${level}-${i}`, category: 'Beam', level, levelName: lvl, mark, title: `Edge beam ${mark}`, cols: BEAM_COLS,
         data: { mark, level: lvl, length: r2(length), depth: r2(depth), width: beamWidth, volume: r2(length * depth * beamWidth), bearing: bearing(bm.a, bm.b) } })
     })
   }
@@ -313,9 +313,9 @@ export function planForLevel(m: BuildingModel, level: number): LevelPlan {
     level, isRoof,
     outline,
     hole: slab?.hole,
-    columns: cols.map((col, i) => ({ id: `col-${level}-${i}`, x: col.x, z: col.z, w: col.w, d: col.d })),
-    panels: pans.map((g, i) => ({ id: `pan-${level}-${i}`, a: g.a, b: g.b, facing: bearing(c, { x: (g.a.x + g.b.x) / 2, z: (g.a.z + g.b.z) / 2 }) })),
-    doors: isRoof ? [] : levelDoors(m, level).map((g, i) => ({ id: `door-${level}-${i}`, a: g.a, b: g.b })),
+    columns: cols.map((col, i) => ({ id: col.id ?? `col-${level}-${i}`, x: col.x, z: col.z, w: col.w, d: col.d })),
+    panels: pans.map((g, i) => ({ id: g.id ?? `pan-${level}-${i}`, a: g.a, b: g.b, facing: bearing(c, { x: (g.a.x + g.b.x) / 2, z: (g.a.z + g.b.z) / 2 }) })),
+    doors: isRoof ? [] : levelDoors(m, level).map((g, i) => ({ id: g.id ?? `door-${level}-${i}`, a: g.a, b: g.b })),
     core: m.core ? { id: 'core', x: m.core.x, z: m.core.z, w: m.core.w, d: m.core.d } : undefined,
     bounds: bb,
   }
@@ -325,24 +325,21 @@ export function planForLevel(m: BuildingModel, level: number): LevelPlan {
 
 export type ElementGeom = { center: { x: number; y: number; z: number }; size: { x: number; y: number; z: number }; dir?: { x: number; z: number } }
 
-/** Scene-space box (and edge direction for panels) for the selected element, so the
- *  viewer can draw a selection highlight. Null if the id isn't in the model. */
+/** Scene-space box (and edge direction for panels) for the selected element, found by
+ *  its stable id, so the viewer can draw a selection highlight. Null if not found. */
 export function findElementGeom(m: BuildingModel, id: string): ElementGeom | null {
-  if (id === 'core' && m.core) return { center: { x: m.core.x, y: m.core.y, z: m.core.z }, size: { x: m.core.w, y: m.core.h, z: m.core.d } }
-  if (id === 'roof' && m.roof) { const b = plateBBox(m.roof.polygon); return { center: { x: (b.minX + b.maxX) / 2, y: m.roof.y + m.roof.thickness / 2, z: (b.minZ + b.maxZ) / 2 }, size: { x: b.maxX - b.minX, y: m.roof.thickness, z: b.maxZ - b.minZ } } }
-  const fm = id.match(/^floor-(\d+)$/)
-  if (fm) { const s = m.slabs.find((x) => x.level === Number(fm[1])); if (!s) return null; const b = plateBBox(s.polygon); return { center: { x: (b.minX + b.maxX) / 2, y: s.y + s.thickness / 2, z: (b.minZ + b.maxZ) / 2 }, size: { x: b.maxX - b.minX, y: s.thickness, z: b.maxZ - b.minZ } } }
-  const cm = id.match(/^col-(\d+)-(\d+)$/)
-  if (cm) { const c = levelColumns(m, Number(cm[1]))[Number(cm[2])]; if (!c) return null; return { center: { x: c.x, y: c.y, z: c.z }, size: { x: c.w, y: c.h, z: c.d } } }
+  const boxGeom = (c: Box): ElementGeom => ({ center: { x: c.x, y: c.y, z: c.z }, size: { x: c.w, y: c.h, z: c.d } })
+  const plateGeom = (s: Plate): ElementGeom => { const b = plateBBox(s.polygon); return { center: { x: (b.minX + b.maxX) / 2, y: s.y + s.thickness / 2, z: (b.minZ + b.maxZ) / 2 }, size: { x: b.maxX - b.minX, y: s.thickness, z: b.maxZ - b.minZ } } }
   const quadGeom = (g: Quad, thick: number): ElementGeom => ({ center: { x: (g.a.x + g.b.x) / 2, y: g.y + g.h / 2, z: (g.a.z + g.b.z) / 2 }, size: { x: dist(g.a, g.b), y: g.h, z: thick }, dir: { x: g.b.x - g.a.x, z: g.b.z - g.a.z } })
-  const pm = id.match(/^pan-(\d+)-(\d+)$/)
-  if (pm) { const g = levelPanels(m, Number(pm[1]))[Number(pm[2])]; return g ? quadGeom(g, 0.16) : null }
-  const dm = id.match(/^door-(\d+)-(\d+)$/)
-  if (dm) { const g = levelDoors(m, Number(dm[1]))[Number(dm[2])]; return g ? quadGeom(g, 0.2) : null }
-  const wm = id.match(/^wall-(\d+)-(\d+)$/)
-  if (wm) { const g = levelWalls(m, Number(wm[1]))[Number(wm[2])]; return g ? quadGeom(g, 0.12) : null }
-  const bm = id.match(/^beam-(\d+)-(\d+)$/)
-  if (bm) { const b = levelBeams(m, Number(bm[1]))[Number(bm[2])]; if (!b) return null; return { center: { x: (b.a.x + b.b.x) / 2, y: b.y, z: (b.a.z + b.b.z) / 2 }, size: { x: dist(b.a, b.b), y: b.depth, z: b.width }, dir: { x: b.b.x - b.a.x, z: b.b.z - b.a.z } } }
+  if (m.core && m.core.id === id) return boxGeom(m.core)
+  if (m.roof && m.roof.id === id) return plateGeom(m.roof)
+  for (const c of m.columns) if (c.id === id) return boxGeom(c)
+  for (const c of m.mullions) if (c.id === id) return boxGeom(c)
+  for (const s of m.slabs) if (s.id === id) return plateGeom(s)
+  for (const g of m.glazing) if (g.id === id) return quadGeom(g, 0.16)
+  for (const g of m.doors) if (g.id === id) return quadGeom(g, 0.2)
+  for (const g of m.walls) if (g.id === id) return quadGeom(g, 0.12)
+  for (const b of m.beams) if (b.id === id) return { center: { x: (b.a.x + b.b.x) / 2, y: b.y, z: (b.a.z + b.b.z) / 2 }, size: { x: dist(b.a, b.b), y: b.depth, z: b.width }, dir: { x: b.b.x - b.a.x, z: b.b.z - b.a.z } }
   return null
 }
 

@@ -9,10 +9,10 @@
 import { type Pt, polygonCentroid } from './zoning'
 import { PLATE_SCALE, type Massing } from './massing'
 
-export type Box = { x: number; y: number; z: number; w: number; h: number; d: number; level?: number } // centre + full size
-export type Quad = { a: Pt; b: Pt; y: number; h: number; level?: number } // vertical panel along edge a→b, base y, height h
-export type Beam = { a: Pt; b: Pt; y: number; depth: number; width: number; level?: number } // horizontal member along a→b, centre y
-export type Plate = { polygon: Pt[]; hole?: Pt[]; y: number; thickness: number; level?: number } // slab/roof at elevation y
+export type Box = { x: number; y: number; z: number; w: number; h: number; d: number; level?: number; id?: string } // centre + full size
+export type Quad = { a: Pt; b: Pt; y: number; h: number; level?: number; id?: string } // vertical panel along edge a→b, base y, height h
+export type Beam = { a: Pt; b: Pt; y: number; depth: number; width: number; level?: number; id?: string } // horizontal member along a→b, centre y
+export type Plate = { polygon: Pt[]; hole?: Pt[]; y: number; thickness: number; level?: number; id?: string } // slab/roof at elevation y
 
 export type BuildingModel = {
   slabs: Plate[]
@@ -80,12 +80,13 @@ export function buildBuilding(m: Massing, opts?: {
   for (const f of m.floors) {
     const base = f.y - f.height / 2
     const floorH = f.height
-    slabs.push({ polygon: f.polygon, hole: f.hole, y: base, thickness: slabT, level: f.index })
+    slabs.push({ polygon: f.polygon, hole: f.hole, y: base, thickness: slabT, level: f.index, id: `floor-${f.index}` })
     const poly = f.polygon
     const c = polygonCentroid(poly)
     const winBase = base + slabT
     const winH = (floorH - slabT) * wwr
     const sill = winBase + ((floorH - slabT) - winH) * 0.5
+    let bi = 0, wi = 0, pi = 0, di = 0, mi = 0, ci = 0 // per-level element counters → stable ids
 
     for (let i = 0; i < poly.length; i++) {
       const a = poly[i], b = poly[(i + 1) % poly.length]
@@ -94,29 +95,29 @@ export function buildBuilding(m: Massing, opts?: {
       const n = outwardNormal(a, b, c)
 
       // edge beam under the slab above (the structural frame)
-      beams.push({ a, b, y: base + floorH - beamDepth / 2, depth: beamDepth, width: 0.12, level: f.index })
+      beams.push({ a, b, y: base + floorH - beamDepth / 2, depth: beamDepth, width: 0.12, level: f.index, id: `beam-${f.index}-${bi++}` })
       // opaque façade wall (full edge)
-      walls.push({ a, b, y: winBase, h: floorH - slabT, level: f.index })
+      walls.push({ a, b, y: winBase, h: floorH - slabT, level: f.index, id: `wall-${f.index}-${wi++}` })
 
       const bays = Math.max(1, Math.round(L / bayWidth))
       for (let k = 0; k < bays; k++) {
         const wa = off(lerp(a, b, (k + 0.16) / bays), n, facadeOff)
         const wb = off(lerp(a, b, (k + 0.84) / bays), n, facadeOff)
         const isDoor = f.index === 0 && i === frontEdge && Math.abs(k - (bays - 1) / 2) < 0.6 // centre bay(s) of the frontage
-        if (isDoor) doors.push({ a: wa, b: wb, y: base, h: winBase - base + (sill - winBase) + winH * 0.95, level: 0 })
-        else glazing.push({ a: wa, b: wb, y: sill, h: winH, level: f.index })
+        if (isDoor) doors.push({ a: wa, b: wb, y: base, h: winBase - base + (sill - winBase) + winH * 0.95, level: 0, id: `door-0-${di++}` })
+        else glazing.push({ a: wa, b: wb, y: sill, h: winH, level: f.index, id: `pan-${f.index}-${pi++}` })
       }
       if (withMullions) {
         for (let k = 0; k <= bays; k++) {
           const p = off(lerp(a, b, k / bays), n, facadeOff)
-          mullions.push({ x: p.x, y: winBase + (floorH - slabT) / 2, z: p.z, w: 0.09, h: floorH - slabT, d: 0.14, level: f.index })
+          mullions.push({ x: p.x, y: winBase + (floorH - slabT) / 2, z: p.z, w: 0.09, h: floorH - slabT, d: 0.14, level: f.index, id: `mull-${f.index}-${mi++}` })
         }
       }
 
       const segs = Math.max(1, Math.round(L / spacing))
       for (let s = 0; s < segs; s++) {
         const t = s / segs
-        columns.push({ x: a.x + (b.x - a.x) * t, y: base + floorH / 2, z: a.z + (b.z - a.z) * t, w: 0.2, h: floorH, d: 0.2, level: f.index })
+        columns.push({ x: a.x + (b.x - a.x) * t, y: base + floorH / 2, z: a.z + (b.z - a.z) * t, w: 0.2, h: floorH, d: 0.2, level: f.index, id: `col-${f.index}-${ci++}` })
       }
     }
   }
@@ -125,11 +126,11 @@ export function buildBuilding(m: Massing, opts?: {
   if (coreRatio > 0 && f0) {
     const cc = polygonCentroid(f0.polygon)
     const side = extentOf(f0.polygon) * coreRatio
-    core = { x: cc.x, y: m.totalHeight / 2, z: cc.z, w: side, h: m.totalHeight, d: side }
+    core = { x: cc.x, y: m.totalHeight / 2, z: cc.z, w: side, h: m.totalHeight, d: side, id: 'core' }
   }
 
   const top = m.floors[m.floors.length - 1]
-  const roof = top ? { polygon: top.polygon, hole: top.hole, y: top.y + top.height / 2 - slabT, thickness: slabT, level: m.floors.length } : null
+  const roof = top ? { polygon: top.polygon, hole: top.hole, y: top.y + top.height / 2 - slabT, thickness: slabT, level: m.floors.length, id: 'roof' } : null
 
   return {
     slabs, columns, beams, walls, glazing, doors, mullions, core, roof,
