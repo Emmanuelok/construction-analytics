@@ -27,6 +27,7 @@ import { buildBuilding } from './building.ts'
 import { explodeBuilding, planForLevel, findElementGeom, levelColumns, levelPanels } from './building-explorer.ts'
 import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, duplicateColumn, editCount } from './building-edits.ts'
 import { toObj, objStats } from './building-export.ts'
+import { toIfc } from './building-ifc.ts'
 import { explodeIfc, meshGeom, friendlyType, sliceMeshes, cutHeightFor } from './ifc-explorer.ts'
 import type { IfcGeometryResult, IfcMesh } from './ifc-geometry.ts'
 import { unitShape, holeFor, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, SHAPE_KINDS } from './shapes.ts'
@@ -857,6 +858,26 @@ section('building-export')
   ok('a box element contributes 8 verts / 12 tris', (() => { const before = objStats(toObj(buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0 }))).faces; return before < st.faces })())
   ok('a window panel is 4 verts / 2 tris each (quad)', objStats(toObj({ ...model, glazing: model.glazing.slice(0, 1), columns: [], beams: [], walls: [], doors: [], mullions: [], slabs: [], roof: null, core: null })).faces === 2)
   ok('edited model exports too (deleted element gone)', (() => { const del = applyEdits(model, removeElement(emptyEdits(), model.columns[0].id!)); return objStats(toObj(del)).verts < st.verts })())
+}
+
+// ── building-ifc (native IFC4 export) ───────────────────────────────────────────
+section('building-ifc')
+{
+  const model = buildBuilding(buildMassing({ gfa: 40_000, progress: 100, storeys: 4, shape: 'rect' }), { coreRatio: 0.16 })
+  const ifc = toIfc(model, { name: 'Test Tower' })
+  const count = (t: string) => (ifc.match(new RegExp(`=${t}\\(`, 'g')) || []).length
+  ok('valid IFC-SPF header + IFC4 schema + footer', ifc.startsWith('ISO-10303-21;') && /FILE_SCHEMA\(\('IFC4'\)\)/.test(ifc) && /END-ISO-10303-21;/.test(ifc))
+  ok('one IfcProject, IfcSite, IfcBuilding + a storey per level', count('IFCPROJECT') === 1 && count('IFCSITE') === 1 && count('IFCBUILDING') === 1 && count('IFCBUILDINGSTOREY') === 4)
+  ok('typed products: columns, slabs, beams, walls, windows, doors', count('IFCCOLUMN') === model.columns.length && count('IFCSLAB') === model.slabs.length + 1 && count('IFCBEAM') === model.beams.length && count('IFCWALL') === model.walls.length && count('IFCWINDOW') === model.glazing.length && count('IFCDOOR') === model.doors.length)
+  ok('parametric extruded-solid geometry + property sets', count('IFCEXTRUDEDAREASOLID') > 0 && count('IFCPROPERTYSET') > 0 && count('IFCRELDEFINESBYPROPERTIES') > 0)
+  ok('spatial structure is aggregated + elements contained', count('IFCRELAGGREGATES') === 3 && count('IFCRELCONTAINEDINSPATIALSTRUCTURE') >= 1)
+  // every #ref resolves to a defined #id (no dangling references)
+  ok('every entity reference resolves (well-formed model)', (() => {
+    const defined = new Set([...ifc.matchAll(/^#(\d+)=/gm)].map((x) => x[1]))
+    const refs = [...ifc.matchAll(/#(\d+)/g)].map((x) => x[1])
+    return refs.every((r) => defined.has(r))
+  })())
+  ok('edits flow into the IFC (deleting a column drops an IfcColumn)', (() => { const del = applyEdits(model, removeElement(emptyEdits(), model.columns[0].id!)); return (toIfc(del).match(/=IFCCOLUMN\(/g) || []).length === model.columns.length - 1 })())
 }
 
 // ── ifc-explorer (review a real uploaded IFC model floor-by-floor) ──────────────

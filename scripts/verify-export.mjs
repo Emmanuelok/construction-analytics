@@ -28,7 +28,13 @@ try {
   await page.waitForSelector('[aria-label^="3D building model"]', { timeout: 20000 })
   await new Promise((r) => setTimeout(r, 1500))
 
-  ok('export buttons (OBJ / glTF / JSON) present', await page.evaluate(() => ['OBJ', 'glTF', 'JSON'].every((t) => [...document.querySelectorAll('button')].some((b) => (b.textContent || '').trim() === t))))
+  ok('export buttons (IFC / OBJ / glTF / JSON) present', await page.evaluate(() => ['IFC', 'OBJ', 'glTF', 'JSON'].every((t) => [...document.querySelectorAll('button')].some((b) => (b.textContent || '').trim() === t))))
+
+  // IFC4
+  await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === 'IFC')?.click())
+  const ifcPath = await waitFile('.ifc')
+  ok('IFC file downloads', !!ifcPath, ifcPath)
+  if (ifcPath) { const ifc = readFileSync(ifcPath, 'utf8'); ok('IFC is valid IFC4 with storeys + typed products', /^ISO-10303-21;/.test(ifc) && /FILE_SCHEMA\(\('IFC4'\)\)/.test(ifc) && /IFCBUILDINGSTOREY\(/.test(ifc) && /IFCCOLUMN\(/.test(ifc) && /IFCWINDOW\(/.test(ifc)) }
 
   // OBJ
   await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === 'OBJ')?.click())

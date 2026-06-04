@@ -10,6 +10,7 @@ import { buildBuilding } from '@/lib/building'
 import { explodeBuilding, planForLevel, type Schedule, type ScheduleCol, type BuildingElement } from '@/lib/building-explorer'
 import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, duplicateColumn, editCount, type BuildingEdits } from '@/lib/building-edits'
 import { toObj } from '@/lib/building-export'
+import { toIfc } from '@/lib/building-ifc'
 import { PLATE_SCALE } from '@/lib/massing'
 import { PROJECTS } from '@/data/platform'
 import { ACCENT } from '@/lib/nav'
@@ -108,6 +109,7 @@ export default function BuildingExplorer() {
 
   const exportAll = () => downloadText(`${slug(project.name)}-building-model.json`, JSON.stringify({ project: project.name, parameters: ex.opts, summary: ex.summary, levels: ex.levels, schedules: ex.schedules.map((s) => ({ group: s.group, rows: s.rows, totals: s.totals })) }, null, 2), 'JSON')
   const exportObj = () => downloadText(`${slug(project.name)}-building.obj`, toObj(model, project.name), 'OBJ')
+  const exportIfc = () => downloadText(`${slug(project.name)}-building.ifc`, toIfc(model, { name: project.name, storeyHeight }), 'IFC')
   const [gltfBusy, setGltfBusy] = useState(false)
   const exportGltf = async () => { setGltfBusy(true); try { const { exportGlb } = await import('@/lib/building-gltf'); await exportGlb(model, `${slug(project.name)}-building.glb`) } catch { /* ignore */ } setGltfBusy(false) }
 
@@ -143,7 +145,8 @@ export default function BuildingExplorer() {
               <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={importCfg} />
               <div className="flex items-center overflow-hidden rounded-lg ring-1 ring-inset ring-edge/60" title="Export the building (edits included)">
                 <Download className="ml-2 h-3.5 w-3.5 text-slate-500" />
-                <button onClick={exportObj} className="px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-elevated/60">OBJ</button>
+                <button onClick={exportIfc} title="Export IFC4 (typed BIM products for Revit / Navisworks / Solibri)" className="px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-elevated/60">IFC</button>
+                <button onClick={exportObj} className="border-l border-edge/60 px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-elevated/60">OBJ</button>
                 <button onClick={exportGltf} disabled={gltfBusy} className="border-l border-edge/60 px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-elevated/60 disabled:opacity-60">{gltfBusy ? '…' : 'glTF'}</button>
                 <button onClick={exportAll} className="border-l border-edge/60 px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-elevated/60">JSON</button>
               </div>
