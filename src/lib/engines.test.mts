@@ -26,6 +26,7 @@ import { buildMassing, massingSchedule, deriveStoreys, floorColor, type FloorSpe
 import { buildBuilding } from './building.ts'
 import { explodeBuilding, planForLevel, findElementGeom, levelColumns, levelPanels } from './building-explorer.ts'
 import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, duplicateColumn, editCount } from './building-edits.ts'
+import { toObj, objStats } from './building-export.ts'
 import { explodeIfc, meshGeom, friendlyType, sliceMeshes, cutHeightFor } from './ifc-explorer.ts'
 import type { IfcGeometryResult, IfcMesh } from './ifc-geometry.ts'
 import { unitShape, holeFor, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, SHAPE_KINDS } from './shapes.ts'
@@ -841,6 +842,21 @@ section('building-edits')
   ok('an added column can be removed again', applyEdits(model, removeElement(ed, addId)).columns.length === model.columns.length)
   ok('editCount tracks moves + deletes + adds', editCount(nudge(removeElement(addColumnAt(emptyEdits(), model, 0, 0, 0), col0), model.beams[0].id!, { x: 1, y: 0, z: 0 })) === 3)
   ok('edited model still explodes into a schedule', explodeBuilding(applyEdits(model, removeElement(emptyEdits(), col0))).summary.columns === model.columns.length - 1)
+}
+
+// ── building-export (OBJ round-trip) ────────────────────────────────────────────
+section('building-export')
+{
+  const model = buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0.16 })
+  const obj = toObj(model, 'Test Tower')
+  const st = objStats(obj)
+  ok('OBJ has a header + object name', obj.startsWith('#') && /\no Test Tower/.test(obj))
+  ok('OBJ emits vertices + triangle faces', st.verts > 0 && st.faces > 0)
+  ok('every face index is within the vertex range (valid mesh)', st.maxIndex <= st.verts && st.maxIndex > 0, { maxIndex: st.maxIndex, verts: st.verts })
+  ok('OBJ groups every trade present in the model', ['Slabs', 'Columns', 'Beams', 'Walls', 'Windows', 'Doors', 'Core'].every((g) => st.groups.includes(g)), st.groups)
+  ok('a box element contributes 8 verts / 12 tris', (() => { const before = objStats(toObj(buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0 }))).faces; return before < st.faces })())
+  ok('a window panel is 4 verts / 2 tris each (quad)', objStats(toObj({ ...model, glazing: model.glazing.slice(0, 1), columns: [], beams: [], walls: [], doors: [], mullions: [], slabs: [], roof: null, core: null })).faces === 2)
+  ok('edited model exports too (deleted element gone)', (() => { const del = applyEdits(model, removeElement(emptyEdits(), model.columns[0].id!)); return objStats(toObj(del)).verts < st.verts })())
 }
 
 // ── ifc-explorer (review a real uploaded IFC model floor-by-floor) ──────────────

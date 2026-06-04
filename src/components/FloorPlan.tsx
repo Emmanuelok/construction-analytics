@@ -1,120 +1,106 @@
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { LevelPlan } from '@/lib/building-explorer'
 import { compass } from '@/lib/geo'
 
-/* A top-down 2D floor plan of a single level — slab outline (+ any void), the
- * structural column grid, windows and doors, drawn from the same element ids as the
- * 3D viewer and schedules. Click an element to inspect it; the selection is
- * highlighted. In edit mode, drag a column to move it, or (with Add active) click
- * the plan to drop a new column. North is up (scene x = East, z = North). */
-export function FloorPlan({ plan, selected, onSelect, editable = false, addMode = false, onMoveColumn, onAddAt, height = 320 }: {
+/* A top-down 2D floor plan of a single level — slab outline (+ any void), columns,
+ * windows and doors, drawn from the same element ids as the 3D viewer and schedules.
+ * Click an element to inspect it. Scroll to zoom, drag the background to pan. In edit
+ * mode, drag a column / window / door to move it, or (with Add active) click to drop a
+ * new column. North is up (scene x = East, z = North). */
+export function FloorPlan({ plan, selected, onSelect, editable = false, addMode = false, onMoveElement, onAddAt, height = 320 }: {
   plan: LevelPlan
   selected: string | null
   onSelect: (id: string) => void
   editable?: boolean
   addMode?: boolean
-  onMoveColumn?: (id: string, dx: number, dz: number) => void
+  onMoveElement?: (id: string, dx: number, dz: number) => void
   onAddAt?: (x: number, z: number) => void
   height?: number
 }) {
   const { b, w, h, pad, toX, toY, ext } = useMemo(() => {
     const b = plan.bounds
     const w = Math.max(0.001, b.maxX - b.minX), h = Math.max(0.001, b.maxZ - b.minZ)
-    const ext = Math.max(w, h)
-    const pad = ext * 0.12
+    const ext = Math.max(w, h), pad = ext * 0.12
     return { b, w, h, pad, ext, toX: (x: number) => x - b.minX, toY: (z: number) => b.maxZ - z }
   }, [plan])
 
   const svgRef = useRef<SVGSVGElement>(null)
+  const gRef = useRef<SVGGElement>(null)
   const viewRef = useRef({ minX: b.minX, maxZ: b.maxZ }); viewRef.current = { minX: b.minX, maxZ: b.maxZ }
+  const [view, setView] = useState({ k: 1, ox: 0, oy: 0 })
   const dragRef = useRef<{ id: string; lx: number; lz: number; moved: boolean } | null>(null)
+  const panRef = useRef<{ px: number; py: number } | null>(null)
+
+  // element-local (world) point under a client coordinate, accounting for pan/zoom
   const worldAt = (cx: number, cy: number) => {
-    const svg = svgRef.current; if (!svg) return { x: 0, z: 0 }
-    const u = new DOMPoint(cx, cy).matrixTransform(svg.getScreenCTM()!.inverse())
+    const g = gRef.current; if (!g) return { x: 0, z: 0 }
+    const u = new DOMPoint(cx, cy).matrixTransform(g.getScreenCTM()!.inverse())
     return { x: u.x + viewRef.current.minX, z: viewRef.current.maxZ - u.y }
   }
-  const onDrag = (e: PointerEvent) => { const d = dragRef.current; if (!d || !onMoveColumn) return; const p = worldAt(e.clientX, e.clientY); const dx = p.x - d.lx, dz = p.z - d.lz; if (Math.abs(dx) + Math.abs(dz) > 1e-4) { d.moved = true; onMoveColumn(d.id, dx, dz); d.lx = p.x; d.lz = p.z } }
-  const endDrag = () => { dragRef.current = null; window.removeEventListener('pointermove', onDrag); window.removeEventListener('pointerup', endDrag) }
-  const startDrag = (e: React.PointerEvent, id: string) => {
-    if (!editable || !onMoveColumn) return
+  const onElDrag = (e: PointerEvent) => { const d = dragRef.current; if (!d || !onMoveElement) return; const p = worldAt(e.clientX, e.clientY); const dx = p.x - d.lx, dz = p.z - d.lz; if (Math.abs(dx) + Math.abs(dz) > 1e-4) { d.moved = true; onMoveElement(d.id, dx, dz); d.lx = p.x; d.lz = p.z } }
+  const endElDrag = () => { dragRef.current = null; window.removeEventListener('pointermove', onElDrag); window.removeEventListener('pointerup', endElDrag) }
+  const startElDrag = (e: React.PointerEvent, id: string) => {
+    if (!editable || !onMoveElement || addMode) return
     e.stopPropagation()
     const p = worldAt(e.clientX, e.clientY)
     dragRef.current = { id, lx: p.x, lz: p.z, moved: false }
-    window.addEventListener('pointermove', onDrag); window.addEventListener('pointerup', endDrag)
+    window.addEventListener('pointermove', onElDrag); window.addEventListener('pointerup', endElDrag)
+  }
+
+  // background pan (drag empty space) + wheel zoom toward the cursor
+  const svgUnitsPerPx = () => { const r = svgRef.current?.getBoundingClientRect(); return r ? (w + 2 * pad) / r.width : 1 }
+  const onPan = (e: PointerEvent) => { const p = panRef.current; if (!p) return; const s = svgUnitsPerPx(); setView((v) => ({ ...v, ox: v.ox + (e.clientX - p.px) * s, oy: v.oy + (e.clientY - p.py) * s })); p.px = e.clientX; p.py = e.clientY }
+  const endPan = () => { panRef.current = null; window.removeEventListener('pointermove', onPan); window.removeEventListener('pointerup', endPan) }
+  const onBgDown = (e: React.PointerEvent) => { if (addMode) return; panRef.current = { px: e.clientX, py: e.clientY }; window.addEventListener('pointermove', onPan); window.addEventListener('pointerup', endPan) }
+  const onWheel = (e: React.WheelEvent) => {
+    const svg = svgRef.current; if (!svg) return
+    const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM()!.inverse()) // viewBox coords
+    const f = e.deltaY > 0 ? 1 / 1.15 : 1.15
+    setView((v) => { const k = Math.max(0.5, Math.min(12, v.k * f)); const r = k / v.k; return { k, ox: pt.x - (pt.x - v.ox) * r, oy: pt.y - (pt.y - v.oy) * r } })
   }
 
   const outline = plan.outline.map((p) => `${toX(p.x)},${toY(p.z)}`).join(' ')
   const hole = plan.hole && plan.hole.length >= 3 ? plan.hole.map((p) => `${toX(p.x)},${toY(p.z)}`).join(' ') : null
   const colR = Math.max(0.14, ext * 0.014)
+  const lineGroup = (id: string, a: { x: number; z: number }, bb: { x: number; z: number }, color: string, wid: number) => {
+    const on = selected === id
+    return (
+      <g key={id} className={editable ? 'cursor-grab' : 'cursor-pointer'} onPointerDown={(e) => startElDrag(e, id)} onClick={() => { if (!dragRef.current?.moved) onSelect(id) }}>
+        <line x1={toX(a.x)} y1={toY(a.z)} x2={toX(bb.x)} y2={toY(bb.z)} stroke="transparent" strokeWidth={12} vectorEffect="non-scaling-stroke" />
+        <line x1={toX(a.x)} y1={toY(a.z)} x2={toX(bb.x)} y2={toY(bb.z)} stroke={on ? '#fbbf24' : color} strokeWidth={on ? wid + 2 : wid} vectorEffect="non-scaling-stroke" strokeLinecap="round" />
+      </g>
+    )
+  }
 
   return (
-    <svg
-      ref={svgRef}
-      viewBox={`${-pad} ${-pad} ${w + 2 * pad} ${h + 2 * pad}`}
-      style={{ height }}
-      className={`w-full rounded-xl bg-[#0a0f1c] ring-1 ring-edge/60 ${addMode ? 'cursor-crosshair' : ''}`}
-      role="img"
-      aria-label={`Floor plan, ${plan.isRoof ? 'roof' : `level ${plan.level}`}: ${plan.columns.length} columns, ${plan.panels.length} windows, ${plan.doors.length} doors`}
-    >
-      {/* add-column capture layer (only active in Add mode) */}
-      {addMode && onAddAt && (
-        <rect x={-pad} y={-pad} width={w + 2 * pad} height={h + 2 * pad} fill="transparent"
-          onClick={(e) => { const p = worldAt(e.clientX, e.clientY); onAddAt(p.x, p.z) }} />
-      )}
-      {/* slab fill + outline (with optional courtyard void) */}
-      <g>
+    <svg ref={svgRef} viewBox={`${-pad} ${-pad} ${w + 2 * pad} ${h + 2 * pad}`} style={{ height }}
+      className={`w-full rounded-xl bg-[#0a0f1c] ring-1 ring-edge/60 ${addMode ? 'cursor-crosshair' : 'cursor-grab'}`}
+      role="img" aria-label={`Floor plan, ${plan.isRoof ? 'roof' : `level ${plan.level}`}: ${plan.columns.length} columns, ${plan.panels.length} windows, ${plan.doors.length} doors`}
+      onWheel={onWheel} onPointerDown={onBgDown}>
+      <g ref={gRef} transform={`translate(${view.ox} ${view.oy}) scale(${view.k})`}>
+        {/* add-column capture layer (only active in Add mode) */}
+        {addMode && onAddAt && (
+          <rect x={-pad * 4} y={-pad * 4} width={(w + 2 * pad) * 4} height={(h + 2 * pad) * 4} fill="transparent" onClick={(e) => { const p = worldAt(e.clientX, e.clientY); onAddAt(p.x, p.z) }} />
+        )}
+        {/* slab fill + outline */}
         {hole
           ? <path d={`M ${outline.replace(/ /g, ' L ')} Z M ${hole.replace(/ /g, ' L ')} Z`} fillRule="evenodd" fill="#11203a" stroke="none" />
           : <polygon points={outline} fill="#11203a" stroke="none" />}
-        <polygon points={outline} fill="none" stroke={selected === `floor-${plan.level}` || (plan.isRoof && selected === 'roof') ? '#fbbf24' : '#3b5a82'} strokeWidth={selected?.startsWith('floor') || selected === 'roof' ? 2.5 : 1.5} vectorEffect="non-scaling-stroke"
-          className="cursor-pointer" onClick={() => !addMode && onSelect(plan.isRoof ? 'roof' : `floor-${plan.level}`)} />
+        <polygon points={outline} fill="none" stroke={selected === `floor-${plan.level}` || (plan.isRoof && selected === 'roof') ? '#fbbf24' : '#3b5a82'} strokeWidth={selected?.startsWith('floor') || selected === 'roof' ? 2.5 : 1.5} vectorEffect="non-scaling-stroke" className="cursor-pointer" onClick={() => !addMode && onSelect(plan.isRoof ? 'roof' : `floor-${plan.level}`)} />
         {hole && <polygon points={hole} fill="none" stroke="#3b5a82" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />}
-      </g>
-      {/* windows */}
-      <g>
-        {plan.panels.map((p) => {
-          const on = selected === p.id
-          return (
-            <g key={p.id} className="cursor-pointer" onClick={() => onSelect(p.id)}>
-              <line x1={toX(p.a.x)} y1={toY(p.a.z)} x2={toX(p.b.x)} y2={toY(p.b.z)} stroke="transparent" strokeWidth={11} vectorEffect="non-scaling-stroke" />
-              <line x1={toX(p.a.x)} y1={toY(p.a.z)} x2={toX(p.b.x)} y2={toY(p.b.z)} stroke={on ? '#fbbf24' : '#38bdf8'} strokeWidth={on ? 4.5 : 2.5} vectorEffect="non-scaling-stroke" strokeLinecap="round" />
-            </g>
-          )
-        })}
-      </g>
-      {/* entrance doors */}
-      <g>
-        {plan.doors.map((p) => {
-          const on = selected === p.id
-          return (
-            <g key={p.id} className="cursor-pointer" onClick={() => onSelect(p.id)}>
-              <line x1={toX(p.a.x)} y1={toY(p.a.z)} x2={toX(p.b.x)} y2={toY(p.b.z)} stroke="transparent" strokeWidth={12} vectorEffect="non-scaling-stroke" />
-              <line x1={toX(p.a.x)} y1={toY(p.a.z)} x2={toX(p.b.x)} y2={toY(p.b.z)} stroke={on ? '#fbbf24' : '#34d399'} strokeWidth={on ? 5 : 4} vectorEffect="non-scaling-stroke" strokeLinecap="round" />
-            </g>
-          )
-        })}
-      </g>
-      {/* structural columns (draggable in edit mode) */}
-      <g>
-        {plan.columns.map((c) => {
-          const on = selected === c.id
-          return <circle key={c.id} cx={toX(c.x)} cy={toY(c.z)} r={on ? colR * 1.7 : colR} fill={on ? '#fbbf24' : '#94a3b8'} stroke="#0a0f1c" strokeWidth={0.6} vectorEffect="non-scaling-stroke"
-            className={editable ? 'cursor-grab' : 'cursor-pointer'} onPointerDown={(e) => startDrag(e, c.id)} onClick={() => { if (!dragRef.current?.moved) onSelect(c.id) }} />
-        })}
-      </g>
-      {/* core footprint */}
-      {plan.core && (
-        <rect
-          x={toX(plan.core.x) - (plan.core.w / 2)} y={toY(plan.core.z) - (plan.core.d / 2)} width={plan.core.w} height={plan.core.d}
-          fill={selected === 'core' ? '#fbbf2433' : '#33415566'} stroke={selected === 'core' ? '#fbbf24' : '#64748b'} strokeWidth={selected === 'core' ? 2.5 : 1.2} vectorEffect="non-scaling-stroke"
-          className="cursor-pointer" onClick={() => !addMode && onSelect('core')}
-        />
-      )}
-      {/* north arrow */}
-      <g transform={`translate(${w + pad * 0.35}, ${pad * 0.2})`} aria-hidden>
-        <line x1={0} y1={ext * 0.07} x2={0} y2={0} stroke="#64748b" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-        <polygon points={`0,${-ext * 0.012} ${ext * 0.012},${ext * 0.01} ${-ext * 0.012},${ext * 0.01}`} fill="#94a3b8" />
-        <text x={0} y={ext * 0.11} fontSize={ext * 0.05} fill="#94a3b8" textAnchor="middle">N</text>
+        {/* windows + doors (draggable) */}
+        <g>{plan.panels.map((p) => lineGroup(p.id, p.a, p.b, '#38bdf8', 2.5))}</g>
+        <g>{plan.doors.map((p) => lineGroup(p.id, p.a, p.b, '#34d399', 4))}</g>
+        {/* columns (draggable) */}
+        <g>{plan.columns.map((c) => { const on = selected === c.id; return <circle key={c.id} cx={toX(c.x)} cy={toY(c.z)} r={on ? colR * 1.7 : colR} fill={on ? '#fbbf24' : '#94a3b8'} stroke="#0a0f1c" strokeWidth={0.6} vectorEffect="non-scaling-stroke" className={editable ? 'cursor-grab' : 'cursor-pointer'} onPointerDown={(e) => startElDrag(e, c.id)} onClick={() => { if (!dragRef.current?.moved) onSelect(c.id) }} /> })}</g>
+        {/* core footprint */}
+        {plan.core && <rect x={toX(plan.core.x) - plan.core.w / 2} y={toY(plan.core.z) - plan.core.d / 2} width={plan.core.w} height={plan.core.d} fill={selected === 'core' ? '#fbbf2433' : '#33415566'} stroke={selected === 'core' ? '#fbbf24' : '#64748b'} strokeWidth={selected === 'core' ? 2.5 : 1.2} vectorEffect="non-scaling-stroke" className="cursor-pointer" onClick={() => !addMode && onSelect('core')} />}
+        {/* north arrow */}
+        <g transform={`translate(${w + pad * 0.35}, ${pad * 0.2})`} aria-hidden>
+          <line x1={0} y1={ext * 0.07} x2={0} y2={0} stroke="#64748b" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+          <polygon points={`0,${-ext * 0.012} ${ext * 0.012},${ext * 0.01} ${-ext * 0.012},${ext * 0.01}`} fill="#94a3b8" />
+          <text x={0} y={ext * 0.11} fontSize={ext * 0.05} fill="#94a3b8" textAnchor="middle">N</text>
+        </g>
       </g>
     </svg>
   )

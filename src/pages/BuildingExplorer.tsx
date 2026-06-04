@@ -9,6 +9,7 @@ import { buildMassing, deriveStoreys, SHAPE_KINDS, type ShapeKind } from '@/lib/
 import { buildBuilding } from '@/lib/building'
 import { explodeBuilding, planForLevel, type Schedule, type ScheduleCol, type BuildingElement } from '@/lib/building-explorer'
 import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, duplicateColumn, editCount, type BuildingEdits } from '@/lib/building-edits'
+import { toObj } from '@/lib/building-export'
 import { PLATE_SCALE } from '@/lib/massing'
 import { PROJECTS } from '@/data/platform'
 import { ACCENT } from '@/lib/nav'
@@ -106,6 +107,9 @@ export default function BuildingExplorer() {
   const gotoLevel = (i: number) => { setActiveLevel(i); setIsolate(true) }
 
   const exportAll = () => downloadText(`${slug(project.name)}-building-model.json`, JSON.stringify({ project: project.name, parameters: ex.opts, summary: ex.summary, levels: ex.levels, schedules: ex.schedules.map((s) => ({ group: s.group, rows: s.rows, totals: s.totals })) }, null, 2), 'JSON')
+  const exportObj = () => downloadText(`${slug(project.name)}-building.obj`, toObj(model, project.name), 'OBJ')
+  const [gltfBusy, setGltfBusy] = useState(false)
+  const exportGltf = async () => { setGltfBusy(true); try { const { exportGlb } = await import('@/lib/building-gltf'); await exportGlb(model, `${slug(project.name)}-building.glb`) } catch { /* ignore */ } setGltfBusy(false) }
 
   const activeLevelInfo = ex.levels.find((l) => l.index === activeLevel)
 
@@ -137,6 +141,12 @@ export default function BuildingExplorer() {
               <button onClick={exportCfg} title="Export this design to share" className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1.5 text-sm font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Share2 className="h-4 w-4" /> Share</button>
               <button onClick={() => fileRef.current?.click()} title="Import a shared design" className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1.5 text-sm font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><FileJson className="h-4 w-4" /> Import</button>
               <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={importCfg} />
+              <div className="flex items-center overflow-hidden rounded-lg ring-1 ring-inset ring-edge/60" title="Export the building (edits included)">
+                <Download className="ml-2 h-3.5 w-3.5 text-slate-500" />
+                <button onClick={exportObj} className="px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-elevated/60">OBJ</button>
+                <button onClick={exportGltf} disabled={gltfBusy} className="border-l border-edge/60 px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-elevated/60 disabled:opacity-60">{gltfBusy ? '…' : 'glTF'}</button>
+                <button onClick={exportAll} className="border-l border-edge/60 px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-elevated/60">JSON</button>
+              </div>
             </>}
           </div>
         }
@@ -237,11 +247,11 @@ export default function BuildingExplorer() {
       {/* floor plan + element inspector */}
       <div className="grid gap-6 lg:grid-cols-[1.25fr_1fr]">
         <Card className="overflow-hidden">
-          <CardHeader icon={Table2} accent="teal" title={`Floor plan — ${activeLevelInfo?.name ?? `Level ${activeLevel}`}`} subtitle="Plan of the active level. Click a column or panel to inspect it; the selection syncs with the 3D model & schedules." />
+          <CardHeader icon={Table2} accent="teal" title={`Floor plan — ${activeLevelInfo?.name ?? `Level ${activeLevel}`}`} subtitle="Scroll to zoom, drag the background to pan. Click an element to inspect it; in Edit mode, drag a column, window or door to move it. Selection syncs with the 3D model & schedules." />
           <div className="border-t border-edge/50 p-4">
             <FloorPlan plan={plan} selected={selectedId} onSelect={selectEl} height={340}
               editable={editMode} addMode={addMode}
-              onMoveColumn={(id, dx, dz) => edit((e) => nudge(e, id, { x: dx, y: 0, z: dz }))}
+              onMoveElement={(id, dx, dz) => edit((e) => nudge(e, id, { x: dx, y: 0, z: dz }))}
               onAddAt={(x, z) => { edit((e) => addColumnAt(e, model, activeLevel < 0 ? 0 : Math.min(activeLevel, storeys - 1), x, z)); setAddMode(false) }} />
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" /> Column</span>
