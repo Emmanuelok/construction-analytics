@@ -52,13 +52,15 @@ export function applyEdits(m: BuildingModel, ed: BuildingEdits): BuildingModel {
   const glazing = keep(m.glazing).map((g) => editQuad(g, ed.edits[g.id ?? '']))
   const doors = keep(m.doors).map((g) => editQuad(g, ed.edits[g.id ?? '']))
   const mullions = keep(m.mullions).map((c) => editBox(c, ed.edits[c.id ?? '']))
+  const partitions = keep(m.partitions).map((g) => editQuad(g, ed.edits[g.id ?? '']))
+  const stairs = keep(m.stairs) // stairs can be deleted; geometry is precomputed
   const slabs = keep(m.slabs).map((s) => editPlate(s, ed.edits[s.id ?? '']))
   const core = m.core && !del.has('core') ? editBox(m.core, ed.edits['core']) : null
   const roof = m.roof && !del.has('roof') ? editPlate(m.roof, ed.edits['roof']) : null
   return {
-    slabs, columns, beams, walls, glazing, doors, mullions, core, roof, rooms: m.rooms,
+    slabs, columns, beams, walls, glazing, doors, mullions, partitions, stairs, core, roof, rooms: m.rooms,
     totalHeight: m.totalHeight, footprint: m.footprint,
-    counts: { storeys: m.counts.storeys, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: mullions.length, slabs: slabs.length, rooms: m.counts.rooms },
+    counts: { storeys: m.counts.storeys, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: mullions.length, partitions: partitions.length, stairs: stairs.length, slabs: slabs.length, rooms: m.counts.rooms },
   }
 }
 

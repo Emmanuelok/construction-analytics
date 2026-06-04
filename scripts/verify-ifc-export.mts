@@ -11,9 +11,9 @@ let failures = 0
 const ok = (n: string, c: boolean, extra?: unknown) => { if (c) console.log(`✓ ${n}`); else { failures++; console.error(`✗ ${n}`, extra ?? '') } }
 
 const model = buildBuilding(buildMassing({ gfa: 30_000, progress: 100, storeys: 4, shape: 'rect' }), { coreRatio: 0.16 })
-const ifc = toIfc(model, 'Roundtrip Tower')
+const ifc = toIfc(model, { name: 'Roundtrip Tower' })
 
-const { IfcAPI, IFCBUILDINGSTOREY, IFCCOLUMN, IFCSLAB, IFCWINDOW, IFCWALL, IFCBEAM, IFCSPACE } = await import('web-ifc')
+const { IfcAPI, IFCBUILDINGSTOREY, IFCCOLUMN, IFCSLAB, IFCWINDOW, IFCWALL, IFCBEAM, IFCSPACE, IFCSTAIR } = await import('web-ifc')
 const api = new IfcAPI()
 await api.Init((p: string, prefix: string) => (p.endsWith('.wasm') ? `${process.cwd()}/node_modules/web-ifc/${p}` : prefix + p))
 const mid = api.OpenModel(new TextEncoder().encode(ifc))
@@ -22,8 +22,9 @@ ok('web-ifc opens the generated IFC (valid model)', mid >= 0, { mid })
 const n = (t: number) => { try { return api.GetLineIDsWithType(mid, t).size() } catch { return -1 } }
 ok('storeys round-trip (4 IfcBuildingStorey)', n(IFCBUILDINGSTOREY) === 4, { storeys: n(IFCBUILDINGSTOREY) })
 ok('interior rooms round-trip as IfcSpace', n(IFCSPACE) === model.rooms.length && model.rooms.length > 0, { spaces: n(IFCSPACE), rooms: model.rooms.length })
-ok('typed products round-trip (columns/slabs/walls/windows/beams)', n(IFCCOLUMN) === model.columns.length && n(IFCSLAB) === model.slabs.length + 1 && n(IFCWALL) === model.walls.length && n(IFCWINDOW) === model.glazing.length && n(IFCBEAM) === model.beams.length,
-  { col: n(IFCCOLUMN), slab: n(IFCSLAB), wall: n(IFCWALL), win: n(IFCWINDOW), beam: n(IFCBEAM) })
+ok('stairs round-trip as IfcStair (one per storey)', n(IFCSTAIR) === model.stairs.length && model.stairs.length === 4, { stairs: n(IFCSTAIR), expected: model.stairs.length })
+ok('typed products round-trip (columns/slabs/walls+partitions/windows/beams)', n(IFCCOLUMN) === model.columns.length && n(IFCSLAB) === model.slabs.length + 1 && n(IFCWALL) === model.walls.length + model.partitions.length && n(IFCWINDOW) === model.glazing.length && n(IFCBEAM) === model.beams.length,
+  { col: n(IFCCOLUMN), slab: n(IFCSLAB), wall: n(IFCWALL), winPart: model.walls.length + model.partitions.length, win: n(IFCWINDOW), beam: n(IFCBEAM) })
 
 let meshes = 0, tris = 0
 api.StreamAllMeshes(mid, (mesh: { geometries: { size(): number; get(i: number): { geometryExpressID: number } } }) => {
@@ -35,7 +36,7 @@ ok('parametric geometry tessellates (meshes + triangles > 0)', meshes > 0 && tri
 api.CloseModel(mid)
 
 // edits flow through the round-trip
-const edited = toIfc(applyEdits(model, removeElement(emptyEdits(), model.columns[0].id!)), 'Edited')
+const edited = toIfc(applyEdits(model, removeElement(emptyEdits(), model.columns[0].id!)), { name: 'Edited' })
 const mid2 = api.OpenModel(new TextEncoder().encode(edited))
 ok('edited model re-opens with one fewer IfcColumn', n2(api, mid2, IFCCOLUMN) === model.columns.length - 1)
 api.CloseModel(mid2)

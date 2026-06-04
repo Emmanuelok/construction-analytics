@@ -34,13 +34,13 @@ try {
   await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === 'IFC')?.click())
   const ifcPath = await waitFile('.ifc')
   ok('IFC file downloads', !!ifcPath, ifcPath)
-  if (ifcPath) { const ifc = readFileSync(ifcPath, 'utf8'); ok('IFC is valid IFC4 with storeys + typed products', /^ISO-10303-21;/.test(ifc) && /FILE_SCHEMA\(\('IFC4'\)\)/.test(ifc) && /IFCBUILDINGSTOREY\(/.test(ifc) && /IFCCOLUMN\(/.test(ifc) && /IFCWINDOW\(/.test(ifc)) }
+  if (ifcPath) { const ifc = readFileSync(ifcPath, 'utf8'); ok('IFC is valid IFC4 with storeys + typed products (incl. IfcStair + IfcSpace)', /^ISO-10303-21;/.test(ifc) && /FILE_SCHEMA\(\('IFC4'\)\)/.test(ifc) && /IFCBUILDINGSTOREY\(/.test(ifc) && /IFCCOLUMN\(/.test(ifc) && /IFCWINDOW\(/.test(ifc) && /IFCSTAIR\(/.test(ifc) && /IFCSPACE\(/.test(ifc)) }
 
   // OBJ
   await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === 'OBJ')?.click())
   const objPath = await waitFile('.obj')
   ok('OBJ file downloads', !!objPath, objPath)
-  if (objPath) { const obj = readFileSync(objPath, 'utf8'); ok('OBJ is a valid grouped mesh (v/f + trades)', /\nv /.test(obj) && /\nf /.test(obj) && /\ng Columns/.test(obj) && /\ng Windows/.test(obj)) }
+  if (objPath) { const obj = readFileSync(objPath, 'utf8'); ok('OBJ is a valid grouped mesh (v/f + trades incl. Partitions + Stairs)', /\nv /.test(obj) && /\nf /.test(obj) && /\ng Columns/.test(obj) && /\ng Windows/.test(obj) && /\ng Partitions/.test(obj) && /\ng Stairs/.test(obj)) }
 
   // glTF (async — GLTFExporter)
   await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === 'glTF')?.click())

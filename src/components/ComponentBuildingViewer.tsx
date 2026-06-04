@@ -29,7 +29,7 @@ export function ComponentBuildingViewer({
   height = 460,
 }: {
   model: BuildingModel
-  hidden?: { glazing?: boolean; structure?: boolean; slabs?: boolean; facade?: boolean }
+  hidden?: { glazing?: boolean; structure?: boolean; slabs?: boolean; facade?: boolean; interior?: boolean }
   sun?: { azimuth: number; altitude: number }
   shadows?: boolean
   isolateLevel?: number | null
@@ -46,7 +46,7 @@ export function ComponentBuildingViewer({
   const sunFnRef = useRef<(() => void) | null>(null)
   const highlightRef = useRef<(() => void) | null>(null)
   const frameRef = useRef<(() => void) | null>(null)
-  useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs, hidden.facade, isolateLevel])
+  useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs, hidden.facade, hidden.interior, isolateLevel])
   useEffect(() => { sunFnRef.current?.() }, [sun?.azimuth, sun?.altitude, shadows])
   useEffect(() => { highlightRef.current?.() }, [selected, model])
   // re-fit only when the envelope or isolated level changes (not on every element edit)
@@ -92,6 +92,8 @@ export function ComponentBuildingViewer({
     const beamMat = new THREE.MeshStandardMaterial({ color: '#566173', roughness: 0.5, metalness: 0.25 })
     const coreMat = new THREE.MeshStandardMaterial({ color: '#475569', roughness: 0.8 })
     const wallMat = new THREE.MeshStandardMaterial({ color: '#9aa7b8', roughness: 0.9, metalness: 0.04, side: THREE.DoubleSide })
+    const partMat = new THREE.MeshStandardMaterial({ color: '#7e8aa0', roughness: 0.95, metalness: 0.02, side: THREE.DoubleSide })
+    const stairMat = new THREE.MeshStandardMaterial({ color: '#8a93a6', roughness: 0.7, metalness: 0.12 })
     const glassMat = new THREE.MeshStandardMaterial({ color: '#7dd3fc', transparent: true, opacity: 0.32, roughness: 0.06, metalness: 0.5, side: THREE.DoubleSide, depthWrite: false })
     const doorMat = new THREE.MeshStandardMaterial({ color: '#1f2a3a', transparent: true, opacity: 0.78, roughness: 0.2, metalness: 0.4, side: THREE.DoubleSide })
     const mullionMat = new THREE.MeshStandardMaterial({ color: '#2b3647', roughness: 0.4, metalness: 0.5 })
@@ -241,7 +243,7 @@ export function ComponentBuildingViewer({
       const storeys = m.counts.storeys
       const isolating = iso != null
       const show = (lvl?: number) => !isolating || lvl === iso
-      const colIds = idsFor(m.columns, 'col'), panIds = idsFor(m.glazing, 'pan'), wallIds = idsFor(m.walls, 'wall'), doorIds = idsFor(m.doors, 'door'), beamIds = idsFor(m.beams, 'beam')
+      const colIds = idsFor(m.columns, 'col'), panIds = idsFor(m.glazing, 'pan'), wallIds = idsFor(m.walls, 'wall'), doorIds = idsFor(m.doors, 'door'), beamIds = idsFor(m.beams, 'beam'), partIds = idsFor(m.partitions, 'part')
 
       if (!h.slabs) {
         for (const s of m.slabs) if (show(s.level)) plate(s, slabMat, s.id ?? `floor-${s.level ?? 0}`)
@@ -264,8 +266,12 @@ export function ComponentBuildingViewer({
         planeInst(m.glazing.map((g, i) => ({ g, id: g.id ?? panIds[i] })).filter(({ g }) => show(g.level)), glassMat, { shadow: false, outset: 0.02 })
         planeInst(m.doors.map((g, i) => ({ g, id: g.id ?? doorIds[i] })).filter(({ g }) => show(g.level)), doorMat, { outset: 0.02 })
       }
+      if (!h.interior) {
+        planeInst(m.partitions.map((g, i) => ({ g, id: g.id ?? partIds[i] })).filter(({ g }) => show(g.level)), partMat)
+        boxInst(m.stairs.flatMap((s) => s.treads.map((t) => ({ c: t, id: s.id }))).filter(({ c }) => show(c.level)), stairMat)
+      }
       applySun(); applyHighlight()
-      ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, windows: m.counts.windows, glazing: m.counts.windows, beams: m.counts.beams, doors: m.counts.doors, slabs: m.counts.slabs }
+      ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, windows: m.counts.windows, glazing: m.counts.windows, beams: m.counts.beams, doors: m.counts.doors, slabs: m.counts.slabs, partitions: m.counts.partitions, stairs: m.counts.stairs }
     }
     rebuildRef.current = build
 
@@ -355,7 +361,7 @@ export function ComponentBuildingViewer({
     return () => {
       cancelAnimationFrame(raf); ro.disconnect()
       el.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); el.removeEventListener('contextmenu', onCtx); mount.removeEventListener('keydown', onKey)
-      clear(); unitBox.dispose(); unitPlane.dispose(); [slabMat, colMat, beamMat, coreMat, wallMat, glassMat, doorMat, mullionMat].forEach((m) => m.dispose())
+      clear(); unitBox.dispose(); unitPlane.dispose(); [slabMat, colMat, beamMat, coreMat, wallMat, partMat, stairMat, glassMat, doorMat, mullionMat].forEach((m) => m.dispose())
       hlBox.dispose(); hlEdgesGeo.dispose(); hlFillMat.dispose(); hlLineMat.dispose()
       ground.geometry.dispose(); (ground.material as THREE.Material).dispose()
       renderer.dispose(); if (el.parentNode === mount) mount.removeChild(el)

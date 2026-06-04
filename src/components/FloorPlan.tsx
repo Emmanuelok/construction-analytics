@@ -75,7 +75,7 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
   return (
     <svg ref={svgRef} viewBox={`${-pad} ${-pad} ${w + 2 * pad} ${h + 2 * pad}`} style={{ height }}
       className={`w-full rounded-xl bg-[#0a0f1c] ring-1 ring-edge/60 ${addMode ? 'cursor-crosshair' : 'cursor-grab'}`}
-      role="img" aria-label={`Floor plan, ${plan.isRoof ? 'roof' : `level ${plan.level}`}: ${plan.rooms.length} rooms, ${plan.columns.length} columns, ${plan.panels.length} windows, ${plan.doors.length} doors`}
+      role="img" aria-label={`Floor plan, ${plan.isRoof ? 'roof' : `level ${plan.level}`}: ${plan.rooms.length} rooms, ${plan.partitions.length} partitions, ${plan.columns.length} columns, ${plan.panels.length} windows, ${plan.doors.length} doors, ${plan.stairs.length} stairs`}
       onWheel={onWheel} onPointerDown={onBgDown}>
       <g ref={gRef} transform={`translate(${view.ox} ${view.oy}) scale(${view.k})`}>
         {/* add-column capture layer (only active in Add mode) */}
@@ -101,6 +101,26 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
             )
           })}
         </g>
+        {/* interior partitions (draggable, like walls) */}
+        <g>{plan.partitions.map((p) => lineGroup(p.id, p.a, p.b, '#6b7a93', 1.5))}</g>
+        {/* stairs in the core */}
+        <g>{plan.stairs.map((s) => {
+          const on = selected === s.id
+          const x = toX(s.x), y = toY(s.z), hw = s.w / 2, hd = s.d / 2
+          const steps = 7
+          const lines = Array.from({ length: steps }, (_, i) => {
+            const t = (i + 0.5) / steps
+            return s.dir === 'z'
+              ? <line key={i} x1={x - hw} y1={y - hd + s.d * t} x2={x + hw} y2={y - hd + s.d * t} stroke={on ? '#fbbf24' : '#9fb0c8'} strokeWidth={0.8} vectorEffect="non-scaling-stroke" />
+              : <line key={i} x1={x - hw + s.w * t} y1={y - hd} x2={x - hw + s.w * t} y2={y + hd} stroke={on ? '#fbbf24' : '#9fb0c8'} strokeWidth={0.8} vectorEffect="non-scaling-stroke" />
+          })
+          return (
+            <g key={s.id} className="cursor-pointer" onClick={() => { if (!addMode) onSelect(s.id) }}>
+              <rect x={x - hw} y={y - hd} width={s.w} height={s.d} fill={on ? '#fbbf2422' : '#1f2c44aa'} stroke={on ? '#fbbf24' : '#6b7a93'} strokeWidth={on ? 1.6 : 1} vectorEffect="non-scaling-stroke" />
+              {lines}
+            </g>
+          )
+        })}</g>
         {/* windows + doors (draggable) */}
         <g>{plan.panels.map((p) => lineGroup(p.id, p.a, p.b, '#38bdf8', 2.5))}</g>
         <g>{plan.doors.map((p) => lineGroup(p.id, p.a, p.b, '#34d399', 4))}</g>

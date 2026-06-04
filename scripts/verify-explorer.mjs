@@ -39,6 +39,15 @@ try {
   })
   ok('plan shows interior rooms + a Rooms schedule tab', roomInfo.polys > 2 && roomInfo.roomsTab, roomInfo)
 
+  // interior partitions + stairs render in the plan; Partitions & Stairs schedule tabs exist
+  const intInfo = await page.evaluate(() => {
+    const svg = [...document.querySelectorAll('svg')].find((s) => s.getAttribute('aria-label')?.startsWith('Floor plan'))
+    const label = svg?.getAttribute('aria-label') || ''
+    const tab = (re) => [...document.querySelectorAll('button')].some((b) => re.test((b.textContent || '').trim()))
+    return { label, partTab: tab(/^Partitions \(/), stairTab: tab(/^Stairs \(/) }
+  })
+  ok('plan reports partitions + stairs, with Partitions & Stairs schedule tabs', /partitions/.test(intInfo.label) && /stairs/.test(intInfo.label) && intInfo.partTab && intInfo.stairTab, intInfo)
+
   // selecting a column in the plan drives the shared selection + inspector + 3D highlight
   const clickedId = await page.evaluate(() => {
     const svg = [...document.querySelectorAll('svg')].find((s) => s.getAttribute('aria-label')?.startsWith('Floor plan'))

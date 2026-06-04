@@ -20,7 +20,7 @@ import { downloadText, slug } from '@/lib/download'
 
 const SEL_KEY = 'aec-active-project'
 const ROW_CAP = 300 // cap rendered schedule rows (export covers all)
-const CAT_ICON: Record<string, typeof Columns3> = { Floor: SquareStack, Column: Columns3, Beam: Rows3, Window: Frame, Door: DoorOpen, Wall: Square, Core: BoxIcon, Roof: SquareStack }
+const CAT_ICON: Record<string, typeof Columns3> = { Floor: SquareStack, Column: Columns3, Beam: Rows3, Window: Frame, Door: DoorOpen, Wall: Square, Partition: Square, Room: Square, Stair: Rows3, Core: BoxIcon, Roof: SquareStack }
 
 const fmtCell = (v: number | string) => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v)
 const csvCell = (v: number | string) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
@@ -54,7 +54,7 @@ export default function BuildingExplorer() {
   const [isolate, setIsolate] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [schedTab, setSchedTab] = useState('Floor')
-  const [hidden, setHidden] = useState<{ glazing?: boolean; structure?: boolean; slabs?: boolean; facade?: boolean }>({})
+  const [hidden, setHidden] = useState<{ glazing?: boolean; structure?: boolean; slabs?: boolean; facade?: boolean; interior?: boolean }>({})
   const [wwr, setWwr] = useState(() => init0?.wwr ?? 0.55)
   const [bayWidth, setBayWidth] = useState(() => init0?.bayWidth ?? 3.4)
   const [mullions, setMullions] = useState(() => init0?.mullions ?? true)
@@ -160,11 +160,12 @@ export default function BuildingExplorer() {
       ) : (
       <>
       {/* summary */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
         <StatTile label="Storeys" value={String(ex.summary.storeys)} accent="blue" />
         <StatTile label="Elements" value={formatNumber(ex.summary.elements)} accent="cyan" />
         <StatTile label="Columns + beams" value={`${formatNumber(ex.summary.columns)} · ${formatNumber(ex.summary.beams)}`} accent="violet" />
         <StatTile label="Windows + doors" value={`${formatNumber(ex.summary.windows)} · ${formatNumber(ex.summary.doors)}`} accent="sky" />
+        <StatTile label="Partitions · stairs" value={`${formatNumber(ex.summary.partitions)} · ${formatNumber(ex.summary.stairs)}`} accent="fuchsia" />
         <StatTile label="Rooms · net" value={`${formatNumber(ex.summary.rooms)} · ${formatNumber(ex.summary.netArea)} m²`} accent="teal" />
         <StatTile label="Gross floor area" value={`${formatNumber(ex.summary.gfa)} m²`} accent="emerald" />
         <StatTile label="Concrete" value={`${formatNumber(ex.summary.concreteVolume)} m³`} accent="amber" />
@@ -209,7 +210,7 @@ export default function BuildingExplorer() {
                   <button onClick={resetEdits} disabled={!nEdits} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', nEdits ? 'text-slate-300 ring-edge/60 hover:bg-elevated/50' : 'cursor-default text-slate-600 ring-edge/40')}><RotateCcw className="h-3.5 w-3.5" /> Reset{nEdits ? ` (${nEdits})` : ''}</button>
                 </>}
                 <div className="flex flex-wrap gap-1.5">
-                  {([['structure', 'Structure'], ['facade', 'Walls'], ['glazing', 'Windows'], ['slabs', 'Slabs']] as const).map(([k, label]) => (
+                  {([['structure', 'Structure'], ['facade', 'Walls'], ['interior', 'Interior'], ['glazing', 'Windows'], ['slabs', 'Slabs']] as const).map(([k, label]) => (
                     <button key={k} onClick={() => setHidden((h) => ({ ...h, [k]: !h[k] }))} aria-pressed={!hidden[k]} className={cn('rounded-lg px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors', hidden[k] ? 'text-slate-500 ring-edge/60' : 'bg-blue-500/15 text-blue-200 ring-blue-500/40')}>{label}</button>
                   ))}
                 </div>
@@ -260,8 +261,10 @@ export default function BuildingExplorer() {
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#16243c] ring-1 ring-[#2c4a6e]" /> Room</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" /> Column</span>
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-[#6b7a93]" /> Partition</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-sky-400" /> Window</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-emerald-400" /> Door</span>
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 border border-[#6b7a93] bg-[#1f2c44]" /> Stair</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 border border-slate-500 bg-slate-600/40" /> Core</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-400" /> Selected</span>
             </div>

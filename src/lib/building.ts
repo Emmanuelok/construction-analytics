@@ -9,7 +9,10 @@
 import { type Pt, polygonCentroid } from './zoning'
 import { PLATE_SCALE, type Massing } from './massing'
 import { floorRooms, type Room } from './building-rooms'
+import { floorPartitions } from './building-partitions'
+import { coreStairs, type Stair } from './building-stairs'
 export type { Room } from './building-rooms'
+export type { Stair } from './building-stairs'
 
 export type Box = { x: number; y: number; z: number; w: number; h: number; d: number; level?: number; id?: string } // centre + full size
 export type Quad = { a: Pt; b: Pt; y: number; h: number; level?: number; id?: string } // vertical panel along edge a→b, base y, height h
@@ -24,12 +27,14 @@ export type BuildingModel = {
   glazing: Quad[] // discrete window panels (a grid of real windows)
   doors: Quad[] // ground-floor entrance doors
   mullions: Box[] // vertical façade framing between windows
+  partitions: Quad[] // interior walls between rooms / around the core
+  stairs: Stair[] // a straight-run stair flight per storey, in the core
   core: Box | null
   roof: Plate | null
   rooms: Room[] // interior spaces, per floor
   totalHeight: number
   footprint: number
-  counts: { storeys: number; columns: number; beams: number; windows: number; doors: number; walls: number; mullions: number; slabs: number; rooms: number }
+  counts: { storeys: number; columns: number; beams: number; windows: number; doors: number; walls: number; mullions: number; partitions: number; stairs: number; slabs: number; rooms: number }
 }
 
 const dist = (a: Pt, b: Pt) => Math.hypot(b.x - a.x, b.z - a.z)
@@ -137,12 +142,19 @@ export function buildBuilding(m: Massing, opts?: {
 
   const coreBox = core ? { x: core.x, z: core.z, w: core.w, d: core.d } : null
   const rooms: Room[] = []
-  for (const f of m.floors) rooms.push(...floorRooms(f.polygon, { level: f.index, core: coreBox }))
+  const partitions: Quad[] = []
+  for (const f of m.floors) {
+    rooms.push(...floorRooms(f.polygon, { level: f.index, core: coreBox }))
+    const base = f.y - f.height / 2
+    partitions.push(...floorPartitions(f.polygon, { level: f.index, core: coreBox, base: base + slabT, height: f.height - slabT }))
+  }
+  // a stair flight per storey, climbing inside the core
+  const stairs = coreStairs(coreBox, m.floors.map((f) => ({ base: f.y - f.height / 2, height: f.height, level: f.index })))
 
   return {
-    slabs, columns, beams, walls, glazing, doors, mullions, core, roof, rooms,
+    slabs, columns, beams, walls, glazing, doors, mullions, partitions, stairs, core, roof, rooms,
     totalHeight: m.totalHeight,
     footprint: m.footprint,
-    counts: { storeys: m.storeys, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: mullions.length, slabs: slabs.length, rooms: rooms.length },
+    counts: { storeys: m.storeys, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: mullions.length, partitions: partitions.length, stairs: stairs.length, slabs: slabs.length, rooms: rooms.length },
   }
 }
