@@ -45,9 +45,12 @@ export function ComponentBuildingViewer({
   const rebuildRef = useRef<(() => void) | null>(null)
   const sunFnRef = useRef<(() => void) | null>(null)
   const highlightRef = useRef<(() => void) | null>(null)
+  const frameRef = useRef<(() => void) | null>(null)
   useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs, hidden.facade, isolateLevel])
   useEffect(() => { sunFnRef.current?.() }, [sun?.azimuth, sun?.altitude, shadows])
   useEffect(() => { highlightRef.current?.() }, [selected, model])
+  // re-fit only when the envelope or isolated level changes (not on every element edit)
+  useEffect(() => { frameRef.current?.() }, [model.totalHeight, model.footprint, isolateLevel])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -118,7 +121,28 @@ export function ComponentBuildingViewer({
         orbit.target.z + orbit.radius * Math.sin(orbit.polar) * Math.cos(orbit.az),
       )
       camera.lookAt(orbit.target)
+      ;(mount as HTMLElement & { __view?: object }).__view = { radius: Math.round(orbit.radius * 10) / 10, tx: Math.round(orbit.target.x * 100) / 100, ty: Math.round(orbit.target.y * 100) / 100, tz: Math.round(orbit.target.z * 100) / 100, az: Math.round(orbit.az * 100) / 100, polar: Math.round(orbit.polar * 100) / 100 }
     }
+    // Fit the building (or the isolated floor) to the viewport from the current angle.
+    const frameView = () => {
+      const { model: m, isolateLevel: iso } = propsRef.current
+      const storeys = m.counts.storeys
+      const tanH = Math.tan((camera.fov * Math.PI) / 180 / 2) || 0.4
+      if (iso != null && iso < storeys) {
+        const sceneSh = m.totalHeight / Math.max(1, storeys)
+        orbit.target.set(0, iso * sceneSh + sceneSh / 2, 0)
+        const halfW = Math.max(m.footprint / 2, sceneSh)
+        orbit.radius = Math.max(halfW / (tanH * Math.min(camera.aspect, 1.4)), 6) * 1.6
+      } else {
+        orbit.target.set(0, m.totalHeight / 2, 0)
+        const rV = (m.totalHeight / 2) / tanH
+        const rH = Math.max(m.footprint / 2, 2) / (tanH * camera.aspect)
+        orbit.radius = Math.max(rV, rH, 6) * 1.12
+      }
+      scene.fog = new THREE.Fog('#0a0f1c', orbit.radius * 0.85, orbit.radius * 3.4)
+      applyCamera()
+    }
+    frameRef.current = frameView
 
     const plate = (p: Plate, mat: THREE.Material, id: string) => {
       const shape = new THREE.Shape()
@@ -240,11 +264,7 @@ export function ComponentBuildingViewer({
         planeInst(m.glazing.map((g, i) => ({ g, id: g.id ?? panIds[i] })).filter(({ g }) => show(g.level)), glassMat, { shadow: false, outset: 0.02 })
         planeInst(m.doors.map((g, i) => ({ g, id: g.id ?? doorIds[i] })).filter(({ g }) => show(g.level)), doorMat, { outset: 0.02 })
       }
-      const span = Math.max(m.totalHeight, m.footprint * 1.5, 8)
-      if (isolating && iso < storeys) { const sceneSh = m.totalHeight / Math.max(1, storeys); orbit.target.set(0, iso * sceneSh + sceneSh / 2, 0); orbit.radius = Math.max(m.footprint * 1.6, 10) }
-      else { orbit.target.set(0, m.totalHeight / 2, 0); orbit.radius = span * 1.7 }
-      scene.fog = new THREE.Fog('#0a0f1c', orbit.radius * 0.9, orbit.radius * 3.2)
-      applyCamera(); applySun(); applyHighlight()
+      applySun(); applyHighlight()
       ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, windows: m.counts.windows, glazing: m.counts.windows, beams: m.counts.beams, doors: m.counts.doors, slabs: m.counts.slabs }
     }
     rebuildRef.current = build
@@ -281,29 +301,60 @@ export function ComponentBuildingViewer({
       onSelect(null)
     }
 
-    let dragging = false, lastX = 0, lastY = 0, spin = true, moved = 0
-    const onDown = (e: PointerEvent) => { dragging = true; spin = false; lastX = e.clientX; lastY = e.clientY; moved = 0; renderer.domElement.style.cursor = 'grabbing' }
-    const onMove = (e: PointerEvent) => { if (!dragging) return; moved += Math.abs(e.clientX - lastX) + Math.abs(e.clientY - lastY); orbit.az -= (e.clientX - lastX) * 0.01; orbit.polar = Math.max(0.08, Math.min(Math.PI / 2 - 0.03, orbit.polar - (e.clientY - lastY) * 0.01)); lastX = e.clientX; lastY = e.clientY; applyCamera() }
-    const onUp = (e: PointerEvent) => { const wasDown = dragging; dragging = false; renderer.domElement.style.cursor = 'grab'; if (wasDown && moved < 6) pick(e) }
-    const onWheel = (e: WheelEvent) => { e.preventDefault(); orbit.radius = Math.max(6, Math.min(800, orbit.radius + e.deltaY * 0.07)); applyCamera() }
-    const clampP = (p: number) => Math.max(0.08, Math.min(Math.PI / 2 - 0.03, p))
+    const clampP = (p: number) => Math.max(0.06, Math.min(Math.PI / 2 - 0.02, p))
+    const right = new THREE.Vector3(), camUp = new THREE.Vector3()
+    // Pan: slide the orbit target across the camera's screen plane.
+    const pan = (dx: number, dy: number) => {
+      camera.updateMatrixWorld()
+      right.setFromMatrixColumn(camera.matrixWorld, 0)
+      camUp.setFromMatrixColumn(camera.matrixWorld, 1)
+      const k = (2 * orbit.radius * Math.tan((camera.fov * Math.PI) / 180 / 2)) / (mount.clientHeight || height)
+      orbit.target.addScaledVector(right, -dx * k).addScaledVector(camUp, dy * k)
+    }
+    let dragging = false, lastX = 0, lastY = 0, spin = true, moved = 0, mode: 'orbit' | 'pan' = 'orbit'
+    const onDown = (e: PointerEvent) => {
+      dragging = true; spin = false; lastX = e.clientX; lastY = e.clientY; moved = 0
+      mode = e.button === 2 || e.button === 1 || e.shiftKey ? 'pan' : 'orbit'
+      renderer.domElement.style.cursor = mode === 'pan' ? 'move' : 'grabbing'
+    }
+    const onMove = (e: PointerEvent) => {
+      if (!dragging) return
+      const dx = e.clientX - lastX, dy = e.clientY - lastY
+      moved += Math.abs(dx) + Math.abs(dy)
+      if (mode === 'pan') pan(dx, dy)
+      else { orbit.az -= dx * 0.01; orbit.polar = clampP(orbit.polar - dy * 0.01) }
+      lastX = e.clientX; lastY = e.clientY; applyCamera()
+    }
+    const onUp = (e: PointerEvent) => { const wasDown = dragging; dragging = false; renderer.domElement.style.cursor = 'grab'; if (wasDown && moved < 6 && mode === 'orbit') pick(e) }
+    const onWheel = (e: WheelEvent) => { e.preventDefault(); orbit.radius = Math.max(2, Math.min(4000, orbit.radius * (1 + (e.deltaY > 0 ? 1 : -1) * 0.12))); applyCamera() }
+    const onCtx = (e: Event) => e.preventDefault()
     const onKey = (e: KeyboardEvent) => {
       let h = true
-      switch (e.key) { case 'ArrowLeft': orbit.az += 0.12; break; case 'ArrowRight': orbit.az -= 0.12; break; case 'ArrowUp': orbit.polar = clampP(orbit.polar - 0.12); break; case 'ArrowDown': orbit.polar = clampP(orbit.polar + 0.12); break; case '+': case '=': orbit.radius = Math.max(6, orbit.radius - 4); break; case '-': case '_': orbit.radius = Math.min(800, orbit.radius + 4); break; default: h = false }
+      const panStep = orbit.radius * 0.08
+      switch (e.key) {
+        case 'ArrowLeft': if (e.shiftKey) pan(-panStep, 0); else orbit.az += 0.12; break
+        case 'ArrowRight': if (e.shiftKey) pan(panStep, 0); else orbit.az -= 0.12; break
+        case 'ArrowUp': if (e.shiftKey) pan(0, -panStep); else orbit.polar = clampP(orbit.polar - 0.12); break
+        case 'ArrowDown': if (e.shiftKey) pan(0, panStep); else orbit.polar = clampP(orbit.polar + 0.12); break
+        case '+': case '=': orbit.radius = Math.max(2, orbit.radius * 0.88); break
+        case '-': case '_': orbit.radius = Math.min(4000, orbit.radius * 1.12); break
+        case 'f': case 'F': case 'Home': frameView(); break
+        default: h = false
+      }
       if (!h) return; e.preventDefault(); spin = false; applyCamera()
     }
     const el = renderer.domElement
-    el.addEventListener('pointerdown', onDown); window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); el.addEventListener('wheel', onWheel, { passive: false }); mount.addEventListener('keydown', onKey)
+    el.addEventListener('pointerdown', onDown); window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); el.addEventListener('wheel', onWheel, { passive: false }); el.addEventListener('contextmenu', onCtx); mount.addEventListener('keydown', onKey)
     const ro = new ResizeObserver(() => { const w = mount.clientWidth || 600; camera.aspect = w / height; camera.updateProjectionMatrix(); renderer.setSize(w, height) }); ro.observe(mount)
 
-    build()
+    build(); frameView()
     let raf = 0
     const loop = () => { raf = requestAnimationFrame(loop); if (spin) { orbit.az += 0.0014; applyCamera() } renderer.render(scene, camera) }
     loop()
 
     return () => {
       cancelAnimationFrame(raf); ro.disconnect()
-      el.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); mount.removeEventListener('keydown', onKey)
+      el.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); el.removeEventListener('contextmenu', onCtx); mount.removeEventListener('keydown', onKey)
       clear(); unitBox.dispose(); unitPlane.dispose(); [slabMat, colMat, beamMat, coreMat, wallMat, glassMat, doorMat, mullionMat].forEach((m) => m.dispose())
       hlBox.dispose(); hlEdgesGeo.dispose(); hlFillMat.dispose(); hlLineMat.dispose()
       ground.geometry.dispose(); (ground.material as THREE.Material).dispose()
@@ -322,6 +373,11 @@ export function ComponentBuildingViewer({
     )
   }
   return (
-    <div ref={mountRef} style={{ height }} tabIndex={0} role="application" aria-label="3D building model with components. Click an element to inspect it. Arrow keys orbit, +/- zoom." className="w-full overflow-hidden rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60" />
+    <div className="relative w-full">
+      <div ref={mountRef} style={{ height }} tabIndex={0} role="application" aria-label="3D building model. Drag to orbit, right-drag or Shift-drag to pan, scroll to zoom, F to fit. Click an element to inspect it." className="w-full overflow-hidden rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60" />
+      <div aria-hidden className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-base/70 px-3 py-1 text-[11px] text-slate-400 ring-1 ring-edge/50 backdrop-blur-sm">
+        Drag <span className="text-slate-300">orbit</span> · Right/Shift-drag <span className="text-slate-300">pan</span> · Scroll <span className="text-slate-300">zoom</span> · <kbd className="rounded bg-elevated/70 px-1 text-slate-300">F</kbd> fit
+      </div>
+    </div>
   )
 }

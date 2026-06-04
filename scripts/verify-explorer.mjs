@@ -19,11 +19,11 @@ await page.evaluateOnNewDocument(() => {
 
 try {
   await page.goto(BASE + '/building-explorer', { waitUntil: 'domcontentloaded', timeout: 30000 })
-  await page.waitForSelector('[aria-label^="3D building model with components"]', { timeout: 20000 })
+  await page.waitForSelector('[aria-label^="3D building model"]', { timeout: 20000 })
   await page.waitForSelector('svg [role], svg circle', { timeout: 10000 }).catch(() => {})
   await new Promise((r) => setTimeout(r, 1000))
 
-  const readSel = () => page.evaluate(() => document.querySelector('[aria-label^="3D building model with components"]')?.__selected ?? 'UNSET')
+  const readSel = () => page.evaluate(() => document.querySelector('[aria-label^="3D building model"]')?.__selected ?? 'UNSET')
 
   // floor plan draws columns + panels
   const planCounts = await page.evaluate(() => {

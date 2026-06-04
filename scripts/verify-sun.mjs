@@ -25,9 +25,9 @@ await page.evaluateOnNewDocument(() => {
 try {
   await page.goto(BASE + '/project', { waitUntil: 'domcontentloaded', timeout: 30000 })
   // wait for the component building viewer (lazy) + its __sun hook to attach
-  await page.waitForSelector('[aria-label^="3D building model with components"]', { timeout: 20000 })
+  await page.waitForSelector('[aria-label^="3D building model"]', { timeout: 20000 })
   const readSun = () => page.evaluate(() => {
-    const el = document.querySelector('[aria-label^="3D building model with components"]')
+    const el = document.querySelector('[aria-label^="3D building model"]')
     return el ? { sun: el.__sun, components: el.__components } : null
   })
   // give the rAF loop + applySun a few frames

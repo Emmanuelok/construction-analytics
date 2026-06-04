@@ -117,7 +117,7 @@ export function buildBuilding(m: Massing, opts?: {
       const segs = Math.max(1, Math.round(L / spacing))
       for (let s = 0; s < segs; s++) {
         const t = s / segs
-        columns.push({ x: a.x + (b.x - a.x) * t, y: base + floorH / 2, z: a.z + (b.z - a.z) * t, w: 0.2, h: floorH, d: 0.2, level: f.index, id: `col-${f.index}-${ci++}` })
+        columns.push({ x: a.x + (b.x - a.x) * t, y: base + floorH / 2, z: a.z + (b.z - a.z) * t, w: 0.12, h: floorH, d: 0.12, level: f.index, id: `col-${f.index}-${ci++}` })
       }
     }
   }
