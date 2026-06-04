@@ -1004,8 +1004,9 @@ section('ifc-to-model')
     vertexCount: 0, triangleCount: 0, bbox: null,
     storeys: [{ expressID: 200, name: 'Level 1', elevation: 3 }, { expressID: 100, name: 'Ground', elevation: 0 }],
   }
-  const { model, storeyHeight } = ifcToModel(res)
+  const { model, storeyHeight, labels } = ifcToModel(res)
   ok('reconstructs the storeys at the IFC storey height', model.counts.storeys === 2 && near(storeyHeight, 3, 1e-9))
+  ok('returns a labels map carrying each element’s original IFC name + type', labels['ifc-11'].ifcType === 'IFCWALLSTANDARDCASE' && labels['ifc-11'].name === 'Ext Wall' && labels['ifc-21'].name === 'Office 201' && labels['ifc-10'].ifcType === 'IFCCOLUMN')
   ok('buckets IFC products into editable primitives by type', model.columns.length >= 2 && model.walls.length === 1 && model.glazing.length === 1 && model.beams.length === 1 && model.rooms.length === 1)
   ok('an unknown product is rationalized by shape (furniture → a box column)', model.columns.some((c) => c.id === 'ifc-22'))
   ok('one floor slab per level, id floor-N (plan + isolate work)', model.slabs.length === 2 && !!model.slabs.find((s) => s.id === 'floor-0') && !!model.slabs.find((s) => s.id === 'floor-1'))

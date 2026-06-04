@@ -60,10 +60,25 @@ try {
   const rows1 = await page.evaluate(() => { const t = [...document.querySelectorAll('button')].find((x) => /^Columns \(/.test((x.textContent || '').trim())); return t ? Number((t.textContent.match(/\((\d+)\)/) || [])[1]) : -1 })
   ok('deleting an imported element updates the schedule (count −1)', rows1 === rows0 - 1, { rows0, rows1 })
 
-  // back to the generated model
+  // the inspector carries the original IFC name + type for an imported element
+  await page.evaluate(() => document.querySelector('tbody tr')?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+  await new Promise((r) => setTimeout(r, 300))
+  ok('inspector shows the original IFC source (name · type)', await hasText(/IFC source/))
+
+  // persistence: reload keeps the imported model (IndexedDB)
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('[aria-label^="3D building model"]', { timeout: 20000 })
+  await new Promise((r) => setTimeout(r, 1300))
+  ok('the imported model persists across a reload (IndexedDB)', await hasText(/Editing imported model/))
+
+  // back to the generated model + discard the persisted import
   ok('can return to the generated model', await clickText('Back to generated'))
   await new Promise((r) => setTimeout(r, 500))
   ok('generated model parameters return', await hasText(/Model parameters/))
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('[aria-label^="3D building model"]', { timeout: 20000 })
+  await new Promise((r) => setTimeout(r, 1000))
+  ok('discarding the import clears it permanently (gone after reload)', !(await hasText(/Editing imported model/)) && (await hasText(/Model parameters/)))
 
   const realErrors = errors.filter((e) => !/404|favicon|tile|Failed to load resource|ERR_/i.test(e))
   ok('no console errors', realErrors.length === 0, realErrors.slice(0, 4))
