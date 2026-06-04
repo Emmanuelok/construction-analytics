@@ -1042,7 +1042,7 @@ section('aps')
 // ── agent-tools (unified tool layer for the MCP server + in-app AI agent) ───────
 section('agent-tools')
 {
-  ok('5 tools, each with a JSON-Schema object input', AGENT_TOOLS.length === 5 && AGENT_TOOLS.every((t) => t.name && t.description && (t.inputSchema as { type?: string }).type === 'object' && (t.inputSchema as { properties?: object }).properties))
+  ok('6 tools, each with a JSON-Schema object input', AGENT_TOOLS.length === 6 && AGENT_TOOLS.every((t) => t.name && t.description && (t.inputSchema as { type?: string }).type === 'object' && (t.inputSchema as { properties?: object }).properties))
   ok('schemas declare required fields', (AGENT_TOOLS.find((t) => t.name === 'analyze_zoning')!.inputSchema as { required?: string[] }).required!.includes('far'))
   const ms = (await runTool('massing_schedule', { gfa: 100000, storeys: 10, shape: 'rect' })) as { grossFloorArea: number; floors: unknown[]; embodiedCarbon: number }
   ok('runTool massing_schedule computes a real schedule', ms.grossFloorArea > 0 && ms.floors.length === 10 && ms.embodiedCarbon > 0)
@@ -1050,6 +1050,14 @@ section('agent-tools')
   ok('runTool analyze_zoning computes capacity + compliance', az.maxGFA === 10800 && typeof az.compliance.overall === 'boolean')
   const ifc = (await runTool('parse_ifc', { ifc: SAMPLE_IFC_GEO })) as { entityCounts: unknown[] }
   ok('runTool parse_ifc summarises a model', Array.isArray(ifc.entityCounts) && ifc.entityCounts.length > 0)
+  // export_building → a pullable model file (the Connections hub + MCP + APS publish use this)
+  const xi = (await runTool('export_building', { gfa: 40000, storeys: 6, shape: 'rect', name: 'Tower X', format: 'ifc' })) as { format: string; filename: string; content: string; bytes: number; counts: { stairs: number; partitions: number } }
+  ok('export_building emits a real IFC4 file (typed products incl. stairs)', xi.format === 'ifc' && xi.filename === 'tower-x.ifc' && /^ISO-10303-21;/.test(xi.content) && /IFCSTAIR\(/.test(xi.content) && xi.bytes > 1000 && xi.counts.stairs === 6)
+  const xo = (await runTool('export_building', { gfa: 40000, storeys: 6, format: 'obj' })) as { format: string; content: string }
+  ok('export_building emits a grouped OBJ when asked', xo.format === 'obj' && /\ng Columns/.test(xo.content) && /\ng Stairs/.test(xo.content))
+  const xj = (await runTool('export_building', { gfa: 40000, storeys: 6, format: 'json' })) as { format: string; schedules: unknown[]; summary: { storeys: number } }
+  ok('export_building emits a structured JSON model (schedules)', xj.format === 'json' && Array.isArray(xj.schedules) && xj.schedules.length > 0 && xj.summary.storeys === 6)
+  ok('export_building defaults to IFC', (((await runTool('export_building', { gfa: 20000 })) as { format: string }).format) === 'ifc')
   let threw = false
   try { await runTool('does_not_exist', {}) } catch { threw = true }
   ok('runTool throws on an unknown tool', threw)

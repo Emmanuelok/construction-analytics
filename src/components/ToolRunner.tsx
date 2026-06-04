@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ArrowRight, Loader2, AlertTriangle, Braces, Table2 } from 'lucide-react'
+import { ArrowRight, Loader2, AlertTriangle, Braces, Table2, FileDown } from 'lucide-react'
 import { fieldsFromSchema, coerceArgs, type Field } from '@/lib/tool-forms'
 import { downloadText } from '@/lib/download'
 import { tableToCsv } from '@/lib/report'
@@ -34,9 +34,14 @@ export function ToolRunner({
     finally { setBusy(false) }
   }
 
-  const resultText = result == null ? '' : typeof result === 'string' ? result : JSON.stringify(result, null, 2)
+  // a tool that returns a file ({ filename, content }) — e.g. export_building IFC/OBJ
+  const file = result && typeof result === 'object' && typeof (result as { content?: unknown }).content === 'string' && typeof (result as { filename?: unknown }).filename === 'string'
+    ? (result as { filename: string; content: string }) : null
+  const resultText = file ? `${file.filename} · ${file.content.length.toLocaleString()} bytes\n\n${file.content.slice(0, 4000)}${file.content.length > 4000 ? '\n… (download for the full file)' : ''}`
+    : result == null ? '' : typeof result === 'string' ? result : JSON.stringify(result, null, 2)
   const asRows = Array.isArray(result) && result.length > 0 && typeof result[0] === 'object' ? (result as Record<string, unknown>[]) : null
   const exportJson = () => downloadText(`${tool.name}.json`, typeof result === 'string' ? result : JSON.stringify(result, null, 2), 'JSON')
+  const exportFile = () => file && downloadText(file.filename, file.content, (file.filename.split('.').pop() || 'file').toUpperCase())
   const exportCsv = () => {
     if (!asRows) return
     const cols = Array.from(new Set(asRows.flatMap((r) => Object.keys(r))))
@@ -61,6 +66,7 @@ export function ToolRunner({
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />} {actionLabel}
         </button>
         {result != null && <>
+          {file && <button onClick={exportFile} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-200 hover:bg-emerald-500/20"><FileDown className="h-3.5 w-3.5" /> Download {file.filename.split('.').pop()?.toUpperCase()}</button>}
           <button onClick={exportJson} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Braces className="h-3.5 w-3.5" /> JSON</button>
           {asRows && <button onClick={exportCsv} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Table2 className="h-3.5 w-3.5" /> CSV</button>}
         </>}

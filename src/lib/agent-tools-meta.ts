@@ -46,6 +46,23 @@ export const AGENT_TOOLS: AgentTool[] = [
     inputSchema: { type: 'object', properties: { ifc: { type: 'string', description: 'Full IFC file contents' }, fileName: { type: 'string' } }, required: ['ifc'] },
   },
   {
+    name: 'export_building',
+    description: 'Generate a parametric building (from GFA/storeys/form) and export it as a real model file: native IFC4 (typed BIM products — columns, beams, walls, partitions, windows, doors, slabs, a stepped stair & IfcSpace rooms), a grouped Wavefront OBJ mesh, or a structured JSON model (schedules + quantities). Returns the file content + element counts, so an MCP client or Autodesk APS can pull the generated model programmatically.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        gfa: num('Gross floor area target, m²'),
+        storeys: { type: 'integer', description: 'Explicit storey count (else derived from GFA)' },
+        shape: { type: 'string', enum: ['rect', 'l', 'u', 'court', 'cross', 'cylinder', 'octagon'], description: 'Footprint shape (court = atrium)' },
+        aspect: num('Plan aspect ratio 0.3–3'), storeyHeight: num('m (default 3.6)'),
+        wwr: num('Window-to-wall ratio 0.15–0.85'), bayWidth: num('Window bay width, m'), mullions: { type: 'boolean', description: 'Façade mullions (default on)' },
+        format: { type: 'string', enum: ['ifc', 'obj', 'json'], description: 'Output format (default ifc)' },
+        name: { type: 'string', description: 'Model / project name' },
+      },
+      required: ['gfa'],
+    },
+  },
+  {
     name: 'score_suppliers',
     description: 'Score & rank a supplier cohort on on-time delivery, quality, lead time and price into a 0–100 composite with grades.',
     inputSchema: {
