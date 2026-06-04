@@ -23,7 +23,7 @@ for (const r of ROUTES) {
     // — /project's massing model, the BIM viewer — never reach network idle.
     await page.goto(BASE + r, { waitUntil: 'domcontentloaded', timeout: 30000 })
     // settle: the 3D pages build a full instanced building synchronously on mount
-    await new Promise((x) => setTimeout(x, 1500))
+    await new Promise((x) => setTimeout(x, 2400))
     const res = await new AxePuppeteer(page).withTags(['wcag2a', 'wcag2aa']).analyze()
     const bad = res.violations.filter((v) => (v.impact === 'serious' || v.impact === 'critical') && !IGNORE.has(v.id))
     if (bad.length) {
