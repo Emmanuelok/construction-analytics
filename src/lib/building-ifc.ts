@@ -8,7 +8,7 @@
  * IFC is Z-up; the model's scene units convert to metres (plan × scale, vertical ×
  * storey height). No Three.js, no DOM. */
 
-import type { BuildingModel, Quad, Beam, Box, Plate } from './building'
+import type { BuildingModel, Quad, Beam, Box, Plate, Stair } from './building'
 import type { Pt } from './zoning'
 import { SCENE_LEN_TO_M } from './massing'
 
@@ -66,6 +66,7 @@ export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: n
     add(`IFCAXIS2PLACEMENT3D(#${pt(origin)},${axis ? `#${dir(axis[0], axis[1], axis[2])}` : '$'},${ref ? `#${dir(ref[0], ref[1], ref[2])}` : '$'})`)
   const extrude = (profile: number, pos: number, depth: number) => add(`IFCEXTRUDEDAREASOLID(#${profile},#${pos},#${UP},${R(Math.max(0.001, depth))})`)
   const shapeOf = (solid: number) => { const rep = add(`IFCSHAPEREPRESENTATION(#${CTX},'Body','SweptSolid',(#${solid}))`); return add(`IFCPRODUCTDEFINITIONSHAPE($,$,(#${rep}))`) }
+  const shapeOfMany = (solids: number[]) => { const rep = add(`IFCSHAPEREPRESENTATION(#${CTX},'Body','SweptSolid',(${solids.map((i) => `#${i}`).join(',')}))`); return add(`IFCPRODUCTDEFINITIONSHAPE($,$,(#${rep}))`) }
 
   // a vertical box/prism (columns, mullions, core, walls/windows/doors as thin slabs)
   const vSolid = (profile: number, base: [number, number, number], refDir: [number, number, number] | null, height: number) => extrude(profile, place(base, [0, 0, 1], refDir ?? [1, 0, 0]), height)
@@ -102,13 +103,13 @@ export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: n
     const e = add(`IFCCOLUMN('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shapeOf(solid)},'${esc(mark)}',.COLUMN.)`)
     inStorey(e, lvl); pset(e, mark, lvlName(lvl), [['Width', c.w * LEN], ['Height', c.h * sh]])
   }
-  const panel = (q: Quad, kind: 'WALL' | 'WINDOW' | 'DOOR', mark: string, lvl: number, thick: number) => {
+  const panel = (q: Quad, kind: 'WALL' | 'WINDOW' | 'DOOR', mark: string, lvl: number, thick: number, wallType = 'SOLIDWALL') => {
     const mid = { x: (q.a.x + q.b.x) / 2, z: (q.a.z + q.b.z) / 2 }
     const len = Math.hypot(q.b.x - q.a.x, q.b.z - q.a.z) * LEN
     const solid = vSolid(rect(len, thick), ifc(mid.x, q.y, mid.z), edgeDir(q.a, q.b), q.h * sh)
     const shp = shapeOf(solid)
     let e: number
-    if (kind === 'WALL') e = add(`IFCWALL('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shp},'${esc(mark)}',.SOLIDWALL.)`)
+    if (kind === 'WALL') e = add(`IFCWALL('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shp},'${esc(mark)}',.${wallType}.)`)
     else if (kind === 'WINDOW') e = add(`IFCWINDOW('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shp},'${esc(mark)}',${R(q.h * sh)},${R(len)},$,$,$)`)
     else e = add(`IFCDOOR('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shp},'${esc(mark)}',${R(q.h * sh)},${R(len)},$,$,$)`)
     inStorey(e, lvl); pset(e, mark, lvlName(lvl), [['Width', len], ['Height', q.h * sh]])
@@ -117,6 +118,14 @@ export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: n
     const e = add(`IFCBEAM('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shapeOf(beamSolid(b))},'${esc(mark)}',.BEAM.)`)
     inStorey(e, lvl); pset(e, mark, lvlName(lvl), [['Depth', b.depth * sh]])
   }
+  // a stepped IfcStair — each tread becomes an extruded box; all solids in one body rep
+  const stair = (s: Stair, mark: string) => {
+    const solids = s.treads.map((t) => vSolid(rect(t.w * LEN, t.d * LEN), ifc(t.x, t.y - t.h / 2, t.z), [1, 0, 0], t.h * sh))
+    const shp = solids.length ? shapeOfMany(solids) : '$'
+    const e = add(`IFCSTAIR('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},${shp === '$' ? '$' : `#${shp}`},'${esc(mark)}',.STRAIGHT_RUN_STAIR.)`)
+    const rise = ((s.top - s.base) / Math.max(1, s.risers)) * sh
+    inStorey(e, s.level); pset(e, mark, lvlName(s.level), [['Width', s.widthScene * LEN], ['Going', s.treadDepth * LEN], ['RiserHeight', rise]])
+  }
 
   const pad = (n: number) => String(n + 1).padStart(2, '0')
   m.slabs.forEach((s) => slab(s, `F-${(s.level ?? 0) === 0 ? 'G' : pad((s.level ?? 0) - 1)}`, 'FLOOR', s.level ?? 0))
@@ -124,8 +133,10 @@ export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: n
   m.columns.forEach((c, i) => column(c, c.id ?? `C-${pad(i)}`, c.level ?? 0))
   m.beams.forEach((b, i) => beam(b, b.id ?? `B-${pad(i)}`, b.level ?? 0))
   m.walls.forEach((q, i) => panel(q, 'WALL', q.id ?? `WL-${pad(i)}`, q.level ?? 0, 0.2))
+  m.partitions.forEach((q, i) => panel(q, 'WALL', q.id ?? `P-${pad(i)}`, q.level ?? 0, 0.1, 'PARTITIONING'))
   m.glazing.forEach((q, i) => panel(q, 'WINDOW', q.id ?? `W-${pad(i)}`, q.level ?? 0, 0.06))
   m.doors.forEach((q, i) => panel(q, 'DOOR', q.id ?? `D-${pad(i)}`, q.level ?? 0, 0.1))
+  m.stairs.forEach((s) => stair(s, s.id))
   if (m.core) { const c = m.core; const solid = vSolid(rect(c.w * LEN, c.d * LEN), ifc(c.x, c.y - c.h / 2, c.z), [1, 0, 0], c.h * sh); const e = add(`IFCBUILDINGELEMENTPROXY('${guid()}',#${OWNER},'Core',$,$,#${idP},#${shapeOf(solid)},'CORE',$)`); inStorey(e, 0); pset(e, 'CORE', 'All levels', [['Width', c.w * LEN]]) }
   // interior spaces (IfcSpace) — extrude each room up to a clear height
   for (const r of m.rooms) {

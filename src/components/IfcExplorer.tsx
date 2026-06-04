@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { UploadCloud, Layers, Eye, MousePointerClick, Table2, Download, Loader2, Boxes, FileWarning, Building2 } from 'lucide-react'
+import { UploadCloud, Layers, Eye, MousePointerClick, Table2, Download, Loader2, Boxes, FileWarning, Building2, Pencil } from 'lucide-react'
 import { Card, CardHeader, StatTile, Badge, Tabs } from '@/components/ui'
 import { ScrollableTable } from '@/components/ScrollableTable'
 import { cn } from '@/lib/cn'
@@ -9,7 +9,9 @@ import { DISCIPLINE_LABEL, DISCIPLINE_COLOR, type Discipline, type SelectedEleme
 import { locateWasm } from '@/lib/ifc-wasm-url'
 import { SAMPLE_IFC_GEO } from '@/lib/ifc-sample-geo'
 import { explodeIfc, sliceMeshes, cutHeightFor, type IfcExplosion, type IfcSchedule } from '@/lib/ifc-explorer'
+import { ifcToModel } from '@/lib/ifc-to-model'
 import type { IfcGeometryResult } from '@/lib/ifc-geometry'
+import type { BuildingModel } from '@/lib/building'
 import { IfcPlan } from '@/components/IfcPlan'
 
 const IfcModelViewer = lazy(() => import('@/components/IfcModelViewer').then((m) => ({ default: m.IfcModelViewer })))
@@ -29,7 +31,7 @@ const DISCIPLINES: Discipline[] = ['struct', 'arch', 'mep', 'other']
  * — isolate a storey, click any product to inspect its measured quantities, and
  * read schedules grouped by IFC category. Selection syncs across the 3D model,
  * the level navigator, the inspector and the schedules. */
-export function IfcExplorer() {
+export function IfcExplorer({ onEditModel }: { onEditModel?: (model: BuildingModel, storeyHeight: number, name: string) => void } = {}) {
   const [source, setSource] = useState<string | null>(null)
   const [fileName, setFileName] = useState('')
   const [res, setRes] = useState<IfcGeometryResult | null>(null)
@@ -126,6 +128,9 @@ export function IfcExplorer() {
           action={
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="violet">{formatNumber(res.triangleCount)} triangles</Badge>
+              {onEditModel && (
+                <button onClick={() => { const { model, storeyHeight } = ifcToModel(res); onEditModel(model, storeyHeight, fileName || 'Imported IFC') }} title="Rationalize this IFC into an editable parametric model (move / resize / delete / schedule / re-export)" className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/20 px-3 py-1.5 text-sm font-medium text-amber-100 ring-1 ring-inset ring-amber-500/40 hover:bg-amber-500/30"><Pencil className="h-4 w-4" /> Edit as model</button>
+              )}
               <button onClick={() => fileRef.current?.click()} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-3 py-1.5 text-sm font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><UploadCloud className="h-4 w-4" /> Replace</button>
               <input ref={fileRef} type="file" accept=".ifc,text/plain" className="hidden" onChange={onFile} />
             </div>

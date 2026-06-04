@@ -28,8 +28,11 @@ import { explodeBuilding, planForLevel, findElementGeom, levelColumns, levelPane
 import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, duplicateColumn, editCount } from './building-edits.ts'
 import { toObj, objStats } from './building-export.ts'
 import { toIfc } from './building-ifc.ts'
-import { floorRooms } from './building-rooms.ts'
+import { floorRooms, floorGrid } from './building-rooms.ts'
+import { floorPartitions } from './building-partitions.ts'
+import { coreStairs } from './building-stairs.ts'
 import { explodeIfc, meshGeom, friendlyType, sliceMeshes, cutHeightFor } from './ifc-explorer.ts'
+import { ifcToModel } from './ifc-to-model.ts'
 import type { IfcGeometryResult, IfcMesh } from './ifc-geometry.ts'
 import { unitShape, holeFor, scaleToArea, scaleAbout, rotatePolygon, shapeExtent, centerPolygon, SHAPE_KINDS } from './shapes.ts'
 import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, type SelectedElement } from './ifc-model.ts'
@@ -770,6 +773,11 @@ section('building')
   ok('coreRatio 0 omits the core', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 5, shape: 'rect' }), { coreRatio: 0 }).core === null)
   ok('every element is tagged with its level', b.slabs.every((s, i) => s.level === i) && b.columns.every((c) => c.level !== undefined) && b.glazing.every((g) => g.level !== undefined) && b.beams.every((bm) => bm.level !== undefined))
   ok('roof is tagged as the level above the top floor', b.roof?.level === 10)
+  // interior partitions between rooms + a stair flight per storey
+  ok('interior partition walls are generated, level-tagged', b.partitions.length > 0 && b.counts.partitions === b.partitions.length && b.partitions.every((p) => p.level !== undefined && Math.hypot(p.b.x - p.a.x, p.b.z - p.a.z) > 0 && p.h > 0))
+  ok('a stair flight per storey, inside the core', b.stairs.length === 10 && b.counts.stairs === 10 && b.stairs.every((s) => s.treads.length > 0 && s.risers >= 12 && s.top > s.base))
+  ok('stair treads climb (each tread higher than the last)', b.stairs[0].treads.every((t, i, a) => i === 0 || t.y > a[i - 1].y))
+  ok('no core → no stairs', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 5, shape: 'rect' }), { coreRatio: 0 }).stairs.length === 0)
 }
 
 // ── building-explorer (Revit-style floor/element/schedule review) ───────────────
@@ -803,6 +811,12 @@ section('building-explorer')
   // interior rooms flow through schedules + plan + summary
   ok('a Rooms schedule + room elements + net area', ex.schedules.some((s) => s.category === 'Room') && ex.summary.rooms > 0 && ex.summary.netArea > 0 && ex.elements.some((e) => e.category === 'Room'))
   ok('the level plan carries clickable rooms', planForLevel(model, 0).rooms.length > 0 && findElementGeom(model, planForLevel(model, 0).rooms[0].id) !== null)
+  // partitions + stairs flow through schedules + summary + plan + geometry
+  ok('Partition + Stair schedules with element rows', ex.schedules.some((s) => s.category === 'Partition') && ex.schedules.some((s) => s.category === 'Stair') && ex.summary.partitions === model.partitions.length && ex.summary.stairs === model.stairs.length)
+  ok('a partition schedule row totals interior wall length', (() => { const ps = ex.schedules.find((s) => s.category === 'Partition')!; return ps.rows.length === model.partitions.length && ps.totals.length > 0 })())
+  ok('a stair element carries risers + a riser height + going', (() => { const e = ex.byId['stair-0']; return !!e && Number(e.data.risers) >= 12 && Number(e.data.rise) > 0 && Number(e.data.going) > 0 })())
+  ok('the level plan carries partitions + a stair', (() => { const p = planForLevel(model, 0); return p.partitions.length > 0 && p.stairs.length === 1 && p.stairs[0].id === 'stair-0' })())
+  ok('findElementGeom locates a partition + a stair flight', !!findElementGeom(model, model.partitions[0].id!) && (() => { const g = findElementGeom(model, 'stair-0'); return !!g && g.size.y > 0 })())
   // highlight geometry
   ok('findElementGeom locates a column box', (() => { const g = findElementGeom(model, 'col-0-0'); return !!g && Math.abs(g.size.x - model.columns[0].w) < 1e-9 })())
   ok('findElementGeom gives a panel an edge direction', (() => { const g = findElementGeom(model, 'pan-0-0'); return !!g && !!g.dir })())
@@ -861,6 +875,27 @@ section('building-rooms')
   ok('floorRooms tiles a floor (room areas ≈ floor area)', near(rooms.reduce((s, r) => s + r.area, 0), polygonArea(fp) * AREA, polygonArea(fp) * AREA * 0.08))
   ok('rooms inside the core are dropped (circulation)', floorRooms(fp, { core: { x: m.core!.x, z: m.core!.z, w: m.core!.w, d: m.core!.d } }).length < rooms.length)
   ok('a larger room size → fewer, bigger rooms', floorRooms(fp, { roomSize: 16 }).length < rooms.length)
+  // the shared grid: rooms are exactly the cells flagged as rooms (single source of truth)
+  ok('floorGrid flags room cells = floorRooms count', (() => { const g = floorGrid(fp, { roomSize: 8 })!; return g.cells.filter((c) => c.room).length === rooms.length })())
+}
+
+// ── building-partitions + stairs (interior walls between rooms; core stairs) ─────
+section('building-partitions')
+{
+  const core = { x: 0, z: 0, w: 4, d: 4 }
+  const fp = [{ x: -20, z: -12 }, { x: 20, z: -12 }, { x: 20, z: 12 }, { x: -20, z: 12 }]
+  const parts = floorPartitions(fp, { level: 1, core, base: 2, height: 0.9 })
+  ok('floorPartitions derives interior walls on the room grid', parts.length > 0 && parts.every((p) => p.level === 1 && p.y === 2 && p.h === 0.9))
+  ok('partitions stay inside the floor outline', parts.every((p) => p.a.x >= -20 - 1e-6 && p.a.x <= 20 + 1e-6 && p.a.z >= -12 - 1e-6 && p.a.z <= 12 + 1e-6 && p.b.x >= -20 - 1e-6 && p.b.x <= 20 + 1e-6))
+  ok('partitions have stable, unique, level-scoped ids', (() => { const ids = parts.map((p) => p.id); return new Set(ids).size === ids.length && ids.every((id) => id!.startsWith('part-1-')) })())
+  ok('no rooms (tiny floor) → no partitions', floorPartitions([{ x: -0.5, z: -0.5 }, { x: 0.5, z: -0.5 }, { x: 0.5, z: 0.5 }, { x: -0.5, z: 0.5 }], { roomSize: 8 }).length === 0)
+
+  const floors = [{ base: 0, height: 0.92, level: 0 }, { base: 1, height: 0.92, level: 1 }]
+  const stairs = coreStairs(core, floors, { storeyHeight: 3.6 })
+  ok('coreStairs makes a flight per storey with climbing treads', stairs.length === 2 && stairs.every((s) => s.treads.length === s.risers - 1 && s.treads.every((t, i, a) => i === 0 || t.y > a[i - 1].y)))
+  ok('a flight rises a full storey & runs along the core', stairs.every((s) => near(s.top - s.base, 0.92, 1e-9) && (s.dir === 'x' || s.dir === 'z') && s.widthScene > 0))
+  ok('treads carry the flight id (click any step → select the flight)', stairs[0].treads.every((t) => t.id === 'stair-0'))
+  ok('no core → no stairs', coreStairs(null, floors).length === 0)
 }
 
 // ── building-export (OBJ round-trip) ────────────────────────────────────────────
@@ -872,9 +907,9 @@ section('building-export')
   ok('OBJ has a header + object name', obj.startsWith('#') && /\no Test Tower/.test(obj))
   ok('OBJ emits vertices + triangle faces', st.verts > 0 && st.faces > 0)
   ok('every face index is within the vertex range (valid mesh)', st.maxIndex <= st.verts && st.maxIndex > 0, { maxIndex: st.maxIndex, verts: st.verts })
-  ok('OBJ groups every trade present in the model', ['Slabs', 'Columns', 'Beams', 'Walls', 'Windows', 'Doors', 'Core'].every((g) => st.groups.includes(g)), st.groups)
+  ok('OBJ groups every trade present in the model', ['Slabs', 'Columns', 'Beams', 'Walls', 'Partitions', 'Windows', 'Doors', 'Stairs', 'Core'].every((g) => st.groups.includes(g)), st.groups)
   ok('a box element contributes 8 verts / 12 tris', (() => { const before = objStats(toObj(buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0 }))).faces; return before < st.faces })())
-  ok('a window panel is 4 verts / 2 tris each (quad)', objStats(toObj({ ...model, glazing: model.glazing.slice(0, 1), columns: [], beams: [], walls: [], doors: [], mullions: [], slabs: [], roof: null, core: null })).faces === 2)
+  ok('a window panel is 4 verts / 2 tris each (quad)', objStats(toObj({ ...model, glazing: model.glazing.slice(0, 1), columns: [], beams: [], walls: [], partitions: [], stairs: [], doors: [], mullions: [], slabs: [], roof: null, core: null })).faces === 2)
   ok('edited model exports too (deleted element gone)', (() => { const del = applyEdits(model, removeElement(emptyEdits(), model.columns[0].id!)); return objStats(toObj(del)).verts < st.verts })())
 }
 
@@ -886,10 +921,12 @@ section('building-ifc')
   const count = (t: string) => (ifc.match(new RegExp(`=${t}\\(`, 'g')) || []).length
   ok('valid IFC-SPF header + IFC4 schema + footer', ifc.startsWith('ISO-10303-21;') && /FILE_SCHEMA\(\('IFC4'\)\)/.test(ifc) && /END-ISO-10303-21;/.test(ifc))
   ok('one IfcProject, IfcSite, IfcBuilding + a storey per level', count('IFCPROJECT') === 1 && count('IFCSITE') === 1 && count('IFCBUILDING') === 1 && count('IFCBUILDINGSTOREY') === 4)
-  ok('typed products: columns, slabs, beams, walls, windows, doors', count('IFCCOLUMN') === model.columns.length && count('IFCSLAB') === model.slabs.length + 1 && count('IFCBEAM') === model.beams.length && count('IFCWALL') === model.walls.length && count('IFCWINDOW') === model.glazing.length && count('IFCDOOR') === model.doors.length)
+  ok('typed products: columns, slabs, beams, walls, windows, doors', count('IFCCOLUMN') === model.columns.length && count('IFCSLAB') === model.slabs.length + 1 && count('IFCBEAM') === model.beams.length && count('IFCWALL') === model.walls.length + model.partitions.length && count('IFCWINDOW') === model.glazing.length && count('IFCDOOR') === model.doors.length)
   ok('parametric extruded-solid geometry + property sets', count('IFCEXTRUDEDAREASOLID') > 0 && count('IFCPROPERTYSET') > 0 && count('IFCRELDEFINESBYPROPERTIES') > 0)
   ok('spatial structure is aggregated + elements contained', count('IFCRELAGGREGATES') === 3 && count('IFCRELCONTAINEDINSPATIALSTRUCTURE') >= 1)
   ok('interior rooms export as IfcSpace', count('IFCSPACE') === model.rooms.length && model.rooms.length > 0)
+  ok('stairs export as stepped IfcStair (one per storey)', count('IFCSTAIR') === model.stairs.length && model.stairs.length === 4)
+  ok('interior partitions export as IfcWall (.PARTITIONING.)', model.partitions.length > 0 && (ifc.match(/\.PARTITIONING\./g) || []).length === model.partitions.length)
   // every #ref resolves to a defined #id (no dangling references)
   ok('every entity reference resolves (well-formed model)', (() => {
     const defined = new Set([...ifc.matchAll(/^#(\d+)=/gm)].map((x) => x[1]))
@@ -940,6 +977,42 @@ section('ifc-explorer')
   ok('cutHeightFor cuts above the floor (30% up a unit cube)', near(cutHeightFor([cube]), 0.3, 1e-9))
 }
 
+// ── ifc-to-model (rationalize an uploaded IFC into the editable parametric model) ─
+section('ifc-to-model')
+{
+  const cubePos = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1])
+  const cubeIdx = new Uint32Array([1, 2, 6, 1, 6, 5, 0, 4, 7, 0, 7, 3, 2, 3, 7, 2, 7, 6, 0, 1, 5, 0, 5, 4, 4, 5, 6, 4, 6, 7, 0, 3, 2, 0, 2, 1])
+  // a unit cube scaled (sx,sy,sz) & translated (px,py,pz) → world bbox [p, p+s]
+  const M = (sx: number, sy: number, sz: number, px: number, py: number, pz: number) => [sx, 0, 0, 0, 0, sy, 0, 0, 0, 0, sz, 0, px, py, pz, 1]
+  const mesh = (expressID: number, ifcTypeName: string, storey: number | undefined, s: [number, number, number], p: [number, number, number], name?: string): IfcMesh => ({ expressID, ifcType: 0, ifcTypeName, discipline: 'other', positions: cubePos, normals: new Float32Array(0), indices: cubeIdx, matrix: M(s[0], s[1], s[2], p[0], p[1], p[2]), color: { r: 0, g: 0, b: 0, a: 1 }, storey, name })
+  const res: IfcGeometryResult = {
+    meshes: [
+      mesh(10, 'IFCCOLUMN', 100, [0.4, 3, 0.4], [0, 0, 0]),
+      mesh(11, 'IFCWALLSTANDARDCASE', 100, [6, 3, 0.2], [0, 0, 0], 'Ext Wall'),
+      mesh(12, 'IFCSLAB', 100, [8, 0.3, 8], [-1, -0.3, -1]),
+      mesh(13, 'IFCWINDOW', 100, [1.5, 1.5, 0.1], [1, 1, 0]),
+      mesh(14, 'IFCBEAM', 100, [5, 0.4, 0.3], [0, 3, 0]),
+      mesh(20, 'IFCCOLUMN', 200, [0.4, 3, 0.4], [0, 3, 0]),
+      mesh(21, 'IFCSPACE', 200, [5, 3, 5], [0, 3, 0], 'Office 201'),
+      mesh(22, 'IFCFURNITURE', undefined, [0.6, 0.8, 0.6], [2, 3, 2]), // unassigned + unknown type
+    ],
+    vertexCount: 0, triangleCount: 0, bbox: null,
+    storeys: [{ expressID: 200, name: 'Level 1', elevation: 3 }, { expressID: 100, name: 'Ground', elevation: 0 }],
+  }
+  const { model, storeyHeight } = ifcToModel(res)
+  ok('reconstructs the storeys at the IFC storey height', model.counts.storeys === 2 && near(storeyHeight, 3, 1e-9))
+  ok('buckets IFC products into editable primitives by type', model.columns.length >= 2 && model.walls.length === 1 && model.glazing.length === 1 && model.beams.length === 1 && model.rooms.length === 1)
+  ok('an unknown product is rationalized by shape (furniture → a box column)', model.columns.some((c) => c.id === 'ifc-22'))
+  ok('one floor slab per level, id floor-N (plan + isolate work)', model.slabs.length === 2 && !!model.slabs.find((s) => s.id === 'floor-0') && !!model.slabs.find((s) => s.id === 'floor-1'))
+  ok('an unassigned element is placed on a storey by elevation', (() => { const c = model.columns.find((c) => c.id === 'ifc-22'); return !!c && c.level === 1 })())
+  ok('stable ifc-expressID ids drive selection geometry', model.columns.every((c) => c.id!.startsWith('ifc-')) && !!findElementGeom(model, 'ifc-10') && !!findElementGeom(model, 'ifc-21'))
+  ok('the imported model explodes into Revit-style schedules', (() => { const ex = explodeBuilding(model, { storeyHeight }); return ex.summary.columns === model.columns.length && ex.schedules.some((s) => s.category === 'Window') })())
+  ok('the imported model is editable (delete + move flow through)', applyEdits(model, removeElement(emptyEdits(), 'ifc-10')).columns.length === model.columns.length - 1)
+  ok('the imported model re-exports to IFC + OBJ', /IFCCOLUMN\(/.test(toIfc(model)) && /\ng Columns/.test(toObj(model)) && /\ng Windows/.test(toObj(model)))
+  ok('a space becomes an editable Room with a real area', (() => { const r = model.rooms[0]; return r.name === 'Office 201' && r.area > 0 && r.polygon.length >= 3 })())
+  ok('empty geometry → a safe empty model', ifcToModel({ meshes: [], vertexCount: 0, triangleCount: 0, bbox: null, storeys: [] }).model.counts.storeys === 1)
+}
+
 // ── model-stats (uploaded mesh-model import) ────────────────────────────────────
 section('model-stats')
 {
@@ -969,7 +1042,7 @@ section('aps')
 // ── agent-tools (unified tool layer for the MCP server + in-app AI agent) ───────
 section('agent-tools')
 {
-  ok('5 tools, each with a JSON-Schema object input', AGENT_TOOLS.length === 5 && AGENT_TOOLS.every((t) => t.name && t.description && (t.inputSchema as { type?: string }).type === 'object' && (t.inputSchema as { properties?: object }).properties))
+  ok('6 tools, each with a JSON-Schema object input', AGENT_TOOLS.length === 6 && AGENT_TOOLS.every((t) => t.name && t.description && (t.inputSchema as { type?: string }).type === 'object' && (t.inputSchema as { properties?: object }).properties))
   ok('schemas declare required fields', (AGENT_TOOLS.find((t) => t.name === 'analyze_zoning')!.inputSchema as { required?: string[] }).required!.includes('far'))
   const ms = (await runTool('massing_schedule', { gfa: 100000, storeys: 10, shape: 'rect' })) as { grossFloorArea: number; floors: unknown[]; embodiedCarbon: number }
   ok('runTool massing_schedule computes a real schedule', ms.grossFloorArea > 0 && ms.floors.length === 10 && ms.embodiedCarbon > 0)
@@ -977,6 +1050,14 @@ section('agent-tools')
   ok('runTool analyze_zoning computes capacity + compliance', az.maxGFA === 10800 && typeof az.compliance.overall === 'boolean')
   const ifc = (await runTool('parse_ifc', { ifc: SAMPLE_IFC_GEO })) as { entityCounts: unknown[] }
   ok('runTool parse_ifc summarises a model', Array.isArray(ifc.entityCounts) && ifc.entityCounts.length > 0)
+  // export_building → a pullable model file (the Connections hub + MCP + APS publish use this)
+  const xi = (await runTool('export_building', { gfa: 40000, storeys: 6, shape: 'rect', name: 'Tower X', format: 'ifc' })) as { format: string; filename: string; content: string; bytes: number; counts: { stairs: number; partitions: number } }
+  ok('export_building emits a real IFC4 file (typed products incl. stairs)', xi.format === 'ifc' && xi.filename === 'tower-x.ifc' && /^ISO-10303-21;/.test(xi.content) && /IFCSTAIR\(/.test(xi.content) && xi.bytes > 1000 && xi.counts.stairs === 6)
+  const xo = (await runTool('export_building', { gfa: 40000, storeys: 6, format: 'obj' })) as { format: string; content: string }
+  ok('export_building emits a grouped OBJ when asked', xo.format === 'obj' && /\ng Columns/.test(xo.content) && /\ng Stairs/.test(xo.content))
+  const xj = (await runTool('export_building', { gfa: 40000, storeys: 6, format: 'json' })) as { format: string; schedules: unknown[]; summary: { storeys: number } }
+  ok('export_building emits a structured JSON model (schedules)', xj.format === 'json' && Array.isArray(xj.schedules) && xj.schedules.length > 0 && xj.summary.storeys === 6)
+  ok('export_building defaults to IFC', (((await runTool('export_building', { gfa: 20000 })) as { format: string }).format) === 'ifc')
   let threw = false
   try { await runTool('does_not_exist', {}) } catch { threw = true }
   ok('runTool throws on an unknown tool', threw)

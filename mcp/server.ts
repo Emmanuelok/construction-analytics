@@ -66,6 +66,25 @@ server.registerTool('parse_ifc', {
   try { return ok(await runTool('parse_ifc', a)) } catch (e) { return fail(e) }
 })
 
+server.registerTool('export_building', {
+  title: 'Export a generated building (IFC / OBJ / JSON)',
+  description: 'Generate a parametric building from gross floor area, storeys and form, then export it as a real model file: native IFC4 (typed BIM products — columns, beams, walls, partitions, windows, doors, slabs, a stepped stair and IfcSpace rooms), a grouped Wavefront OBJ mesh, or a structured JSON model (schedules + quantities). Returns the file content + element counts so it can be pulled programmatically.',
+  inputSchema: {
+    gfa: z.number().describe('Gross floor area target, m²'),
+    storeys: z.number().int().optional().describe('Explicit storey count (else derived from GFA)'),
+    shape: z.enum(['rect', 'l', 'u', 'court', 'cross', 'cylinder', 'octagon']).optional().describe('Footprint shape (default rectangle)'),
+    aspect: z.number().optional().describe('Plan aspect ratio 0.3–3'),
+    storeyHeight: z.number().optional().describe('metres (default 3.6)'),
+    wwr: z.number().optional().describe('Window-to-wall ratio 0.15–0.85'),
+    bayWidth: z.number().optional().describe('Window bay width, m'),
+    mullions: z.boolean().optional().describe('Façade mullions (default on)'),
+    format: z.enum(['ifc', 'obj', 'json']).optional().describe('Output format (default ifc)'),
+    name: z.string().optional().describe('Model / project name'),
+  },
+}, async (a) => {
+  try { return ok(await runTool('export_building', a)) } catch (e) { return fail(e) }
+})
+
 server.registerTool('score_suppliers', {
   title: 'Score & rank suppliers',
   description: 'Score a cohort of suppliers on on-time delivery, quality, lead time and price into a 0–100 composite with letter grades, ranked best-first.',
@@ -137,6 +156,28 @@ server.registerTool('autodesk_properties', {
   try { return ok(await aps.properties(a.urn, a.guid)) } catch (e) { return fail(e) }
 })
 
+server.registerTool('autodesk_publish_model', {
+  title: 'Publish a generated building to Autodesk',
+  description: 'Generate a parametric building (from GFA/storeys/form) as IFC or OBJ, upload it to the studio\'s Autodesk APS bucket, and (by default) start translation to SVF2 — so the generated model can be viewed and queried in APS. Returns the model URN.',
+  inputSchema: {
+    gfa: z.number().describe('Gross floor area target, m²'),
+    storeys: z.number().int().optional(),
+    shape: z.enum(['rect', 'l', 'u', 'court', 'cross', 'cylinder', 'octagon']).optional(),
+    aspect: z.number().optional(), storeyHeight: z.number().optional(), wwr: z.number().optional(), bayWidth: z.number().optional(),
+    format: z.enum(['ifc', 'obj']).optional().describe('Upload format (default ifc)'),
+    name: z.string().optional().describe('Model name'),
+    translate: z.boolean().optional().describe('Start translation after upload (default true)'),
+  },
+}, async (a) => {
+  if (!aps.apsConfigured()) return fail(NOT_CONFIGURED)
+  try {
+    const exp = (await runTool('export_building', { ...a, format: a.format ?? 'ifc' })) as { filename: string; content: string; format: string; bytes: number; counts: unknown }
+    const up = await aps.uploadModel(exp.filename, exp.content)
+    const translation = a.translate === false ? 'skipped' : await aps.translate(up.urn).then(() => 'started').catch((e) => `translate failed: ${e instanceof Error ? e.message : e}`)
+    return ok({ ...up, format: exp.format, counts: exp.counts, translation })
+  } catch (e) { return fail(e) }
+})
+
 const transport = new StdioServerTransport()
 await server.connect(transport)
-console.error(`AEC Studio MCP server ready (stdio) — engines: massing_schedule, analyze_zoning, parse_ifc, score_suppliers, compute_carbon · Autodesk: list/status/translate/properties${aps.apsConfigured() ? '' : ' (APS keys not set)'}`)
+console.error(`AEC Studio MCP server ready (stdio) — engines: massing_schedule, analyze_zoning, parse_ifc, export_building, score_suppliers, compute_carbon · Autodesk: list/status/translate/properties/publish${aps.apsConfigured() ? '' : ' (APS keys not set)'}`)

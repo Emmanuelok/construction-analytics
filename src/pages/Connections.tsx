@@ -49,13 +49,13 @@ export default function Connections() {
         description="Pull data and run tools across every connected platform from one place — the studio's own engines, Autodesk, and any federated MCP server. Fill the inputs, hit Run / Pull, then view and export the result."
       />
 
-      <PlatformCard icon={Cpu} accent="blue" title="Studio engines" subtitle="Run the platform's analytics directly — massing, zoning, IFC, suppliers, carbon. No setup." status={<Badge variant="success" dot>Ready</Badge>} tools={STUDIO_TOOLS} run={(n, a) => runTool(n, a)} runLabel="Run" />
+      <PlatformCard icon={Cpu} accent="blue" title="Studio engines" subtitle="Run the platform's analytics directly — massing, zoning, IFC, suppliers, carbon — and export a generated building to IFC / OBJ / JSON. No setup; results download in a click." status={<Badge variant="success" dot>Ready</Badge>} tools={STUDIO_TOOLS} run={(n, a) => runTool(n, a)} runLabel="Run" />
 
       <PlatformCard
         icon={Building2}
         accent="rose"
         title="Autodesk Platform Services"
-        subtitle="Pull native model data — list models, extract element properties from translated Revit/Navisworks/AutoCAD."
+        subtitle="Pull native model data — list models, extract element properties from translated Revit/Navisworks/AutoCAD. The MCP server can also publish a generated building (IFC/OBJ) straight to APS for translation."
         status={aps === null ? <Spin /> : aps ? <Badge variant="success" dot>Connected</Badge> : <Badge variant="neutral" dot>Not connected</Badge>}
         tools={APS_TOOLS}
         run={apsRun}

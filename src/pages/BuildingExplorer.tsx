@@ -6,7 +6,7 @@ const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildin
 const IfcExplorer = lazy(() => import('@/components/IfcExplorer').then((m) => ({ default: m.IfcExplorer })))
 import { FloorPlan } from '@/components/FloorPlan'
 import { buildMassing, deriveStoreys, SHAPE_KINDS, type ShapeKind } from '@/lib/massing'
-import { buildBuilding } from '@/lib/building'
+import { buildBuilding, type BuildingModel } from '@/lib/building'
 import { explodeBuilding, planForLevel, type Schedule, type ScheduleCol, type BuildingElement } from '@/lib/building-explorer'
 import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, duplicateColumn, editCount, type BuildingEdits } from '@/lib/building-edits'
 import { toObj } from '@/lib/building-export'
@@ -20,7 +20,7 @@ import { downloadText, slug } from '@/lib/download'
 
 const SEL_KEY = 'aec-active-project'
 const ROW_CAP = 300 // cap rendered schedule rows (export covers all)
-const CAT_ICON: Record<string, typeof Columns3> = { Floor: SquareStack, Column: Columns3, Beam: Rows3, Window: Frame, Door: DoorOpen, Wall: Square, Core: BoxIcon, Roof: SquareStack }
+const CAT_ICON: Record<string, typeof Columns3> = { Floor: SquareStack, Column: Columns3, Beam: Rows3, Window: Frame, Door: DoorOpen, Wall: Square, Partition: Square, Room: Square, Stair: Rows3, Core: BoxIcon, Roof: SquareStack }
 
 const fmtCell = (v: number | string) => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v)
 const csvCell = (v: number | string) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
@@ -54,7 +54,7 @@ export default function BuildingExplorer() {
   const [isolate, setIsolate] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [schedTab, setSchedTab] = useState('Floor')
-  const [hidden, setHidden] = useState<{ glazing?: boolean; structure?: boolean; slabs?: boolean; facade?: boolean }>({})
+  const [hidden, setHidden] = useState<{ glazing?: boolean; structure?: boolean; slabs?: boolean; facade?: boolean; interior?: boolean }>({})
   const [wwr, setWwr] = useState(() => init0?.wwr ?? 0.55)
   const [bayWidth, setBayWidth] = useState(() => init0?.bayWidth ?? 3.4)
   const [mullions, setMullions] = useState(() => init0?.mullions ?? true)
@@ -63,14 +63,25 @@ export default function BuildingExplorer() {
   const [edits, setEdits] = useState<BuildingEdits>(() => init0?.edits ?? emptyEdits())
   const [past, setPast] = useState<BuildingEdits[]>([])
   const [future, setFuture] = useState<BuildingEdits[]>([])
+  // an uploaded IFC rationalized into the editable model (in-memory; not persisted)
+  const [imported, setImported] = useState<{ model: BuildingModel; name: string } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const baseModel = useMemo(() => buildBuilding(buildMassing({ gfa: project.gfa, progress: 100, storeys, shape: shape === 'custom' ? 'rect' : shape, aspect }), { coreRatio: 0.16, wwr, bayWidth, mullions }), [project.gfa, storeys, shape, aspect, wwr, bayWidth, mullions])
+  const generatedModel = useMemo(() => buildBuilding(buildMassing({ gfa: project.gfa, progress: 100, storeys, shape: shape === 'custom' ? 'rect' : shape, aspect }), { coreRatio: 0.16, wwr, bayWidth, mullions }), [project.gfa, storeys, shape, aspect, wwr, bayWidth, mullions])
+  const baseModel = imported?.model ?? generatedModel
   const model = useMemo(() => applyEdits(baseModel, edits), [baseModel, edits])
-  // auto-save the design (params + edits) per project; edits survive reloads
+  // auto-save the generated design (params + edits) per project; imported models are in-memory only
   useEffect(() => {
+    if (imported) return
     try { localStorage.setItem(cfgKey(projectId), JSON.stringify({ storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, edits })) } catch { /* ignore */ }
-  }, [projectId, storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, edits])
+  }, [imported, projectId, storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, edits])
+  // bring an uploaded IFC into the editor; rebuild the editing state around it
+  const importIfcModel = (m: BuildingModel, sh: number, name: string) => {
+    setImported({ model: m, name }); setStoreyHeight(Math.round(sh * 10) / 10)
+    setEdits(emptyEdits()); setPast([]); setFuture([]); setSelectedId(null)
+    setActiveLevel(0); setIsolate(false); setAddMode(false); setEditMode(false); setSource('parametric')
+  }
+  const discardImport = () => { setImported(null); setEdits(emptyEdits()); setPast([]); setFuture([]); setSelectedId(null); setActiveLevel(0); setIsolate(false) }
   // undo / redo (Ctrl/Cmd+Z, Shift for redo)
   const undo = () => setPast((p) => { if (!p.length) return p; setFuture((f) => [edits, ...f]); setEdits(p[p.length - 1]); return p.slice(0, -1) })
   const redo = () => setFuture((f) => { if (!f.length) return f; setPast((p) => [...p, edits]); setEdits(f[0]); return f.slice(1) })
@@ -131,18 +142,29 @@ export default function BuildingExplorer() {
               ))}
             </div>
             {source === 'parametric' && <>
-              <label className="sr-only" htmlFor="explorer-project">Project</label>
-              <select id="explorer-project" value={projectId} onChange={(e) => switchProject(e.target.value)} className="rounded-lg border border-edge/60 bg-elevated/50 px-3 py-1.5 text-sm text-slate-200 focus:border-blue-500/50 focus:outline-none">
-                {PROJECTS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              {imported ? (
+                <span className="inline-flex items-center gap-2 rounded-lg bg-amber-500/15 px-3 py-1.5 text-xs font-medium text-amber-100 ring-1 ring-inset ring-amber-500/40" title="Editing a rationalized IFC import">
+                  <Pencil className="h-3.5 w-3.5" /> Imported · {imported.name}
+                  <button onClick={discardImport} className="ml-1 rounded px-1 text-amber-200/80 hover:bg-amber-500/20 hover:text-white" title="Discard the import and return to the generated model">Back to generated</button>
+                </span>
+              ) : (
+                <>
+                  <label className="sr-only" htmlFor="explorer-project">Project</label>
+                  <select id="explorer-project" value={projectId} onChange={(e) => switchProject(e.target.value)} className="rounded-lg border border-edge/60 bg-elevated/50 px-3 py-1.5 text-sm text-slate-200 focus:border-blue-500/50 focus:outline-none">
+                    {PROJECTS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </>
+              )}
               <div className="flex overflow-hidden rounded-lg ring-1 ring-inset ring-edge/60">
                 <button onClick={undo} disabled={!past.length} title="Undo (Ctrl/Cmd+Z)" className={cn('px-2 py-1.5', past.length ? 'text-slate-300 hover:bg-elevated/60' : 'cursor-default text-slate-600')}><Undo2 className="h-4 w-4" /></button>
                 <button onClick={redo} disabled={!future.length} title="Redo (Ctrl/Cmd+Shift+Z)" className={cn('border-l border-edge/60 px-2 py-1.5', future.length ? 'text-slate-300 hover:bg-elevated/60' : 'cursor-default text-slate-600')}><Redo2 className="h-4 w-4" /></button>
               </div>
-              <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-medium text-emerald-300 ring-1 ring-inset ring-emerald-500/25"><Check className="h-3.5 w-3.5" /> Auto-saved{nEdits ? ` · ${nEdits} edit${nEdits > 1 ? 's' : ''}` : ''}</span>
-              <button onClick={exportCfg} title="Export this design to share" className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1.5 text-sm font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Share2 className="h-4 w-4" /> Share</button>
-              <button onClick={() => fileRef.current?.click()} title="Import a shared design" className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1.5 text-sm font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><FileJson className="h-4 w-4" /> Import</button>
-              <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={importCfg} />
+              <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-medium text-emerald-300 ring-1 ring-inset ring-emerald-500/25"><Check className="h-3.5 w-3.5" /> {imported ? 'In-memory' : 'Auto-saved'}{nEdits ? ` · ${nEdits} edit${nEdits > 1 ? 's' : ''}` : ''}</span>
+              {!imported && <>
+                <button onClick={exportCfg} title="Export this design to share" className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1.5 text-sm font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Share2 className="h-4 w-4" /> Share</button>
+                <button onClick={() => fileRef.current?.click()} title="Import a shared design" className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1.5 text-sm font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><FileJson className="h-4 w-4" /> Import</button>
+                <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={importCfg} />
+              </>}
               <div className="flex items-center overflow-hidden rounded-lg ring-1 ring-inset ring-edge/60" title="Export the building (edits included)">
                 <Download className="ml-2 h-3.5 w-3.5 text-slate-500" />
                 <button onClick={exportIfc} title="Export IFC4 (typed BIM products for Revit / Navisworks / Solibri)" className="px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-elevated/60">IFC</button>
@@ -156,21 +178,27 @@ export default function BuildingExplorer() {
       />
 
       {source === 'ifc' ? (
-        <Suspense fallback={<div className="grid h-64 place-items-center text-sm text-slate-500">Loading IFC explorer…</div>}><IfcExplorer /></Suspense>
+        <Suspense fallback={<div className="grid h-64 place-items-center text-sm text-slate-500">Loading IFC explorer…</div>}><IfcExplorer onEditModel={importIfcModel} /></Suspense>
       ) : (
       <>
       {/* summary */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
         <StatTile label="Storeys" value={String(ex.summary.storeys)} accent="blue" />
         <StatTile label="Elements" value={formatNumber(ex.summary.elements)} accent="cyan" />
         <StatTile label="Columns + beams" value={`${formatNumber(ex.summary.columns)} · ${formatNumber(ex.summary.beams)}`} accent="violet" />
         <StatTile label="Windows + doors" value={`${formatNumber(ex.summary.windows)} · ${formatNumber(ex.summary.doors)}`} accent="sky" />
+        <StatTile label="Partitions · stairs" value={`${formatNumber(ex.summary.partitions)} · ${formatNumber(ex.summary.stairs)}`} accent="fuchsia" />
         <StatTile label="Rooms · net" value={`${formatNumber(ex.summary.rooms)} · ${formatNumber(ex.summary.netArea)} m²`} accent="teal" />
         <StatTile label="Gross floor area" value={`${formatNumber(ex.summary.gfa)} m²`} accent="emerald" />
         <StatTile label="Concrete" value={`${formatNumber(ex.summary.concreteVolume)} m³`} accent="amber" />
       </div>
 
-      {/* model parameters */}
+      {/* model parameters (generated model) — or an import banner */}
+      {imported ? (
+        <Card>
+          <CardHeader icon={Pencil} accent="amber" title={`Editing imported model — ${imported.name}`} subtitle={`Rationalized from your IFC into ${formatNumber(model.counts.columns)} columns · ${formatNumber(model.counts.walls)} walls · ${formatNumber(model.counts.windows)} windows · ${formatNumber(model.counts.slabs)} slabs across ${model.counts.storeys} storeys. Move / resize / delete elements, read the schedules, and re-export to IFC / OBJ / glTF. This is a bounding-box reconstruction (not the original B-rep); it lives in memory for this session.`} />
+        </Card>
+      ) : (
       <Card>
         <CardHeader icon={Building2} accent="blue" title="Model parameters" subtitle="The building is generated from the project GFA and these assumptions; every schedule quantity updates live." />
         <div className="grid gap-4 border-t border-edge/50 p-5 sm:grid-cols-2 lg:grid-cols-4">
@@ -193,6 +221,7 @@ export default function BuildingExplorer() {
           </label>
         </div>
       </Card>
+      )}
 
       {/* 3D model + level navigator */}
       <div className="grid gap-6 lg:grid-cols-[1.55fr_1fr]">
@@ -209,7 +238,7 @@ export default function BuildingExplorer() {
                   <button onClick={resetEdits} disabled={!nEdits} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', nEdits ? 'text-slate-300 ring-edge/60 hover:bg-elevated/50' : 'cursor-default text-slate-600 ring-edge/40')}><RotateCcw className="h-3.5 w-3.5" /> Reset{nEdits ? ` (${nEdits})` : ''}</button>
                 </>}
                 <div className="flex flex-wrap gap-1.5">
-                  {([['structure', 'Structure'], ['facade', 'Walls'], ['glazing', 'Windows'], ['slabs', 'Slabs']] as const).map(([k, label]) => (
+                  {([['structure', 'Structure'], ['facade', 'Walls'], ['interior', 'Interior'], ['glazing', 'Windows'], ['slabs', 'Slabs']] as const).map(([k, label]) => (
                     <button key={k} onClick={() => setHidden((h) => ({ ...h, [k]: !h[k] }))} aria-pressed={!hidden[k]} className={cn('rounded-lg px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors', hidden[k] ? 'text-slate-500 ring-edge/60' : 'bg-blue-500/15 text-blue-200 ring-blue-500/40')}>{label}</button>
                   ))}
                 </div>
@@ -260,8 +289,10 @@ export default function BuildingExplorer() {
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#16243c] ring-1 ring-[#2c4a6e]" /> Room</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" /> Column</span>
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-[#6b7a93]" /> Partition</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-sky-400" /> Window</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-emerald-400" /> Door</span>
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 border border-[#6b7a93] bg-[#1f2c44]" /> Stair</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 border border-slate-500 bg-slate-600/40" /> Core</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-400" /> Selected</span>
             </div>
