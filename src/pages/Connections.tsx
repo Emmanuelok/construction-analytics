@@ -38,6 +38,7 @@ export default function Connections() {
 
   const apsRun: RunFn = (tool, args) => post('/api/aps-data', { action: tool, ...args })
   const mcpRun = (server: string): RunFn => (tool, args) => post('/api/mcp', { server, tool, args })
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
 
   return (
     <div className="space-y-8">
@@ -50,6 +51,14 @@ export default function Connections() {
       />
 
       <PlatformCard icon={Cpu} accent="blue" title="Studio engines" subtitle="Run the platform's analytics directly — massing, zoning, IFC, suppliers, carbon — and export a generated building to IFC / OBJ / JSON. No setup; results download in a click." status={<Badge variant="success" dot>Ready</Badge>} tools={STUDIO_TOOLS} run={(n, a) => runTool(n, a)} runLabel="Run" />
+
+      <Card>
+        <CardHeader icon={Server} accent="emerald" title="Studio MCP endpoint" subtitle="Point any remote MCP host (Claude Desktop / Code / Cursor, or your own agent) at this URL to pull the studio's tools over HTTP — including export_building. Stateless JSON-RPC; no keys." action={<Badge variant="success" dot>Live</Badge>} />
+        <div className="space-y-2 border-t border-edge/50 p-5">
+          <code className="block break-all rounded-lg bg-base/60 px-3 py-2 text-sm text-emerald-200 ring-1 ring-inset ring-edge/60">{origin}/api/mcp-server</code>
+          <p className="text-xs text-slate-500">Methods: <code className="text-slate-300">initialize</code> · <code className="text-slate-300">tools/list</code> · <code className="text-slate-300">tools/call</code> · <code className="text-slate-300">ping</code>. {AGENT_TOOLS.length} tools, including <code className="text-slate-300">export_building</code> (IFC / OBJ / JSON).</p>
+        </div>
+      </Card>
 
       <PlatformCard
         icon={Building2}

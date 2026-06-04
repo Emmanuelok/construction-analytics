@@ -11,6 +11,8 @@ import { explodeBuilding, planForLevel, type Schedule, type ScheduleCol, type Bu
 import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, duplicateColumn, editCount, type BuildingEdits } from '@/lib/building-edits'
 import { toObj } from '@/lib/building-export'
 import { toIfc } from '@/lib/building-ifc'
+import type { IfcLabels } from '@/lib/ifc-to-model'
+import { idbGet, idbSet, idbDel } from '@/lib/idb'
 import { PLATE_SCALE } from '@/lib/massing'
 import { PROJECTS } from '@/data/platform'
 import { ACCENT } from '@/lib/nav'
@@ -20,7 +22,7 @@ import { downloadText, slug } from '@/lib/download'
 
 const SEL_KEY = 'aec-active-project'
 const ROW_CAP = 300 // cap rendered schedule rows (export covers all)
-const CAT_ICON: Record<string, typeof Columns3> = { Floor: SquareStack, Column: Columns3, Beam: Rows3, Window: Frame, Door: DoorOpen, Wall: Square, Partition: Square, Room: Square, Stair: Rows3, Core: BoxIcon, Roof: SquareStack }
+const CAT_ICON: Record<string, typeof Columns3> = { Floor: SquareStack, Column: Columns3, Beam: Rows3, Window: Frame, Door: DoorOpen, 'Interior Door': DoorOpen, Wall: Square, Partition: Square, Room: Square, Stair: Rows3, Core: BoxIcon, Roof: SquareStack }
 
 const fmtCell = (v: number | string) => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v)
 const csvCell = (v: number | string) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
@@ -63,9 +65,10 @@ export default function BuildingExplorer() {
   const [edits, setEdits] = useState<BuildingEdits>(() => init0?.edits ?? emptyEdits())
   const [past, setPast] = useState<BuildingEdits[]>([])
   const [future, setFuture] = useState<BuildingEdits[]>([])
-  // an uploaded IFC rationalized into the editable model (in-memory; not persisted)
-  const [imported, setImported] = useState<{ model: BuildingModel; name: string } | null>(null)
+  // an uploaded IFC rationalized into the editable model (persisted to IndexedDB)
+  const [imported, setImported] = useState<{ model: BuildingModel; name: string; labels: IfcLabels } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const IMPORT_KEY = 'aec-imported-model'
 
   const generatedModel = useMemo(() => buildBuilding(buildMassing({ gfa: project.gfa, progress: 100, storeys, shape: shape === 'custom' ? 'rect' : shape, aspect }), { coreRatio: 0.16, wwr, bayWidth, mullions }), [project.gfa, storeys, shape, aspect, wwr, bayWidth, mullions])
   const baseModel = imported?.model ?? generatedModel
@@ -75,13 +78,23 @@ export default function BuildingExplorer() {
     if (imported) return
     try { localStorage.setItem(cfgKey(projectId), JSON.stringify({ storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, edits })) } catch { /* ignore */ }
   }, [imported, projectId, storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, edits])
-  // bring an uploaded IFC into the editor; rebuild the editing state around it
-  const importIfcModel = (m: BuildingModel, sh: number, name: string) => {
-    setImported({ model: m, name }); setStoreyHeight(Math.round(sh * 10) / 10)
+  // bring an uploaded IFC into the editor; rebuild the editing state around it + persist
+  const importIfcModel = (m: BuildingModel, sh: number, name: string, labels: IfcLabels) => {
+    const h = Math.round(sh * 10) / 10
+    setImported({ model: m, name, labels }); setStoreyHeight(h)
     setEdits(emptyEdits()); setPast([]); setFuture([]); setSelectedId(null)
     setActiveLevel(0); setIsolate(false); setAddMode(false); setEditMode(false); setSource('parametric')
+    idbSet(IMPORT_KEY, { model: m, name, labels, storeyHeight: h }).catch(() => { /* over quota — stays in memory */ })
   }
-  const discardImport = () => { setImported(null); setEdits(emptyEdits()); setPast([]); setFuture([]); setSelectedId(null); setActiveLevel(0); setIsolate(false) }
+  const discardImport = () => { setImported(null); setEdits(emptyEdits()); setPast([]); setFuture([]); setSelectedId(null); setActiveLevel(0); setIsolate(false); idbDel(IMPORT_KEY).catch(() => {}) }
+  // restore a previously imported model on load (survives reloads)
+  useEffect(() => {
+    let live = true
+    idbGet<{ model: BuildingModel; name: string; labels?: IfcLabels; storeyHeight?: number }>(IMPORT_KEY).then((r) => {
+      if (live && r && r.model && r.model.counts) { setImported({ model: r.model, name: r.name, labels: r.labels ?? {} }); if (r.storeyHeight) setStoreyHeight(r.storeyHeight) }
+    }).catch(() => {})
+    return () => { live = false }
+  }, [])
   // undo / redo (Ctrl/Cmd+Z, Shift for redo)
   const undo = () => setPast((p) => { if (!p.length) return p; setFuture((f) => [edits, ...f]); setEdits(p[p.length - 1]); return p.slice(0, -1) })
   const redo = () => setFuture((f) => { if (!f.length) return f; setPast((p) => [...p, edits]); setEdits(f[0]); return f.slice(1) })
@@ -187,7 +200,7 @@ export default function BuildingExplorer() {
         <StatTile label="Elements" value={formatNumber(ex.summary.elements)} accent="cyan" />
         <StatTile label="Columns + beams" value={`${formatNumber(ex.summary.columns)} · ${formatNumber(ex.summary.beams)}`} accent="violet" />
         <StatTile label="Windows + doors" value={`${formatNumber(ex.summary.windows)} · ${formatNumber(ex.summary.doors)}`} accent="sky" />
-        <StatTile label="Partitions · stairs" value={`${formatNumber(ex.summary.partitions)} · ${formatNumber(ex.summary.stairs)}`} accent="fuchsia" />
+        <StatTile label="Partitions · doors · stairs" value={`${formatNumber(ex.summary.partitions)} · ${formatNumber(ex.summary.interiorDoors)} · ${formatNumber(ex.summary.stairs)}`} accent="fuchsia" />
         <StatTile label="Rooms · net" value={`${formatNumber(ex.summary.rooms)} · ${formatNumber(ex.summary.netArea)} m²`} accent="teal" />
         <StatTile label="Gross floor area" value={`${formatNumber(ex.summary.gfa)} m²`} accent="emerald" />
         <StatTile label="Concrete" value={`${formatNumber(ex.summary.concreteVolume)} m³`} accent="amber" />
@@ -290,6 +303,7 @@ export default function BuildingExplorer() {
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#16243c] ring-1 ring-[#2c4a6e]" /> Room</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" /> Column</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-[#6b7a93]" /> Partition</span>
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-[#d6a85f]" /> Int. door</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-sky-400" /> Window</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3 bg-emerald-400" /> Door</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 border border-[#6b7a93] bg-[#1f2c44]" /> Stair</span>
@@ -312,6 +326,11 @@ export default function BuildingExplorer() {
                   </div>
                   <Badge variant="neutral" className="ml-auto">{selectedEl.category}</Badge>
                 </div>
+                {imported && selectedId && imported.labels[selectedId] && (
+                  <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-[11px] text-amber-200/90">
+                    IFC source — <span className="font-medium text-amber-100">{imported.labels[selectedId].name || 'unnamed'}</span> · <span className="data-mono">{imported.labels[selectedId].ifcType}</span>
+                  </div>
+                )}
                 <dl className="divide-y divide-edge/40 rounded-lg ring-1 ring-edge/50">
                   {selectedEl.cols.filter((c) => c.key !== 'mark' && c.key !== 'level').map((c) => (
                     <div key={c.key} className="flex items-center justify-between gap-4 px-3 py-2">

@@ -6,7 +6,7 @@
 import type { BuildingModel, Quad, Beam, Plate } from './building'
 import type * as THREE_NS from 'three'
 
-const COLOR: Record<string, number> = { Slabs: 0xb8c2d0, Roof: 0xb8c2d0, Columns: 0x64748b, Beams: 0x566173, Walls: 0x9aa7b8, Partitions: 0x7e8aa0, Windows: 0x7dd3fc, Doors: 0x1f2a3a, Mullions: 0x2b3647, Stairs: 0x8a93a6, Core: 0x475569 }
+const COLOR: Record<string, number> = { Slabs: 0xb8c2d0, Roof: 0xb8c2d0, Columns: 0x64748b, Beams: 0x566173, Walls: 0x9aa7b8, Partitions: 0x7e8aa0, Windows: 0x7dd3fc, Doors: 0x1f2a3a, InteriorDoors: 0x8a6f4a, Mullions: 0x2b3647, Stairs: 0x8a93a6, Core: 0x475569 }
 
 function plateGeo(T: typeof THREE_NS, p: Plate): THREE_NS.BufferGeometry {
   const shape = new T.Shape()
@@ -55,8 +55,9 @@ export async function modelToGroup(model: BuildingModel): Promise<THREE_NS.Group
   add('Partitions', model.partitions.map((q) => quadGeo(T, q)))
   add('Windows', model.glazing.map((q) => quadGeo(T, q)), { transparent: true, opacity: 0.5 })
   add('Doors', model.doors.map((q) => quadGeo(T, q)), { transparent: true, opacity: 0.85 })
+  add('InteriorDoors', model.interiorDoors.map((q) => quadGeo(T, q)))
   add('Mullions', model.mullions.map((c) => boxGeo(T, c)))
-  add('Stairs', model.stairs.flatMap((s) => s.treads.map((t) => boxGeo(T, t))))
+  add('Stairs', model.stairs.flatMap((s) => [...s.treads, ...s.landings, ...s.rails].map((t) => boxGeo(T, t))))
   if (model.core) add('Core', [boxGeo(T, model.core)])
   return group
 }

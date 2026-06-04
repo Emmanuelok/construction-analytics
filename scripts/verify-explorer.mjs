@@ -44,9 +44,9 @@ try {
     const svg = [...document.querySelectorAll('svg')].find((s) => s.getAttribute('aria-label')?.startsWith('Floor plan'))
     const label = svg?.getAttribute('aria-label') || ''
     const tab = (re) => [...document.querySelectorAll('button')].some((b) => re.test((b.textContent || '').trim()))
-    return { label, partTab: tab(/^Partitions \(/), stairTab: tab(/^Stairs \(/) }
+    return { label, partTab: tab(/^Partitions \(/), idoorTab: tab(/^Interior doors \(/), stairTab: tab(/^Stairs \(/) }
   })
-  ok('plan reports partitions + stairs, with Partitions & Stairs schedule tabs', /partitions/.test(intInfo.label) && /stairs/.test(intInfo.label) && intInfo.partTab && intInfo.stairTab, intInfo)
+  ok('plan reports partitions + interior doors + stairs, with their schedule tabs', /partitions/.test(intInfo.label) && /interior doors/.test(intInfo.label) && /stairs/.test(intInfo.label) && intInfo.partTab && intInfo.idoorTab && intInfo.stairTab, intInfo)
 
   // selecting a column in the plan drives the shared selection + inspector + 3D highlight
   const clickedId = await page.evaluate(() => {

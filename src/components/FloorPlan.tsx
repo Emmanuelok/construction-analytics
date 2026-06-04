@@ -75,7 +75,7 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
   return (
     <svg ref={svgRef} viewBox={`${-pad} ${-pad} ${w + 2 * pad} ${h + 2 * pad}`} style={{ height }}
       className={`w-full rounded-xl bg-[#0a0f1c] ring-1 ring-edge/60 ${addMode ? 'cursor-crosshair' : 'cursor-grab'}`}
-      role="img" aria-label={`Floor plan, ${plan.isRoof ? 'roof' : `level ${plan.level}`}: ${plan.rooms.length} rooms, ${plan.partitions.length} partitions, ${plan.columns.length} columns, ${plan.panels.length} windows, ${plan.doors.length} doors, ${plan.stairs.length} stairs`}
+      role="img" aria-label={`Floor plan, ${plan.isRoof ? 'roof' : `level ${plan.level}`}: ${plan.rooms.length} rooms, ${plan.partitions.length} partitions, ${plan.interiorDoors.length} interior doors, ${plan.columns.length} columns, ${plan.panels.length} windows, ${plan.doors.length} doors, ${plan.stairs.length} stairs`}
       onWheel={onWheel} onPointerDown={onBgDown}>
       <g ref={gRef} transform={`translate(${view.ox} ${view.oy}) scale(${view.k})`}>
         {/* add-column capture layer (only active in Add mode) */}
@@ -103,6 +103,19 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
         </g>
         {/* interior partitions (draggable, like walls) */}
         <g>{plan.partitions.map((p) => lineGroup(p.id, p.a, p.b, '#6b7a93', 1.5))}</g>
+        {/* interior doors — opening leaf + swing arc */}
+        <g>{plan.interiorDoors.map((d) => {
+          const vx = d.b.x - d.a.x, vz = d.b.z - d.a.z, L = Math.hypot(vx, vz) || 1
+          const tip = { x: d.a.x + (vz / L) * L, z: d.a.z + (-vx / L) * L }
+          const on = selected === d.id, col = on ? '#fbbf24' : '#d6a85f'
+          return (
+            <g key={d.id} className={editable ? 'cursor-grab' : 'cursor-pointer'} onPointerDown={(e) => startElDrag(e, d.id)} onClick={() => { if (!dragRef.current?.moved) onSelect(d.id) }}>
+              <line x1={toX(d.a.x)} y1={toY(d.a.z)} x2={toX(d.b.x)} y2={toY(d.b.z)} stroke="transparent" strokeWidth={12} vectorEffect="non-scaling-stroke" />
+              <line x1={toX(d.a.x)} y1={toY(d.a.z)} x2={toX(tip.x)} y2={toY(tip.z)} stroke={col} strokeWidth={on ? 2 : 1.3} vectorEffect="non-scaling-stroke" strokeLinecap="round" />
+              <path d={`M ${toX(tip.x)} ${toY(tip.z)} A ${L} ${L} 0 0 1 ${toX(d.b.x)} ${toY(d.b.z)}`} fill="none" stroke={col} strokeWidth={0.8} strokeDasharray="2 2" vectorEffect="non-scaling-stroke" />
+            </g>
+          )
+        })}</g>
         {/* stairs in the core */}
         <g>{plan.stairs.map((s) => {
           const on = selected === s.id

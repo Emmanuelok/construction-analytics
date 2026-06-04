@@ -7,7 +7,12 @@
 
 import { type Pt } from './zoning'
 import { floorGrid, type GridOpts } from './building-rooms'
+import { SCENE_LEN_TO_M } from './massing'
 import type { Quad } from './building'
+
+const LEN = SCENE_LEN_TO_M
+const dist = (a: Pt, b: Pt) => Math.hypot(b.x - a.x, b.z - a.z)
+const lerp = (a: Pt, b: Pt, t: number): Pt => ({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t })
 
 /** Ray-cast point-in-polygon (x east, z north). */
 function pointInPoly(p: Pt, poly: Pt[]): boolean {
@@ -50,18 +55,31 @@ function clipSegment(a: Pt, b: Pt, poly: Pt[]): [Pt, Pt][] {
 /** Interior partition walls for a floor — vertical panels (Quad) at base y, height h,
  *  on every interior grid line bordering a room. `base`/`height` place them between the
  *  slab and the floor above (matching the façade walls). */
-export function floorPartitions(poly: Pt[], opts: GridOpts & { base?: number; height?: number } = {}): Quad[] {
+export function floorPartitions(poly: Pt[], opts: GridOpts & { base?: number; height?: number; doorHeight?: number } = {}): { partitions: Quad[]; doors: Quad[] } {
   const g = floorGrid(poly, opts)
-  if (!g) return []
+  if (!g) return { partitions: [], doors: [] }
   const level = opts.level ?? 0
   const base = opts.base ?? 0
   const height = opts.height ?? 1
+  const doorH = Math.min(opts.doorHeight ?? height * 0.62, height) // ~2.1 m clear for a 3.6 m storey
+  const doorW = 0.9 / LEN // 0.9 m leaf
+  const minRun = 1.8 / LEN // only cut a doorway into runs ≥ 1.8 m
   const occ = (i: number, j: number) => i >= 0 && i < g.cols && j >= 0 && j < g.rows && g.cells[j * g.cols + i].room
-  const parts: Quad[] = []
-  let n = 0
+  const partitions: Quad[] = []
+  const doors: Quad[] = []
+  let pn = 0, dn = 0
+  const wall = (s: Pt, e: Pt) => { if (dist(s, e) > 0.05) partitions.push({ a: s, b: e, y: base, h: height, level, id: `part-${level}-${pn++}` }) }
+  // emit a wall run, carving a centred doorway (a real gap + a door leaf) into long runs
   const push = (a: Pt, b: Pt) => {
     for (const [s, e] of clipSegment(a, b, poly)) {
-      if (Math.hypot(e.x - s.x, e.z - s.z) > 0.05) parts.push({ a: s, b: e, y: base, h: height, level, id: `part-${level}-${n++}` })
+      const L = dist(s, e)
+      if (L < 0.05) continue
+      if (L >= minRun) {
+        const half = doorW / 2 / L
+        const p0 = lerp(s, e, 0.5 - half), p1 = lerp(s, e, 0.5 + half)
+        wall(s, p0); wall(p1, e)
+        doors.push({ a: p0, b: p1, y: base, h: doorH, level, id: `idoor-${level}-${dn++}` })
+      } else wall(s, e)
     }
   }
   // vertical interior grid lines (constant x) between columns i and i+1
@@ -88,5 +106,5 @@ export function floorPartitions(poly: Pt[], opts: GridOpts & { base?: number; he
       i = k
     }
   }
-  return parts
+  return { partitions, doors }
 }

@@ -28,6 +28,7 @@ import { explodeBuilding, planForLevel, findElementGeom, levelColumns, levelPane
 import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, duplicateColumn, editCount } from './building-edits.ts'
 import { toObj, objStats } from './building-export.ts'
 import { toIfc } from './building-ifc.ts'
+import { handleMcpRpc, MCP_PROTOCOL, SERVER_INFO } from './mcp-rpc.ts'
 import { floorRooms, floorGrid } from './building-rooms.ts'
 import { floorPartitions } from './building-partitions.ts'
 import { coreStairs } from './building-stairs.ts'
@@ -773,9 +774,10 @@ section('building')
   ok('coreRatio 0 omits the core', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 5, shape: 'rect' }), { coreRatio: 0 }).core === null)
   ok('every element is tagged with its level', b.slabs.every((s, i) => s.level === i) && b.columns.every((c) => c.level !== undefined) && b.glazing.every((g) => g.level !== undefined) && b.beams.every((bm) => bm.level !== undefined))
   ok('roof is tagged as the level above the top floor', b.roof?.level === 10)
-  // interior partitions between rooms + a stair flight per storey
+  // interior partitions + doorways + a half-turn stair per storey
   ok('interior partition walls are generated, level-tagged', b.partitions.length > 0 && b.counts.partitions === b.partitions.length && b.partitions.every((p) => p.level !== undefined && Math.hypot(p.b.x - p.a.x, p.b.z - p.a.z) > 0 && p.h > 0))
-  ok('a stair flight per storey, inside the core', b.stairs.length === 10 && b.counts.stairs === 10 && b.stairs.every((s) => s.treads.length > 0 && s.risers >= 12 && s.top > s.base))
+  ok('doorways are cut into the partitions (shorter than the wall)', b.interiorDoors.length > 0 && b.counts.interiorDoors === b.interiorDoors.length && b.interiorDoors.every((d) => d.h > 0 && d.h < b.partitions[0].h + 1e-9 && d.level !== undefined))
+  ok('a half-turn stair per storey (2 flights + landing + rails), in the core', b.stairs.length === 10 && b.counts.stairs === 10 && b.stairs.every((s) => s.flights.length === 2 && s.landings.length === 1 && s.rails.length === 2 && s.risers >= 14 && s.top > s.base))
   ok('stair treads climb (each tread higher than the last)', b.stairs[0].treads.every((t, i, a) => i === 0 || t.y > a[i - 1].y))
   ok('no core → no stairs', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 5, shape: 'rect' }), { coreRatio: 0 }).stairs.length === 0)
 }
@@ -812,11 +814,12 @@ section('building-explorer')
   ok('a Rooms schedule + room elements + net area', ex.schedules.some((s) => s.category === 'Room') && ex.summary.rooms > 0 && ex.summary.netArea > 0 && ex.elements.some((e) => e.category === 'Room'))
   ok('the level plan carries clickable rooms', planForLevel(model, 0).rooms.length > 0 && findElementGeom(model, planForLevel(model, 0).rooms[0].id) !== null)
   // partitions + stairs flow through schedules + summary + plan + geometry
-  ok('Partition + Stair schedules with element rows', ex.schedules.some((s) => s.category === 'Partition') && ex.schedules.some((s) => s.category === 'Stair') && ex.summary.partitions === model.partitions.length && ex.summary.stairs === model.stairs.length)
+  ok('Partition + Interior Door + Stair schedules with rows', ['Partition', 'Interior Door', 'Stair'].every((c) => ex.schedules.some((s) => s.category === c)) && ex.summary.partitions === model.partitions.length && ex.summary.interiorDoors === model.interiorDoors.length && ex.summary.stairs === model.stairs.length)
   ok('a partition schedule row totals interior wall length', (() => { const ps = ex.schedules.find((s) => s.category === 'Partition')!; return ps.rows.length === model.partitions.length && ps.totals.length > 0 })())
-  ok('a stair element carries risers + a riser height + going', (() => { const e = ex.byId['stair-0']; return !!e && Number(e.data.risers) >= 12 && Number(e.data.rise) > 0 && Number(e.data.going) > 0 })())
-  ok('the level plan carries partitions + a stair', (() => { const p = planForLevel(model, 0); return p.partitions.length > 0 && p.stairs.length === 1 && p.stairs[0].id === 'stair-0' })())
-  ok('findElementGeom locates a partition + a stair flight', !!findElementGeom(model, model.partitions[0].id!) && (() => { const g = findElementGeom(model, 'stair-0'); return !!g && g.size.y > 0 })())
+  ok('an interior-door element carries width/height/leaf area', (() => { const e = ex.byId[model.interiorDoors[0].id!]; return !!e && e.category === 'Interior Door' && Number(e.data.width) > 0 && Number(e.data.area) > 0 })())
+  ok('a stair element carries flights + risers + a riser height + going', (() => { const e = ex.byId['stair-0']; return !!e && Number(e.data.flights) === 2 && Number(e.data.risers) >= 14 && Number(e.data.rise) > 0 && Number(e.data.going) > 0 })())
+  ok('the level plan carries partitions + interior doors + a stair', (() => { const p = planForLevel(model, 0); return p.partitions.length > 0 && p.interiorDoors.length > 0 && p.stairs.length === 1 && p.stairs[0].id === 'stair-0' })())
+  ok('findElementGeom locates a partition + interior door + a stair', !!findElementGeom(model, model.partitions[0].id!) && !!findElementGeom(model, model.interiorDoors[0].id!) && (() => { const g = findElementGeom(model, 'stair-0'); return !!g && g.size.y > 0 })())
   // highlight geometry
   ok('findElementGeom locates a column box', (() => { const g = findElementGeom(model, 'col-0-0'); return !!g && Math.abs(g.size.x - model.columns[0].w) < 1e-9 })())
   ok('findElementGeom gives a panel an edge direction', (() => { const g = findElementGeom(model, 'pan-0-0'); return !!g && !!g.dir })())
@@ -884,17 +887,20 @@ section('building-partitions')
 {
   const core = { x: 0, z: 0, w: 4, d: 4 }
   const fp = [{ x: -20, z: -12 }, { x: 20, z: -12 }, { x: 20, z: 12 }, { x: -20, z: 12 }]
-  const parts = floorPartitions(fp, { level: 1, core, base: 2, height: 0.9 })
+  const { partitions: parts, doors: idoors } = floorPartitions(fp, { level: 1, core, base: 2, height: 0.9 })
   ok('floorPartitions derives interior walls on the room grid', parts.length > 0 && parts.every((p) => p.level === 1 && p.y === 2 && p.h === 0.9))
   ok('partitions stay inside the floor outline', parts.every((p) => p.a.x >= -20 - 1e-6 && p.a.x <= 20 + 1e-6 && p.a.z >= -12 - 1e-6 && p.a.z <= 12 + 1e-6 && p.b.x >= -20 - 1e-6 && p.b.x <= 20 + 1e-6))
   ok('partitions have stable, unique, level-scoped ids', (() => { const ids = parts.map((p) => p.id); return new Set(ids).size === ids.length && ids.every((id) => id!.startsWith('part-1-')) })())
-  ok('no rooms (tiny floor) → no partitions', floorPartitions([{ x: -0.5, z: -0.5 }, { x: 0.5, z: -0.5 }, { x: 0.5, z: 0.5 }, { x: -0.5, z: 0.5 }], { roomSize: 8 }).length === 0)
+  ok('long partition runs get a real doorway (gap + a door leaf)', idoors.length > 0 && idoors.every((d) => d.id!.startsWith('idoor-1-') && d.h < 0.9 && d.h > 0 && Math.hypot(d.b.x - d.a.x, d.b.z - d.a.z) > 0))
+  ok('no rooms (tiny floor) → no partitions or doors', (() => { const r = floorPartitions([{ x: -0.5, z: -0.5 }, { x: 0.5, z: -0.5 }, { x: 0.5, z: 0.5 }, { x: -0.5, z: 0.5 }], { roomSize: 8 }); return r.partitions.length === 0 && r.doors.length === 0 })())
 
   const floors = [{ base: 0, height: 0.92, level: 0 }, { base: 1, height: 0.92, level: 1 }]
   const stairs = coreStairs(core, floors, { storeyHeight: 3.6 })
-  ok('coreStairs makes a flight per storey with climbing treads', stairs.length === 2 && stairs.every((s) => s.treads.length === s.risers - 1 && s.treads.every((t, i, a) => i === 0 || t.y > a[i - 1].y)))
-  ok('a flight rises a full storey & runs along the core', stairs.every((s) => near(s.top - s.base, 0.92, 1e-9) && (s.dir === 'x' || s.dir === 'z') && s.widthScene > 0))
-  ok('treads carry the flight id (click any step → select the flight)', stairs[0].treads.every((t) => t.id === 'stair-0'))
+  ok('coreStairs makes a half-turn stair (2 flights) per storey', stairs.length === 2 && stairs.every((s) => s.flights.length === 2 && s.treads.length > 0 && s.landings.length === 1 && s.rails.length === 2))
+  ok('the two flights split the storey rise (each rises half)', stairs.every((s) => near(s.flights[0].top - s.flights[0].base, 0.46, 1e-6) && near(s.flights[1].base, s.flights[0].top, 1e-6) && s.flights[1].risers + s.flights[0].risers === s.risers))
+  ok('a stair rises a full storey & runs along the core', stairs.every((s) => near(s.top - s.base, 0.92, 1e-9) && (s.dir === 'x' || s.dir === 'z') && s.widthScene > 0))
+  ok('all stair parts carry the stair id (click any → select it)', stairs[0].treads.concat(stairs[0].landings, stairs[0].rails).every((t) => t.id === 'stair-0'))
+  ok('flight A treads climb monotonically', stairs[0].flights[0].treads.every((t, i, a) => i === 0 || t.y > a[i - 1].y))
   ok('no core → no stairs', coreStairs(null, floors).length === 0)
 }
 
@@ -909,7 +915,7 @@ section('building-export')
   ok('every face index is within the vertex range (valid mesh)', st.maxIndex <= st.verts && st.maxIndex > 0, { maxIndex: st.maxIndex, verts: st.verts })
   ok('OBJ groups every trade present in the model', ['Slabs', 'Columns', 'Beams', 'Walls', 'Partitions', 'Windows', 'Doors', 'Stairs', 'Core'].every((g) => st.groups.includes(g)), st.groups)
   ok('a box element contributes 8 verts / 12 tris', (() => { const before = objStats(toObj(buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0 }))).faces; return before < st.faces })())
-  ok('a window panel is 4 verts / 2 tris each (quad)', objStats(toObj({ ...model, glazing: model.glazing.slice(0, 1), columns: [], beams: [], walls: [], partitions: [], stairs: [], doors: [], mullions: [], slabs: [], roof: null, core: null })).faces === 2)
+  ok('a window panel is 4 verts / 2 tris each (quad)', objStats(toObj({ ...model, glazing: model.glazing.slice(0, 1), columns: [], beams: [], walls: [], partitions: [], interiorDoors: [], stairs: [], doors: [], mullions: [], slabs: [], roof: null, core: null })).faces === 2)
   ok('edited model exports too (deleted element gone)', (() => { const del = applyEdits(model, removeElement(emptyEdits(), model.columns[0].id!)); return objStats(toObj(del)).verts < st.verts })())
 }
 
@@ -921,11 +927,11 @@ section('building-ifc')
   const count = (t: string) => (ifc.match(new RegExp(`=${t}\\(`, 'g')) || []).length
   ok('valid IFC-SPF header + IFC4 schema + footer', ifc.startsWith('ISO-10303-21;') && /FILE_SCHEMA\(\('IFC4'\)\)/.test(ifc) && /END-ISO-10303-21;/.test(ifc))
   ok('one IfcProject, IfcSite, IfcBuilding + a storey per level', count('IFCPROJECT') === 1 && count('IFCSITE') === 1 && count('IFCBUILDING') === 1 && count('IFCBUILDINGSTOREY') === 4)
-  ok('typed products: columns, slabs, beams, walls, windows, doors', count('IFCCOLUMN') === model.columns.length && count('IFCSLAB') === model.slabs.length + 1 && count('IFCBEAM') === model.beams.length && count('IFCWALL') === model.walls.length + model.partitions.length && count('IFCWINDOW') === model.glazing.length && count('IFCDOOR') === model.doors.length)
+  ok('typed products: columns, slabs(+landings), beams, walls(+partitions), windows, doors(+interior)', count('IFCCOLUMN') === model.columns.length && count('IFCSLAB') === model.slabs.length + 1 + model.stairs.length && count('IFCBEAM') === model.beams.length && count('IFCWALL') === model.walls.length + model.partitions.length && count('IFCWINDOW') === model.glazing.length && count('IFCDOOR') === model.doors.length + model.interiorDoors.length)
   ok('parametric extruded-solid geometry + property sets', count('IFCEXTRUDEDAREASOLID') > 0 && count('IFCPROPERTYSET') > 0 && count('IFCRELDEFINESBYPROPERTIES') > 0)
-  ok('spatial structure is aggregated + elements contained', count('IFCRELAGGREGATES') === 3 && count('IFCRELCONTAINEDINSPATIALSTRUCTURE') >= 1)
+  ok('spatial structure + each stair aggregates its parts', count('IFCRELAGGREGATES') === 3 + model.stairs.length && count('IFCRELCONTAINEDINSPATIALSTRUCTURE') >= 1)
   ok('interior rooms export as IfcSpace', count('IFCSPACE') === model.rooms.length && model.rooms.length > 0)
-  ok('stairs export as stepped IfcStair (one per storey)', count('IFCSTAIR') === model.stairs.length && model.stairs.length === 4)
+  ok('stairs are half-turn IfcStair decomposed into IfcStairFlight + IfcRailing', count('IFCSTAIR') === model.stairs.length && model.stairs.length === 4 && count('IFCSTAIRFLIGHT') === model.stairs.length * 2 && count('IFCRAILING') === model.stairs.length * 2 && /\.HALF_TURN_STAIR\./.test(ifc))
   ok('interior partitions export as IfcWall (.PARTITIONING.)', model.partitions.length > 0 && (ifc.match(/\.PARTITIONING\./g) || []).length === model.partitions.length)
   // every #ref resolves to a defined #id (no dangling references)
   ok('every entity reference resolves (well-formed model)', (() => {
@@ -999,8 +1005,9 @@ section('ifc-to-model')
     vertexCount: 0, triangleCount: 0, bbox: null,
     storeys: [{ expressID: 200, name: 'Level 1', elevation: 3 }, { expressID: 100, name: 'Ground', elevation: 0 }],
   }
-  const { model, storeyHeight } = ifcToModel(res)
+  const { model, storeyHeight, labels } = ifcToModel(res)
   ok('reconstructs the storeys at the IFC storey height', model.counts.storeys === 2 && near(storeyHeight, 3, 1e-9))
+  ok('returns a labels map carrying each element’s original IFC name + type', labels['ifc-11'].ifcType === 'IFCWALLSTANDARDCASE' && labels['ifc-11'].name === 'Ext Wall' && labels['ifc-21'].name === 'Office 201' && labels['ifc-10'].ifcType === 'IFCCOLUMN')
   ok('buckets IFC products into editable primitives by type', model.columns.length >= 2 && model.walls.length === 1 && model.glazing.length === 1 && model.beams.length === 1 && model.rooms.length === 1)
   ok('an unknown product is rationalized by shape (furniture → a box column)', model.columns.some((c) => c.id === 'ifc-22'))
   ok('one floor slab per level, id floor-N (plan + isolate work)', model.slabs.length === 2 && !!model.slabs.find((s) => s.id === 'floor-0') && !!model.slabs.find((s) => s.id === 'floor-1'))
@@ -1061,6 +1068,26 @@ section('agent-tools')
   let threw = false
   try { await runTool('does_not_exist', {}) } catch { threw = true }
   ok('runTool throws on an unknown tool', threw)
+}
+
+// ── mcp-rpc (the studio's own MCP server over HTTP) ─────────────────────────────
+section('mcp-rpc')
+{
+  const init = (await handleMcpRpc({ id: 1, method: 'initialize', params: {} }))!.result as { protocolVersion: string; serverInfo: { name: string }; capabilities: { tools?: unknown } }
+  ok('initialize returns protocol + serverInfo + a tools capability', init.protocolVersion === MCP_PROTOCOL && init.serverInfo.name === SERVER_INFO.name && !!init.capabilities.tools)
+  const list = (await handleMcpRpc({ id: 2, method: 'tools/list' }))!.result as { tools: { name: string; inputSchema: unknown }[] }
+  ok('tools/list returns every studio tool with a schema', list.tools.length === 6 && list.tools.every((t) => t.name && t.inputSchema) && list.tools.some((t) => t.name === 'export_building'))
+  const call = (await handleMcpRpc({ id: 3, method: 'tools/call', params: { name: 'export_building', arguments: { gfa: 40000, storeys: 6, format: 'ifc' } } }))!.result as { isError?: boolean; content: { text: string }[] }
+  ok('tools/call export_building returns a real IFC in its content', !call.isError && /ISO-10303-21;/.test((JSON.parse(call.content[0].text) as { content: string }).content))
+  const ms = (await handleMcpRpc({ id: 4, method: 'tools/call', params: { name: 'massing_schedule', arguments: { gfa: 100000, storeys: 10 } } }))!.result as { content: { text: string }[] }
+  ok('tools/call massing_schedule returns JSON content', (JSON.parse(ms.content[0].text) as { grossFloorArea: number }).grossFloorArea > 0)
+  const bad = (await handleMcpRpc({ id: 5, method: 'tools/call', params: { name: 'nope' } }))!.result as { isError?: boolean }
+  ok('tools/call on an unknown tool → isError result', bad.isError === true)
+  const um = (await handleMcpRpc({ id: 6, method: 'frobnicate' }))!
+  ok('an unknown method → JSON-RPC error -32601', um.error?.code === -32601)
+  ok('a notification (no id / notifications/*) gets no response', (await handleMcpRpc({ method: 'notifications/initialized' })) === null)
+  const png = (await handleMcpRpc({ id: 7, method: 'ping' }))!.result as Record<string, unknown>
+  ok('ping → empty result', !!png && Object.keys(png).length === 0)
 }
 
 // ── mcp-federation (agent calling external MCP servers) ─────────────────────────

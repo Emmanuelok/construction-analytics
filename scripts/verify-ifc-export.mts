@@ -13,7 +13,7 @@ const ok = (n: string, c: boolean, extra?: unknown) => { if (c) console.log(`✓
 const model = buildBuilding(buildMassing({ gfa: 30_000, progress: 100, storeys: 4, shape: 'rect' }), { coreRatio: 0.16 })
 const ifc = toIfc(model, { name: 'Roundtrip Tower' })
 
-const { IfcAPI, IFCBUILDINGSTOREY, IFCCOLUMN, IFCSLAB, IFCWINDOW, IFCWALL, IFCBEAM, IFCSPACE, IFCSTAIR } = await import('web-ifc')
+const { IfcAPI, IFCBUILDINGSTOREY, IFCCOLUMN, IFCSLAB, IFCWINDOW, IFCWALL, IFCBEAM, IFCSPACE, IFCSTAIR, IFCSTAIRFLIGHT, IFCRAILING, IFCDOOR } = await import('web-ifc')
 const api = new IfcAPI()
 await api.Init((p: string, prefix: string) => (p.endsWith('.wasm') ? `${process.cwd()}/node_modules/web-ifc/${p}` : prefix + p))
 const mid = api.OpenModel(new TextEncoder().encode(ifc))
@@ -22,9 +22,9 @@ ok('web-ifc opens the generated IFC (valid model)', mid >= 0, { mid })
 const n = (t: number) => { try { return api.GetLineIDsWithType(mid, t).size() } catch { return -1 } }
 ok('storeys round-trip (4 IfcBuildingStorey)', n(IFCBUILDINGSTOREY) === 4, { storeys: n(IFCBUILDINGSTOREY) })
 ok('interior rooms round-trip as IfcSpace', n(IFCSPACE) === model.rooms.length && model.rooms.length > 0, { spaces: n(IFCSPACE), rooms: model.rooms.length })
-ok('stairs round-trip as IfcStair (one per storey)', n(IFCSTAIR) === model.stairs.length && model.stairs.length === 4, { stairs: n(IFCSTAIR), expected: model.stairs.length })
-ok('typed products round-trip (columns/slabs/walls+partitions/windows/beams)', n(IFCCOLUMN) === model.columns.length && n(IFCSLAB) === model.slabs.length + 1 && n(IFCWALL) === model.walls.length + model.partitions.length && n(IFCWINDOW) === model.glazing.length && n(IFCBEAM) === model.beams.length,
-  { col: n(IFCCOLUMN), slab: n(IFCSLAB), wall: n(IFCWALL), winPart: model.walls.length + model.partitions.length, win: n(IFCWINDOW), beam: n(IFCBEAM) })
+ok('stairs round-trip as half-turn IfcStair + IfcStairFlight + IfcRailing', n(IFCSTAIR) === model.stairs.length && model.stairs.length === 4 && n(IFCSTAIRFLIGHT) === model.stairs.length * 2 && n(IFCRAILING) === model.stairs.length * 2, { stair: n(IFCSTAIR), flight: n(IFCSTAIRFLIGHT), rail: n(IFCRAILING) })
+ok('typed products round-trip (columns/slabs+landings/walls+partitions/windows/beams/doors+interior)', n(IFCCOLUMN) === model.columns.length && n(IFCSLAB) === model.slabs.length + 1 + model.stairs.length && n(IFCWALL) === model.walls.length + model.partitions.length && n(IFCWINDOW) === model.glazing.length && n(IFCBEAM) === model.beams.length && n(IFCDOOR) === model.doors.length + model.interiorDoors.length,
+  { col: n(IFCCOLUMN), slab: n(IFCSLAB), expectSlab: model.slabs.length + 1 + model.stairs.length, wall: n(IFCWALL), win: n(IFCWINDOW), beam: n(IFCBEAM), door: n(IFCDOOR) })
 
 let meshes = 0, tris = 0
 api.StreamAllMeshes(mid, (mesh: { geometries: { size(): number; get(i: number): { geometryExpressID: number } } }) => {
