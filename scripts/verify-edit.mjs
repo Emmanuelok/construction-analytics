@@ -67,10 +67,21 @@ try {
   await new Promise((r) => setTimeout(r, 450))
   ok('add door: clicking the plan adds an interior door, live', (await comps()).interiorDoors === doors0 + 1, { doors0, now: (await comps()).interiorDoors })
 
+  // author an egress stair: Add stair, then click the plan → a shaft (a flight per storey) is added
+  const stairs0 = (await comps()).stairs
+  ok('Add stair mode toggles on', await clickBtn(/Add stair/))
+  await new Promise((r) => setTimeout(r, 250))
+  await page.evaluate(() => { const svg = [...document.querySelectorAll('svg')].find((s) => (s.getAttribute('aria-label') || '').startsWith('Floor plan')); svg?.scrollIntoView({ block: 'center' }) })
+  await new Promise((r) => setTimeout(r, 250))
+  const sc = await page.evaluate(() => { const svg = [...document.querySelectorAll('svg')].find((s) => (s.getAttribute('aria-label') || '').startsWith('Floor plan')); const r = svg.getBoundingClientRect(); return { x: r.x + r.width * 0.5, y: r.y + r.height * 0.5 } })
+  await page.mouse.click(sc.x, sc.y)
+  await new Promise((r) => setTimeout(r, 450))
+  ok('add stair: clicking the plan adds a stair shaft (flight per storey), live', (await comps()).stairs > stairs0, { stairs0, now: (await comps()).stairs })
+
   // reset restores the generated model
   await clickBtn(/^Reset/); await new Promise((r) => setTimeout(r, 500))
   const after = await comps()
-  ok('reset: restores generated columns + windows + doors', after.columns === base.columns && after.windows === base.windows && after.interiorDoors === base.interiorDoors, { base, after })
+  ok('reset: restores generated columns + windows + doors + stairs', after.columns === base.columns && after.windows === base.windows && after.interiorDoors === base.interiorDoors && after.stairs === base.stairs, { base, after })
 
   const realErrors = errors.filter((e) => !/404|favicon|tile|Failed to load resource|ERR_/i.test(e))
   ok('no console errors', realErrors.length === 0, realErrors.slice(0, 4))

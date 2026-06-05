@@ -8,7 +8,7 @@ import { FloorPlan } from '@/components/FloorPlan'
 import { buildMassing, deriveStoreys, SHAPE_KINDS, type ShapeKind } from '@/lib/massing'
 import { buildBuilding, type BuildingModel } from '@/lib/building'
 import { explodeBuilding, planForLevel, type Schedule, type ScheduleCol, type BuildingElement } from '@/lib/building-explorer'
-import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, addDoorAt, duplicateColumn, editCount, type BuildingEdits } from '@/lib/building-edits'
+import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, addDoorAt, addStairAt, duplicateColumn, editCount, type BuildingEdits } from '@/lib/building-edits'
 import { toObj } from '@/lib/building-export'
 import { toIfc } from '@/lib/building-ifc'
 import { egressAnalysis, egressPathFor } from '@/lib/egress'
@@ -64,7 +64,7 @@ export default function BuildingExplorer() {
   const [mullions, setMullions] = useState(() => init0?.mullions ?? true)
   const [code, setCode] = useState<CodeKey>(() => init0?.code ?? 'IBC')
   const [editMode, setEditMode] = useState(false)
-  const [addKind, setAddKind] = useState<'column' | 'door' | null>(null)
+  const [addKind, setAddKind] = useState<'column' | 'door' | 'stair' | null>(null)
   const [edits, setEdits] = useState<BuildingEdits>(() => init0?.edits ?? emptyEdits())
   const [past, setPast] = useState<BuildingEdits[]>([])
   const [future, setFuture] = useState<BuildingEdits[]>([])
@@ -254,6 +254,7 @@ export default function BuildingExplorer() {
                 {editMode && <>
                   <button onClick={() => setAddKind((k) => (k === 'column' ? null : 'column'))} aria-pressed={addKind === 'column'} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', addKind === 'column' ? 'bg-emerald-500/20 text-emerald-100 ring-emerald-500/40' : 'text-slate-300 ring-edge/60 hover:bg-elevated/50')}><Plus className="h-3.5 w-3.5" /> Add column</button>
                   <button onClick={() => setAddKind((k) => (k === 'door' ? null : 'door'))} aria-pressed={addKind === 'door'} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', addKind === 'door' ? 'bg-emerald-500/20 text-emerald-100 ring-emerald-500/40' : 'text-slate-300 ring-edge/60 hover:bg-elevated/50')}><DoorOpen className="h-3.5 w-3.5" /> Add door</button>
+                  <button onClick={() => setAddKind((k) => (k === 'stair' ? null : 'stair'))} aria-pressed={addKind === 'stair'} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', addKind === 'stair' ? 'bg-emerald-500/20 text-emerald-100 ring-emerald-500/40' : 'text-slate-300 ring-edge/60 hover:bg-elevated/50')}><Rows3 className="h-3.5 w-3.5" /> Add stair</button>
                   <button onClick={resetEdits} disabled={!nEdits} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', nEdits ? 'text-slate-300 ring-edge/60 hover:bg-elevated/50' : 'cursor-default text-slate-600 ring-edge/40')}><RotateCcw className="h-3.5 w-3.5" /> Reset{nEdits ? ` (${nEdits})` : ''}</button>
                 </>}
                 <div className="flex flex-wrap gap-1.5">
@@ -304,7 +305,7 @@ export default function BuildingExplorer() {
             <FloorPlan plan={plan} selected={selectedId} onSelect={selectEl} height={340} egressPath={egressPath}
               editable={editMode} addMode={addKind !== null}
               onMoveElement={(id, dx, dz) => edit((e) => nudge(e, id, { x: dx, y: 0, z: dz }))}
-              onAddAt={(x, z) => { const lv = activeLevel < 0 ? 0 : Math.min(activeLevel, storeys - 1); edit((e) => (addKind === 'door' ? addDoorAt(e, model, lv, x, z) : addColumnAt(e, model, lv, x, z))); setAddKind(null) }} />
+              onAddAt={(x, z) => { const lv = activeLevel < 0 ? 0 : Math.min(activeLevel, storeys - 1); edit((e) => (addKind === 'stair' ? addStairAt(e, model, x, z) : addKind === 'door' ? addDoorAt(e, model, lv, x, z) : addColumnAt(e, model, lv, x, z))); setAddKind(null) }} />
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#16243c] ring-1 ring-[#2c4a6e]" /> Room</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" /> Column</span>
@@ -444,10 +445,11 @@ export default function BuildingExplorer() {
             </div>
           }
         />
-        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-5">
           <StatTile label="Occupant load" value={`${formatNumber(egress.summary.occupancy)} ppl`} accent="violet" />
           <StatTile label="Max travel" value={`${egress.summary.maxTravel} / ${egress.summary.maxTravelLimit} m`} accent={egress.summary.maxTravel > egress.summary.maxTravelLimit ? 'rose' : 'teal'} />
           <StatTile label="Rooms over travel" value={String(egress.summary.roomsOverTravel)} accent={egress.summary.roomsOverTravel ? 'amber' : 'emerald'} />
+          <StatTile label="Fire compartments" value={`${egress.summary.maxCompartments} / floor`} accent="amber" />
           <StatTile label="Worst floor" value={egress.summary.worstFloor} accent={egress.summary.ok ? 'emerald' : 'rose'} />
         </div>
         <div className="border-t border-edge/50 p-4">
@@ -455,7 +457,7 @@ export default function BuildingExplorer() {
             <table className="w-full min-w-[640px] text-left text-sm">
               <thead>
                 <tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">
-                  {['Level', 'Rooms', 'Occupants', 'Exits', 'Max travel (m)', 'Req. width (m)', 'Provided (m)', 'Status'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && i <= 6 && 'text-right')}>{h}</th>)}
+                  {['Level', 'Rooms', 'Occupants', 'Exits', 'Max travel (m)', 'Req. width (m)', 'Provided (m)', 'Compartments', 'Status'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && i <= 7 && 'text-right')}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -468,13 +470,14 @@ export default function BuildingExplorer() {
                     <td className={cn('data-mono px-3 py-1.5 text-right', f.maxTravel > egress.summary.maxTravelLimit ? 'text-rose-300' : 'text-slate-300')}>{f.maxTravel}</td>
                     <td className="data-mono px-3 py-1.5 text-right text-slate-300">{f.requiredWidth.toFixed(2)}</td>
                     <td className={cn('data-mono px-3 py-1.5 text-right', f.providedWidth < f.requiredWidth ? 'text-rose-300' : 'text-slate-300')}>{f.providedWidth.toFixed(2)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300" title={`${formatNumber(f.area)} m² ÷ ${formatNumber(f.maxCompartment)} m² max`}>{f.compartments}</td>
                     <td className="px-3 py-1.5">{f.ok ? <span className="text-emerald-300">Pass</span> : <span className="text-amber-300" title={f.issues.join('; ')}>{f.issues.length} issue{f.issues.length > 1 ? 's' : ''}</span>}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </ScrollableTable>
-          <p className="mt-3 text-[11px] text-slate-500">Travel distance is a straight-line room-centre → nearest stair estimate × 1.3 (circuitous factor). Select a room in the plan to see its egress path. Occupant load factor: {CODE_PRESETS[code].egress.occLoadFactor} m²/person.</p>
+          <p className="mt-3 text-[11px] text-slate-500">Travel distance is routed through the actual doorways (room → doors → core → nearest stair) via shortest path — select a room in the plan to see its route. Occupant load factor {CODE_PRESETS[code].egress.occLoadFactor} m²/person; fire compartments = floor area ÷ {formatNumber(CODE_PRESETS[code].egress.maxCompartment)} m² max (indicative).</p>
         </div>
       </Card>
       </>
@@ -484,8 +487,8 @@ export default function BuildingExplorer() {
 }
 
 function egressCsv(e: ReturnType<typeof egressAnalysis>): string {
-  const head = ['Level', 'Rooms', 'Occupants', 'Exits', 'Max travel (m)', 'Required width (m)', 'Provided width (m)', 'Status', 'Issues'].join(',')
-  const rows = e.floors.map((f) => [f.name, f.rooms, f.occupancy, f.exits, f.maxTravel, f.requiredWidth, f.providedWidth, f.ok ? 'Pass' : 'Fail', `"${f.issues.join('; ')}"`].join(','))
+  const head = ['Level', 'Rooms', 'Occupants', 'Exits', 'Max travel (m)', 'Required width (m)', 'Provided width (m)', 'Floor area (m²)', 'Fire compartments', 'Status', 'Issues'].join(',')
+  const rows = e.floors.map((f) => [f.name, f.rooms, f.occupancy, f.exits, f.maxTravel, f.requiredWidth, f.providedWidth, f.area, f.compartments, f.ok ? 'Pass' : 'Fail', `"${f.issues.join('; ')}"`].join(','))
   return [head, ...rows].join('\n')
 }
 

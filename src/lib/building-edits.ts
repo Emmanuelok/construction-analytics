@@ -4,18 +4,19 @@
  * a new model so the 3D view, plan and schedules all reflect the edits live. No
  * Three.js, no DOM. */
 
-import type { BuildingModel, Box, Quad, Beam, Plate } from './building'
+import type { BuildingModel, Box, Quad, Beam, Plate, Stair } from './building'
 import type { Pt } from './zoning'
 import { SCENE_LEN_TO_M } from './massing'
+import { buildStair } from './building-stairs'
 
 export type Vec3 = { x: number; y: number; z: number }
 export type ElementEdit = { move?: Vec3; scale?: number; height?: number } // scale = section/size factor; height overrides h (or beam depth)
 export type AddedColumn = { id: string; level: number; x: number; y: number; z: number; w: number; h: number; d: number }
 export type AddedDoor = { id: string; level: number; a: Pt; b: Pt; y: number; h: number }
-export type BuildingEdits = { deleted: string[]; edits: Record<string, ElementEdit>; added: AddedColumn[]; addedDoors: AddedDoor[] }
+export type BuildingEdits = { deleted: string[]; edits: Record<string, ElementEdit>; added: AddedColumn[]; addedDoors: AddedDoor[]; addedStairs: Stair[] }
 
-export const emptyEdits = (): BuildingEdits => ({ deleted: [], edits: {}, added: [], addedDoors: [] })
-export const editCount = (e: BuildingEdits): number => e.deleted.length + Object.keys(e.edits).length + e.added.length + (e.addedDoors?.length ?? 0)
+export const emptyEdits = (): BuildingEdits => ({ deleted: [], edits: {}, added: [], addedDoors: [], addedStairs: [] })
+export const editCount = (e: BuildingEdits): number => e.deleted.length + Object.keys(e.edits).length + e.added.length + (e.addedDoors?.length ?? 0) + (e.addedStairs?.length ?? 0)
 
 const mvPt = (p: Pt, mv?: Vec3): Pt => (mv ? { x: p.x + mv.x, z: p.z + mv.z } : p)
 
@@ -57,7 +58,7 @@ export function applyEdits(m: BuildingModel, ed: BuildingEdits): BuildingModel {
   const partitions = keep(m.partitions).map((g) => editQuad(g, ed.edits[g.id ?? '']))
   const addedDoors: Quad[] = (ed.addedDoors ?? []).filter((a) => !del.has(a.id)).map((a) => editQuad({ a: a.a, b: a.b, y: a.y, h: a.h, level: a.level, id: a.id }, ed.edits[a.id]))
   const interiorDoors = keep(m.interiorDoors).map((g) => editQuad(g, ed.edits[g.id ?? ''])).concat(addedDoors)
-  const stairs = keep(m.stairs) // stairs can be deleted; geometry is precomputed
+  const stairs = keep(m.stairs).concat((ed.addedStairs ?? []).filter((s) => !del.has(s.id ?? ''))) // stairs can be added (a shaft) or deleted
   const slabs = keep(m.slabs).map((s) => editPlate(s, ed.edits[s.id ?? '']))
   const core = m.core && !del.has('core') ? editBox(m.core, ed.edits['core']) : null
   const roof = m.roof && !del.has('roof') ? editPlate(m.roof, ed.edits['roof']) : null
@@ -82,10 +83,28 @@ export function rescale(ed: BuildingEdits, id: string, factor: number): Building
   const scale = Math.max(0.2, Math.min(5, (cur.scale ?? 1) * factor))
   return { ...ed, edits: { ...ed.edits, [id]: { ...cur, scale } } }
 }
-/** Delete an element (drops any pending edit; removes an added element outright). */
+/** Delete an element (drops any pending edit; removes an added element outright; an
+ *  added stair removes the whole shaft it belongs to). */
 export function removeElement(ed: BuildingEdits, id: string): BuildingEdits {
+  if (id.startsWith('add-stair-')) { const pre = id.replace(/-\d+$/, '') + '-'; return { ...ed, addedStairs: (ed.addedStairs ?? []).filter((s) => !(s.id ?? '').startsWith(pre)), edits: omit(ed.edits, id) } }
   if (id.startsWith('add-')) return { ...ed, added: ed.added.filter((a) => a.id !== id), addedDoors: (ed.addedDoors ?? []).filter((a) => a.id !== id), edits: omit(ed.edits, id) }
   return { ...ed, deleted: ed.deleted.includes(id) ? ed.deleted : [...ed.deleted, id], edits: omit(ed.edits, id) }
+}
+/** Add an egress stair shaft (a half-turn stair on every storey) at a plan point. */
+export function addStairAt(ed: BuildingEdits, m: BuildingModel, x: number, z: number): BuildingEdits {
+  const levels = [...new Set(m.slabs.map((s) => s.level ?? 0))].sort((a, b) => a - b)
+  if (!levels.length) return ed
+  const token = Math.random().toString(36).slice(2, 8)
+  const box = { x, z, w: 2.6 / SCENE_LEN_TO_M, d: 4.8 / SCENE_LEN_TO_M } // ~2.6 × 4.8 m shaft
+  const added: Stair[] = []
+  for (const lvl of levels) {
+    const ref = m.stairs.find((s) => s.level === lvl)
+    let base: number, height: number
+    if (ref) { base = ref.base; height = ref.top - ref.base }
+    else { const slab = m.slabs.find((s) => (s.level ?? 0) === lvl); const next = m.slabs.find((s) => (s.level ?? 0) === lvl + 1); base = slab ? slab.y : lvl; height = slab && next ? next.y - slab.y : 1 }
+    added.push(buildStair(box, { base, height, level: lvl }, 3.6, `add-stair-${token}-${lvl}`))
+  }
+  return { ...ed, addedStairs: [...(ed.addedStairs ?? []), ...added] }
 }
 /** Add an interior door onto the partition nearest a plan point (clamped to fit). */
 export function addDoorAt(ed: BuildingEdits, m: BuildingModel, level: number, x: number, z: number): BuildingEdits {

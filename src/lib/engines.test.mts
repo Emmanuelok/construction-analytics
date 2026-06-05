@@ -25,7 +25,7 @@ import { mentionNotifications, shareNotifications, alertNotifications, buildFeed
 import { buildMassing, massingSchedule, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
 import { buildBuilding } from './building.ts'
 import { explodeBuilding, planForLevel, findElementGeom, levelColumns, levelPanels } from './building-explorer.ts'
-import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, addDoorAt, duplicateColumn, editCount } from './building-edits.ts'
+import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, addDoorAt, addStairAt, duplicateColumn, editCount } from './building-edits.ts'
 import { toObj, objStats } from './building-export.ts'
 import { toIfc } from './building-ifc.ts'
 import { handleMcpRpc, MCP_PROTOCOL, SERVER_INFO } from './mcp-rpc.ts'
@@ -871,6 +871,14 @@ section('building-edits')
   ok('an authored door can be removed again + editCount tracks it', applyEdits(model, removeElement(withDoor, withDoor.addedDoors[0].id)).interiorDoors.length === model.interiorDoors.length && editCount(withDoor) === 1)
   ok('addDoorAt with no partitions on the level is a no-op', addDoorAt(emptyEdits(), { ...model, partitions: [] }, 0, 0, 0).addedDoors.length === 0)
 
+  // add / remove an egress stair shaft (one flight per storey)
+  const withStair = addStairAt(emptyEdits(), model, 0, 0)
+  const sm = applyEdits(model, withStair)
+  ok('add stair: a new egress shaft (one flight per storey) appears', sm.stairs.length === model.stairs.length + model.counts.storeys && sm.counts.stairs === sm.stairs.length)
+  ok('the added stair flights climb & carry add-stair ids', withStair.addedStairs.every((s) => s.id!.startsWith('add-stair-') && s.flights.length === 2 && s.top > s.base))
+  ok('deleting an added stair removes the whole shaft', applyEdits(model, removeElement(withStair, withStair.addedStairs[0].id!)).stairs.length === model.stairs.length)
+  ok('a generated stair can be deleted (count −1)', applyEdits(model, removeElement(emptyEdits(), model.stairs[0].id!)).stairs.length === model.stairs.length - 1)
+
   // an added column can itself be deleted, and edits explode + schedule live
   const ed = addColumnAt(emptyEdits(), model, 0, 0, 0)
   const addId = ed.added[0].id
@@ -922,15 +930,17 @@ section('building-partitions')
 // ── building-code + egress (life-safety analysis) ───────────────────────────────
 section('egress')
 {
-  ok('three code presets carry stair + egress limits', CODE_KEYS.length === 3 && CODE_KEYS.every((k) => CODE_PRESETS[k].stair.maxRise > 0 && CODE_PRESETS[k].egress.maxTravel > 0 && CODE_PRESETS[k].egress.occLoadFactor > 0))
+  ok('three code presets carry stair + egress + compartment limits', CODE_KEYS.length === 3 && CODE_KEYS.every((k) => CODE_PRESETS[k].stair.maxRise > 0 && CODE_PRESETS[k].egress.maxTravel > 0 && CODE_PRESETS[k].egress.occLoadFactor > 0 && CODE_PRESETS[k].egress.maxCompartment > 0))
   const m = buildBuilding(buildMassing({ gfa: 120_000, progress: 100, storeys: 8, shape: 'rect' }), { coreRatio: 0.16 })
   const eg = egressAnalysis(m, { code: 'IBC' })
-  ok('every room gets an occupant load + a travel distance to an exit', eg.rooms.length === m.rooms.length && eg.rooms.every((r) => r.occupancy >= 1 && r.travel >= 0 && !!r.exit))
-  ok('a floor summary per storey with occupancy, exits & required width', eg.floors.length > 0 && eg.floors.every((f) => f.occupancy > 0 && f.exits >= 1 && f.requiredWidth >= 0 && f.providedWidth > 0))
+  ok('every room gets an occupant load + a routed travel distance', eg.rooms.length === m.rooms.length && eg.rooms.every((r) => r.occupancy >= 1 && r.travel >= 0) && eg.rooms.some((r) => r.travel > 0))
+  ok('a floor summary per storey with occupancy, exits, width & compartments', eg.floors.length > 0 && eg.floors.every((f) => f.occupancy > 0 && f.exits >= 1 && f.requiredWidth >= 0 && f.providedWidth > 0 && f.area > 0 && f.compartments >= 1))
   ok('occupancy is denser under UK than IBC (lower load factor)', egressAnalysis(m, { code: 'UK' }).summary.occupancy > eg.summary.occupancy)
   ok('a tighter travel limit fails at least as many rooms (EU ≤ IBC limit)', egressAnalysis(m, { code: 'EU' }).summary.roomsOverTravel >= eg.summary.roomsOverTravel)
-  ok('the building summary totals occupancy + worst travel', eg.summary.occupancy === eg.floors.reduce((s, f) => s + f.occupancy, 0) && eg.summary.maxTravel >= 0 && eg.summary.maxTravelLimit === CODE_PRESETS.IBC.egress.maxTravel)
-  ok('egressPathFor gives a centre→exit line for a room', (() => { const p = egressPathFor(m, m.rooms[0].id); return !!p && !!p.from && !!p.to })())
+  ok('the building summary totals occupancy + max compartments', eg.summary.occupancy === eg.floors.reduce((s, f) => s + f.occupancy, 0) && eg.summary.maxCompartments === Math.max(...eg.floors.map((f) => f.compartments)) && eg.summary.maxTravelLimit === CODE_PRESETS.IBC.egress.maxTravel)
+  // travel is ROUTED through the doors: remove every interior door → rooms are stranded
+  ok('routed travel needs doors (no doors → rooms stranded)', (() => { const e2 = egressAnalysis({ ...m, interiorDoors: [] }); return e2.rooms.every((r) => !r.ok && r.reason === 'no door route to a stair') })())
+  ok('egressPathFor returns a routed polyline (room → … → exit)', (() => { const p = egressPathFor(m, m.rooms[0].id); return !!p && p.points.length >= 2 })())
   ok('no stairs & no core → every room is flagged (no exit)', (() => { const e2 = egressAnalysis({ ...m, stairs: [], core: null }); return e2.rooms.every((r) => !r.ok) && e2.floors.every((f) => !f.ok) })())
 }
 

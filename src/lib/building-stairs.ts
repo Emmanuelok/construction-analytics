@@ -54,10 +54,10 @@ export function stairCheck(s: Stair, storeyHeight = 3.6, limits: StairLimits = C
   return { riseM, goingM, widthM, pitch, twoRG, risersPerFlight, ok: issues.length === 0, issues }
 }
 
-type CoreBox = { x: number; z: number; w: number; d: number }
+export type CoreBox = { x: number; z: number; w: number; d: number }
 
 /** One code-dimensioned half-turn stair (two flights + landing + rails) in a (sub-)core. */
-function buildStair(core: CoreBox, f: Floor, sh: number, id: string): Stair {
+export function buildStair(core: CoreBox, f: Floor, sh: number, id: string): Stair {
   const { base, height: floorH, level } = f
   const top = base + floorH, mid = base + floorH / 2
   const dir: 'x' | 'z' = core.d >= core.w ? 'z' : 'x'
