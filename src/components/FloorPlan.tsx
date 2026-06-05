@@ -78,10 +78,6 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
       role="img" aria-label={`Floor plan, ${plan.isRoof ? 'roof' : `level ${plan.level}`}: ${plan.rooms.length} rooms, ${plan.partitions.length} partitions, ${plan.interiorDoors.length} interior doors, ${plan.columns.length} columns, ${plan.panels.length} windows, ${plan.doors.length} doors, ${plan.stairs.length} stairs`}
       onWheel={onWheel} onPointerDown={onBgDown}>
       <g ref={gRef} transform={`translate(${view.ox} ${view.oy}) scale(${view.k})`}>
-        {/* add-column capture layer (only active in Add mode) */}
-        {addMode && onAddAt && (
-          <rect x={-pad * 4} y={-pad * 4} width={(w + 2 * pad) * 4} height={(h + 2 * pad) * 4} fill="transparent" onClick={(e) => { const p = worldAt(e.clientX, e.clientY); onAddAt(p.x, p.z) }} />
-        )}
         {/* slab fill + outline */}
         {hole
           ? <path d={`M ${outline.replace(/ /g, ' L ')} Z M ${hole.replace(/ /g, ' L ')} Z`} fillRule="evenodd" fill="#11203a" stroke="none" />
@@ -141,6 +137,10 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
         <g>{plan.columns.map((c) => { const on = selected === c.id; return <circle key={c.id} cx={toX(c.x)} cy={toY(c.z)} r={on ? colR * 1.7 : colR} fill={on ? '#fbbf24' : '#94a3b8'} stroke="#0a0f1c" strokeWidth={0.6} vectorEffect="non-scaling-stroke" className={editable ? 'cursor-grab' : 'cursor-pointer'} onPointerDown={(e) => startElDrag(e, c.id)} onClick={() => { if (!dragRef.current?.moved) onSelect(c.id) }} /> })}</g>
         {/* core footprint */}
         {plan.core && <rect x={toX(plan.core.x) - plan.core.w / 2} y={toY(plan.core.z) - plan.core.d / 2} width={plan.core.w} height={plan.core.d} fill={selected === 'core' ? '#fbbf2433' : '#33415566'} stroke={selected === 'core' ? '#fbbf24' : '#64748b'} strokeWidth={selected === 'core' ? 2.5 : 1.2} vectorEffect="non-scaling-stroke" className="cursor-pointer" onClick={() => !addMode && onSelect('core')} />}
+        {/* add capture layer (on top while Add column / Add door is active, so a click anywhere places the element) */}
+        {addMode && onAddAt && (
+          <rect x={-pad * 4} y={-pad * 4} width={(w + 2 * pad) * 4} height={(h + 2 * pad) * 4} fill="transparent" className="cursor-crosshair" onClick={(e) => { const p = worldAt(e.clientX, e.clientY); onAddAt(p.x, p.z) }} />
+        )}
         {/* north arrow */}
         <g transform={`translate(${w + pad * 0.35}, ${pad * 0.2})`} aria-hidden>
           <line x1={0} y1={ext * 0.07} x2={0} y2={0} stroke="#64748b" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />

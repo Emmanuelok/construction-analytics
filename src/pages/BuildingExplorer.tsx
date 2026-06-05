@@ -8,7 +8,7 @@ import { FloorPlan } from '@/components/FloorPlan'
 import { buildMassing, deriveStoreys, SHAPE_KINDS, type ShapeKind } from '@/lib/massing'
 import { buildBuilding, type BuildingModel } from '@/lib/building'
 import { explodeBuilding, planForLevel, type Schedule, type ScheduleCol, type BuildingElement } from '@/lib/building-explorer'
-import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, duplicateColumn, editCount, type BuildingEdits } from '@/lib/building-edits'
+import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, addDoorAt, duplicateColumn, editCount, type BuildingEdits } from '@/lib/building-edits'
 import { toObj } from '@/lib/building-export'
 import { toIfc } from '@/lib/building-ifc'
 import type { IfcLabels } from '@/lib/ifc-to-model'
@@ -61,7 +61,7 @@ export default function BuildingExplorer() {
   const [bayWidth, setBayWidth] = useState(() => init0?.bayWidth ?? 3.4)
   const [mullions, setMullions] = useState(() => init0?.mullions ?? true)
   const [editMode, setEditMode] = useState(false)
-  const [addMode, setAddMode] = useState(false)
+  const [addKind, setAddKind] = useState<'column' | 'door' | null>(null)
   const [edits, setEdits] = useState<BuildingEdits>(() => init0?.edits ?? emptyEdits())
   const [past, setPast] = useState<BuildingEdits[]>([])
   const [future, setFuture] = useState<BuildingEdits[]>([])
@@ -83,7 +83,7 @@ export default function BuildingExplorer() {
     const h = Math.round(sh * 10) / 10
     setImported({ model: m, name, labels }); setStoreyHeight(h)
     setEdits(emptyEdits()); setPast([]); setFuture([]); setSelectedId(null)
-    setActiveLevel(0); setIsolate(false); setAddMode(false); setEditMode(false); setSource('parametric')
+    setActiveLevel(0); setIsolate(false); setAddKind(null); setEditMode(false); setSource('parametric')
     idbSet(IMPORT_KEY, { model: m, name, labels, storeyHeight: h }).catch(() => { /* over quota — stays in memory */ })
   }
   const discardImport = () => { setImported(null); setEdits(emptyEdits()); setPast([]); setFuture([]); setSelectedId(null); setActiveLevel(0); setIsolate(false); idbDel(IMPORT_KEY).catch(() => {}) }
@@ -117,7 +117,7 @@ export default function BuildingExplorer() {
   const commit = (next: BuildingEdits) => { setPast((p) => [...p.slice(-60), edits]); setFuture([]); setEdits(next) }
   const edit = (fn: (e: BuildingEdits) => BuildingEdits) => commit(fn(edits))
   const del = (id: string) => { commit(removeElement(edits, id)); setSelectedId(null) }
-  const resetEdits = () => { commit(emptyEdits()); setAddMode(false); setSelectedId(null) }
+  const resetEdits = () => { commit(emptyEdits()); setAddKind(null); setSelectedId(null) }
   const exportCfg = () => downloadText(`${slug(project.name)}-building-design.json`, JSON.stringify({ project: project.name, storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, edits }, null, 2), 'JSON')
   const importCfg = async (e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; if (!f) return; try { applyCfg(JSON.parse(await f.text()), project.gfa) } catch { /* ignore */ } e.target.value = '' }
   const selectedEl: BuildingElement | null = selectedId ? ex.byId[selectedId] ?? null : null
@@ -240,14 +240,15 @@ export default function BuildingExplorer() {
       <div className="grid gap-6 lg:grid-cols-[1.55fr_1fr]">
         <Card className="overflow-hidden">
           <CardHeader
-            icon={Eye} accent="blue" title="3D model" subtitle="Click any element to inspect it; isolate a floor from the levels panel. Turn on Edit to move / resize / delete / duplicate elements (or drag a column in the plan) and add columns — the schedules update live."
+            icon={Eye} accent="blue" title="3D model" subtitle="Click any element to inspect it; isolate a floor from the levels panel. Turn on Edit to move / resize / delete / duplicate elements (or drag a column in the plan) and add columns or interior doors — the schedules update live."
             action={
               <div className="flex flex-wrap items-center gap-2">
                 {isolate && <Badge variant="cyan">Isolated · {activeLevelInfo?.name ?? `Level ${activeLevel}`}</Badge>}
                 <button onClick={() => setIsolate(false)} disabled={!isolate} className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', isolate ? 'text-slate-300 ring-edge/60 hover:bg-elevated/50' : 'cursor-default text-slate-600 ring-edge/40')}>Whole building</button>
-                <button onClick={() => { setEditMode((v) => !v); setAddMode(false) }} aria-pressed={editMode} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', editMode ? 'bg-amber-500/20 text-amber-100 ring-amber-500/40' : 'text-slate-300 ring-edge/60 hover:bg-elevated/50')}><Pencil className="h-3.5 w-3.5" /> Edit</button>
+                <button onClick={() => { setEditMode((v) => !v); setAddKind(null) }} aria-pressed={editMode} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', editMode ? 'bg-amber-500/20 text-amber-100 ring-amber-500/40' : 'text-slate-300 ring-edge/60 hover:bg-elevated/50')}><Pencil className="h-3.5 w-3.5" /> Edit</button>
                 {editMode && <>
-                  <button onClick={() => setAddMode((v) => !v)} aria-pressed={addMode} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', addMode ? 'bg-emerald-500/20 text-emerald-100 ring-emerald-500/40' : 'text-slate-300 ring-edge/60 hover:bg-elevated/50')}><Plus className="h-3.5 w-3.5" /> Add column</button>
+                  <button onClick={() => setAddKind((k) => (k === 'column' ? null : 'column'))} aria-pressed={addKind === 'column'} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', addKind === 'column' ? 'bg-emerald-500/20 text-emerald-100 ring-emerald-500/40' : 'text-slate-300 ring-edge/60 hover:bg-elevated/50')}><Plus className="h-3.5 w-3.5" /> Add column</button>
+                  <button onClick={() => setAddKind((k) => (k === 'door' ? null : 'door'))} aria-pressed={addKind === 'door'} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', addKind === 'door' ? 'bg-emerald-500/20 text-emerald-100 ring-emerald-500/40' : 'text-slate-300 ring-edge/60 hover:bg-elevated/50')}><DoorOpen className="h-3.5 w-3.5" /> Add door</button>
                   <button onClick={resetEdits} disabled={!nEdits} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', nEdits ? 'text-slate-300 ring-edge/60 hover:bg-elevated/50' : 'cursor-default text-slate-600 ring-edge/40')}><RotateCcw className="h-3.5 w-3.5" /> Reset{nEdits ? ` (${nEdits})` : ''}</button>
                 </>}
                 <div className="flex flex-wrap gap-1.5">
@@ -293,12 +294,12 @@ export default function BuildingExplorer() {
       {/* floor plan + element inspector */}
       <div className="grid gap-6 lg:grid-cols-[1.25fr_1fr]">
         <Card className="overflow-hidden">
-          <CardHeader icon={Table2} accent="teal" title={`Floor plan — ${activeLevelInfo?.name ?? `Level ${activeLevel}`}`} subtitle="Scroll to zoom, drag the background to pan. Click an element to inspect it; in Edit mode, drag a column, window or door to move it. Selection syncs with the 3D model & schedules." />
+          <CardHeader icon={Table2} accent="teal" title={`Floor plan — ${activeLevelInfo?.name ?? `Level ${activeLevel}`}`} subtitle="Scroll to zoom, drag the background to pan. Click an element to inspect it; in Edit mode, drag a column/window/door to move it, or use Add door and click a partition to place a doorway. Selection syncs with the 3D model & schedules." />
           <div className="border-t border-edge/50 p-4">
             <FloorPlan plan={plan} selected={selectedId} onSelect={selectEl} height={340}
-              editable={editMode} addMode={addMode}
+              editable={editMode} addMode={addKind !== null}
               onMoveElement={(id, dx, dz) => edit((e) => nudge(e, id, { x: dx, y: 0, z: dz }))}
-              onAddAt={(x, z) => { edit((e) => addColumnAt(e, model, activeLevel < 0 ? 0 : Math.min(activeLevel, storeys - 1), x, z)); setAddMode(false) }} />
+              onAddAt={(x, z) => { const lv = activeLevel < 0 ? 0 : Math.min(activeLevel, storeys - 1); edit((e) => (addKind === 'door' ? addDoorAt(e, model, lv, x, z) : addColumnAt(e, model, lv, x, z))); setAddKind(null) }} />
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#16243c] ring-1 ring-[#2c4a6e]" /> Room</span>
               <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" /> Column</span>
@@ -329,6 +330,19 @@ export default function BuildingExplorer() {
                 {imported && selectedId && imported.labels[selectedId] && (
                   <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-[11px] text-amber-200/90">
                     IFC source — <span className="font-medium text-amber-100">{imported.labels[selectedId].name || 'unnamed'}</span> · <span className="data-mono">{imported.labels[selectedId].ifcType}</span>
+                  </div>
+                )}
+                {imported && selectedId && (imported.labels[selectedId]?.props?.length ?? 0) > 0 && (
+                  <div className="mb-3 overflow-hidden rounded-lg ring-1 ring-edge/50">
+                    <div className="bg-elevated/40 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">IFC properties</div>
+                    <dl className="max-h-44 divide-y divide-edge/40 overflow-y-auto">
+                      {imported.labels[selectedId]!.props!.map((p, i) => (
+                        <div key={i} className="flex items-center justify-between gap-4 px-3 py-1.5">
+                          <dt className="truncate text-xs text-slate-400">{p.name}</dt>
+                          <dd className="data-mono shrink-0 text-xs text-slate-200">{typeof p.value === 'number' ? p.value.toLocaleString(undefined, { maximumFractionDigits: 3 }) : p.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
                   </div>
                 )}
                 <dl className="divide-y divide-edge/40 rounded-lg ring-1 ring-edge/50">

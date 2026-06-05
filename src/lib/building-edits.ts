@@ -6,14 +6,16 @@
 
 import type { BuildingModel, Box, Quad, Beam, Plate } from './building'
 import type { Pt } from './zoning'
+import { SCENE_LEN_TO_M } from './massing'
 
 export type Vec3 = { x: number; y: number; z: number }
 export type ElementEdit = { move?: Vec3; scale?: number; height?: number } // scale = section/size factor; height overrides h (or beam depth)
 export type AddedColumn = { id: string; level: number; x: number; y: number; z: number; w: number; h: number; d: number }
-export type BuildingEdits = { deleted: string[]; edits: Record<string, ElementEdit>; added: AddedColumn[] }
+export type AddedDoor = { id: string; level: number; a: Pt; b: Pt; y: number; h: number }
+export type BuildingEdits = { deleted: string[]; edits: Record<string, ElementEdit>; added: AddedColumn[]; addedDoors: AddedDoor[] }
 
-export const emptyEdits = (): BuildingEdits => ({ deleted: [], edits: {}, added: [] })
-export const editCount = (e: BuildingEdits): number => e.deleted.length + Object.keys(e.edits).length + e.added.length
+export const emptyEdits = (): BuildingEdits => ({ deleted: [], edits: {}, added: [], addedDoors: [] })
+export const editCount = (e: BuildingEdits): number => e.deleted.length + Object.keys(e.edits).length + e.added.length + (e.addedDoors?.length ?? 0)
 
 const mvPt = (p: Pt, mv?: Vec3): Pt => (mv ? { x: p.x + mv.x, z: p.z + mv.z } : p)
 
@@ -53,7 +55,8 @@ export function applyEdits(m: BuildingModel, ed: BuildingEdits): BuildingModel {
   const doors = keep(m.doors).map((g) => editQuad(g, ed.edits[g.id ?? '']))
   const mullions = keep(m.mullions).map((c) => editBox(c, ed.edits[c.id ?? '']))
   const partitions = keep(m.partitions).map((g) => editQuad(g, ed.edits[g.id ?? '']))
-  const interiorDoors = keep(m.interiorDoors).map((g) => editQuad(g, ed.edits[g.id ?? '']))
+  const addedDoors: Quad[] = (ed.addedDoors ?? []).filter((a) => !del.has(a.id)).map((a) => editQuad({ a: a.a, b: a.b, y: a.y, h: a.h, level: a.level, id: a.id }, ed.edits[a.id]))
+  const interiorDoors = keep(m.interiorDoors).map((g) => editQuad(g, ed.edits[g.id ?? ''])).concat(addedDoors)
   const stairs = keep(m.stairs) // stairs can be deleted; geometry is precomputed
   const slabs = keep(m.slabs).map((s) => editPlate(s, ed.edits[s.id ?? '']))
   const core = m.core && !del.has('core') ? editBox(m.core, ed.edits['core']) : null
@@ -81,8 +84,26 @@ export function rescale(ed: BuildingEdits, id: string, factor: number): Building
 }
 /** Delete an element (drops any pending edit; removes an added element outright). */
 export function removeElement(ed: BuildingEdits, id: string): BuildingEdits {
-  if (id.startsWith('add-')) return { ...ed, added: ed.added.filter((a) => a.id !== id), edits: omit(ed.edits, id) }
+  if (id.startsWith('add-')) return { ...ed, added: ed.added.filter((a) => a.id !== id), addedDoors: (ed.addedDoors ?? []).filter((a) => a.id !== id), edits: omit(ed.edits, id) }
   return { ...ed, deleted: ed.deleted.includes(id) ? ed.deleted : [...ed.deleted, id], edits: omit(ed.edits, id) }
+}
+/** Add an interior door onto the partition nearest a plan point (clamped to fit). */
+export function addDoorAt(ed: BuildingEdits, m: BuildingModel, level: number, x: number, z: number): BuildingEdits {
+  const parts = m.partitions.filter((p) => (p.level ?? 0) === level)
+  if (!parts.length) return ed
+  let best = parts[0], bestD = Infinity, bestT = 0.5
+  for (const p of parts) {
+    const dx = p.b.x - p.a.x, dz = p.b.z - p.a.z, L2 = dx * dx + dz * dz || 1
+    const t = Math.max(0, Math.min(1, ((x - p.a.x) * dx + (z - p.a.z) * dz) / L2))
+    const d = Math.hypot(x - (p.a.x + dx * t), z - (p.a.z + dz * t))
+    if (d < bestD) { bestD = d; best = p; bestT = t }
+  }
+  const dx = best.b.x - best.a.x, dz = best.b.z - best.a.z, L = Math.hypot(dx, dz) || 1
+  const half = Math.min(0.9 / SCENE_LEN_TO_M / 2, L * 0.45) // 0.9 m leaf, clamped to the wall
+  const t = Math.max(half / L, Math.min(1 - half / L, bestT))
+  const cx = best.a.x + dx * t, cz = best.a.z + dz * t, ux = dx / L, uz = dz / L
+  const id = `add-idoor-${level}-${Math.random().toString(36).slice(2, 8)}`
+  return { ...ed, addedDoors: [...(ed.addedDoors ?? []), { id, level, a: { x: cx - ux * half, z: cz - uz * half }, b: { x: cx + ux * half, z: cz + uz * half }, y: best.y, h: best.h * 0.62 }] }
 }
 /** Add a column at a plan point on a level, copying the level's column profile. */
 export function addColumnAt(ed: BuildingEdits, m: BuildingModel, level: number, x: number, z: number): BuildingEdits {

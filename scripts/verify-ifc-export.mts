@@ -6,6 +6,7 @@ import { buildBuilding } from '../src/lib/building.ts'
 import { buildMassing } from '../src/lib/massing.ts'
 import { toIfc } from '../src/lib/building-ifc.ts'
 import { applyEdits, emptyEdits, removeElement } from '../src/lib/building-edits.ts'
+import { extractGeometry } from '../src/lib/ifc-geometry.ts'
 
 let failures = 0
 const ok = (n: string, c: boolean, extra?: unknown) => { if (c) console.log(`✓ ${n}`); else { failures++; console.error(`✗ ${n}`, extra ?? '') } }
@@ -34,6 +35,12 @@ api.StreamAllMeshes(mid, (mesh: { geometries: { size(): number; get(i: number): 
 })
 ok('parametric geometry tessellates (meshes + triangles > 0)', meshes > 0 && tris > 0, { meshes, tris: Math.round(tris) })
 api.CloseModel(mid)
+
+// the importer reads our exported property sets back (full pset round-trip)
+const geo = await extractGeometry(new TextEncoder().encode(ifc), { locateFile: (p: string, prefix: string) => (p.endsWith('.wasm') ? `${process.cwd()}/node_modules/web-ifc/${p}` : prefix + p) })
+const propSets = Object.values(geo.props ?? {})
+ok('extractGeometry reads the exported IfcPropertySets back', propSets.length > 0 && propSets.some((ps) => ps.some((p) => p.name === 'Reference' || p.name === 'Width' || p.name === 'Level')),
+  { elementsWithProps: propSets.length, sample: propSets[0]?.slice(0, 3) })
 
 // edits flow through the round-trip
 const edited = toIfc(applyEdits(model, removeElement(emptyEdits(), model.columns[0].id!)), { name: 'Edited' })

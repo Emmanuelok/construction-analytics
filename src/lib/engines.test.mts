@@ -25,13 +25,13 @@ import { mentionNotifications, shareNotifications, alertNotifications, buildFeed
 import { buildMassing, massingSchedule, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
 import { buildBuilding } from './building.ts'
 import { explodeBuilding, planForLevel, findElementGeom, levelColumns, levelPanels } from './building-explorer.ts'
-import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, duplicateColumn, editCount } from './building-edits.ts'
+import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, addDoorAt, duplicateColumn, editCount } from './building-edits.ts'
 import { toObj, objStats } from './building-export.ts'
 import { toIfc } from './building-ifc.ts'
 import { handleMcpRpc, MCP_PROTOCOL, SERVER_INFO } from './mcp-rpc.ts'
 import { floorRooms, floorGrid } from './building-rooms.ts'
 import { floorPartitions } from './building-partitions.ts'
-import { coreStairs } from './building-stairs.ts'
+import { coreStairs, stairCheck } from './building-stairs.ts'
 import { explodeIfc, meshGeom, friendlyType, sliceMeshes, cutHeightFor } from './ifc-explorer.ts'
 import { ifcToModel } from './ifc-to-model.ts'
 import type { IfcGeometryResult, IfcMesh } from './ifc-geometry.ts'
@@ -818,6 +818,7 @@ section('building-explorer')
   ok('a partition schedule row totals interior wall length', (() => { const ps = ex.schedules.find((s) => s.category === 'Partition')!; return ps.rows.length === model.partitions.length && ps.totals.length > 0 })())
   ok('an interior-door element carries width/height/leaf area', (() => { const e = ex.byId[model.interiorDoors[0].id!]; return !!e && e.category === 'Interior Door' && Number(e.data.width) > 0 && Number(e.data.area) > 0 })())
   ok('a stair element carries flights + risers + a riser height + going', (() => { const e = ex.byId['stair-0']; return !!e && Number(e.data.flights) === 2 && Number(e.data.risers) >= 14 && Number(e.data.rise) > 0 && Number(e.data.going) > 0 })())
+  ok('a stair element reports a building-code status (Pass) + pitch', (() => { const e = ex.byId['stair-0']; return !!e && e.data.code === 'Pass' && Number(e.data.pitch) > 0 && Number(e.data.pitch) < 42 && Number(e.data.rise) <= 0.19 })())
   ok('the level plan carries partitions + interior doors + a stair', (() => { const p = planForLevel(model, 0); return p.partitions.length > 0 && p.interiorDoors.length > 0 && p.stairs.length === 1 && p.stairs[0].id === 'stair-0' })())
   ok('findElementGeom locates a partition + interior door + a stair', !!findElementGeom(model, model.partitions[0].id!) && !!findElementGeom(model, model.interiorDoors[0].id!) && (() => { const g = findElementGeom(model, 'stair-0'); return !!g && g.size.y > 0 })())
   // highlight geometry
@@ -857,6 +858,16 @@ section('building-edits')
 
   // duplicate a column
   ok('duplicate: copies a column (count +1)', applyEdits(model, duplicateColumn(emptyEdits(), model, col0)).columns.length === model.columns.length + 1)
+
+  // author an interior door onto the nearest partition
+  const part0 = model.partitions[0]
+  const mid = { x: (part0.a.x + part0.b.x) / 2, z: (part0.a.z + part0.b.z) / 2 }
+  const withDoor = addDoorAt(emptyEdits(), model, part0.level ?? 0, mid.x, mid.z)
+  const dm = applyEdits(model, withDoor)
+  ok('add door: a new interior door appears on a partition (count +1)', dm.interiorDoors.length === model.interiorDoors.length + 1 && dm.counts.interiorDoors === dm.interiorDoors.length)
+  ok('the authored door sits on the chosen partition, with a real leaf', (() => { const d = dm.interiorDoors.find((x) => x.id!.startsWith('add-idoor-'))!; return !!d && d.level === (part0.level ?? 0) && Math.hypot(d.b.x - d.a.x, d.b.z - d.a.z) > 0 && d.h > 0 })())
+  ok('an authored door can be removed again + editCount tracks it', applyEdits(model, removeElement(withDoor, withDoor.addedDoors[0].id)).interiorDoors.length === model.interiorDoors.length && editCount(withDoor) === 1)
+  ok('addDoorAt with no partitions on the level is a no-op', addDoorAt(emptyEdits(), { ...model, partitions: [] }, 0, 0, 0).addedDoors.length === 0)
 
   // an added column can itself be deleted, and edits explode + schedule live
   const ed = addColumnAt(emptyEdits(), model, 0, 0, 0)
@@ -901,6 +912,8 @@ section('building-partitions')
   ok('a stair rises a full storey & runs along the core', stairs.every((s) => near(s.top - s.base, 0.92, 1e-9) && (s.dir === 'x' || s.dir === 'z') && s.widthScene > 0))
   ok('all stair parts carry the stair id (click any → select it)', stairs[0].treads.concat(stairs[0].landings, stairs[0].rails).every((t) => t.id === 'stair-0'))
   ok('flight A treads climb monotonically', stairs[0].flights[0].treads.every((t, i, a) => i === 0 || t.y > a[i - 1].y))
+  ok('stairs are code-dimensioned & pass the stair check', stairs.every((s) => { const c = stairCheck(s, 3.6); return c.ok && c.riseM <= 0.19 && c.goingM >= 0.25 && c.widthM >= 1.0 && c.pitch < 42 }))
+  ok('stairCheck flags a too-steep stair (tiny going)', (() => { const c = stairCheck({ ...stairs[0], treadDepth: 0.02, flights: stairs[0].flights }, 3.6); return !c.ok && c.issues.some((i) => /going/.test(i)) })())
   ok('no core → no stairs', coreStairs(null, floors).length === 0)
 }
 
@@ -1004,10 +1017,12 @@ section('ifc-to-model')
     ],
     vertexCount: 0, triangleCount: 0, bbox: null,
     storeys: [{ expressID: 200, name: 'Level 1', elevation: 3 }, { expressID: 100, name: 'Ground', elevation: 0 }],
+    props: { 11: [{ name: 'FireRating', value: '60' }, { name: 'LoadBearing', value: 'false' }], 10: [{ name: 'CrossSectionArea', value: 0.16 }] },
   }
   const { model, storeyHeight, labels } = ifcToModel(res)
   ok('reconstructs the storeys at the IFC storey height', model.counts.storeys === 2 && near(storeyHeight, 3, 1e-9))
   ok('returns a labels map carrying each element’s original IFC name + type', labels['ifc-11'].ifcType === 'IFCWALLSTANDARDCASE' && labels['ifc-11'].name === 'Ext Wall' && labels['ifc-21'].name === 'Office 201' && labels['ifc-10'].ifcType === 'IFCCOLUMN')
+  ok('labels carry the elements’ IFC property sets', labels['ifc-11'].props?.length === 2 && labels['ifc-11'].props![0].name === 'FireRating' && labels['ifc-10'].props![0].value === 0.16)
   ok('buckets IFC products into editable primitives by type', model.columns.length >= 2 && model.walls.length === 1 && model.glazing.length === 1 && model.beams.length === 1 && model.rooms.length === 1)
   ok('an unknown product is rationalized by shape (furniture → a box column)', model.columns.some((c) => c.id === 'ifc-22'))
   ok('one floor slab per level, id floor-N (plan + isolate work)', model.slabs.length === 2 && !!model.slabs.find((s) => s.id === 'floor-0') && !!model.slabs.find((s) => s.id === 'floor-1'))
