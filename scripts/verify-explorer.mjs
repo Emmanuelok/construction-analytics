@@ -87,6 +87,26 @@ try {
   const notIsolated = await page.evaluate(() => !/Isolated\s*·/.test(document.body.innerText))
   ok('"Whole building" clears isolation', notIsolated)
 
+  // life-safety / egress card: occupant load + a code selector + a per-floor table
+  const ls = await page.evaluate(() => ({ title: /Life safety/.test(document.body.innerText), code: !!document.querySelector('#egress-code'), occ: /Occupant load/.test(document.body.innerText), table: !!document.querySelector('[aria-label^="Egress by floor"]') }))
+  ok('life-safety egress card with occupant load, code selector & floor table', ls.title && ls.code && ls.occ && ls.table, ls)
+
+  // selecting a room draws its egress path (centre → nearest stair) in the plan
+  await page.evaluate(() => { const t = [...document.querySelectorAll('button')].find((x) => /^Rooms \(/.test((x.textContent || '').trim())); t?.click() })
+  await new Promise((r) => setTimeout(r, 250))
+  await page.evaluate(() => document.querySelector('tbody tr')?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+  await new Promise((r) => setTimeout(r, 400))
+  const hasPath = await page.evaluate(() => { const svg = [...document.querySelectorAll('svg')].find((s) => (s.getAttribute('aria-label') || '').startsWith('Floor plan')); return !!svg && !!svg.querySelector('line[stroke-dasharray="4 3"]') })
+  ok('selecting a room draws its egress path in the plan', hasPath)
+
+  // switching the code jurisdiction re-runs the analysis (UK denser than IBC)
+  const occOf = () => page.evaluate(() => { const m = document.body.innerText.match(/([\d,]+)\s*ppl/); return m ? Number(m[1].replace(/,/g, '')) : -1 })
+  const occIBC = await occOf()
+  await page.select('#egress-code', 'UK')
+  await new Promise((r) => setTimeout(r, 450))
+  const occUK = await occOf()
+  ok('switching code (IBC → UK) increases the occupant load', occIBC > 0 && occUK > occIBC, { occIBC, occUK })
+
   const realErrors = errors.filter((e) => !/404|favicon|tile|Failed to load resource/i.test(e))
   ok('no console errors', realErrors.length === 0, realErrors.slice(0, 4))
 } catch (e) {
