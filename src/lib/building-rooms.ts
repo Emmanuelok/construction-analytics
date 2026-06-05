@@ -31,7 +31,7 @@ function clipHalf(poly: Pt[], inside: (p: Pt) => boolean, cross: (a: Pt, b: Pt) 
 const lerp = (a: Pt, b: Pt, t: number): Pt => ({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t })
 
 /** Intersection of polygon with the axis-aligned rectangle [x0,x1]×[z0,z1]. */
-function clipToRect(poly: Pt[], x0: number, x1: number, z0: number, z1: number): Pt[] {
+export function clipToRect(poly: Pt[], x0: number, x1: number, z0: number, z1: number): Pt[] {
   let p = poly
   p = clipHalf(p, (q) => q.x >= x0, (a, b) => lerp(a, b, (x0 - a.x) / (b.x - a.x)))
   if (p.length < 3) return []

@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import type { LevelPlan } from '@/lib/building-explorer'
+import type { FloorFire } from '@/lib/fire'
 import { compass } from '@/lib/geo'
 
 /* A top-down 2D floor plan of a single level — slab outline (+ any void), columns,
@@ -7,7 +8,7 @@ import { compass } from '@/lib/geo'
  * Click an element to inspect it. Scroll to zoom, drag the background to pan. In edit
  * mode, drag a column / window / door to move it, or (with Add active) click to drop a
  * new column. North is up (scene x = East, z = North). */
-export function FloorPlan({ plan, selected, onSelect, editable = false, addMode = false, onMoveElement, onAddAt, egressPath, height = 320 }: {
+export function FloorPlan({ plan, selected, onSelect, editable = false, addMode = false, onMoveElement, onAddAt, egressPath, compartments, height = 320 }: {
   plan: LevelPlan
   selected: string | null
   onSelect: (id: string) => void
@@ -16,6 +17,7 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
   onMoveElement?: (id: string, dx: number, dz: number) => void
   onAddAt?: (x: number, z: number) => void
   egressPath?: { points: { x: number; z: number }[] } | null
+  compartments?: FloorFire | null
   height?: number
 }) {
   const { b, w, h, pad, toX, toY, ext } = useMemo(() => {
@@ -131,6 +133,13 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
             </g>
           )
         })}</g>
+        {/* fire compartments: rated boundary walls + area labels */}
+        {compartments && compartments.compartments.length > 0 && (
+          <g aria-hidden className="pointer-events-none">
+            {compartments.compartments.map((c) => <text key={c.id} x={toX(c.center.x)} y={toY(c.center.z)} fontSize={ext * 0.032} fill="#fca5a5" fontWeight={600} textAnchor="middle" className="select-none">{c.area} m²</text>)}
+            {compartments.walls.map((w, i) => <line key={i} x1={toX(w.a.x)} y1={toY(w.a.z)} x2={toX(w.b.x)} y2={toY(w.b.z)} stroke="#ef4444" strokeWidth={3.5} vectorEffect="non-scaling-stroke" strokeLinecap="round" />)}
+          </g>
+        )}
         {/* routed egress path for the selected room (room → doorways → core → nearest stair) */}
         {egressPath && egressPath.points.length >= 2 && (
           <g aria-hidden className="pointer-events-none">

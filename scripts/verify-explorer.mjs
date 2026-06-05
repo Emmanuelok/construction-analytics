@@ -108,6 +108,14 @@ try {
   const occUK = await occOf()
   ok('switching code (IBC → UK) increases the occupant load', occIBC > 0 && occUK > occIBC, { occIBC, occUK })
 
+  // fire compartments overlay: rated walls in the plan + a dead-ends column in the table
+  await page.select('#egress-code', 'EU')
+  await new Promise((r) => setTimeout(r, 350))
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /Fire compartments/.test(x.textContent || '')); b?.click() })
+  await new Promise((r) => setTimeout(r, 450))
+  const fire = await page.evaluate(() => { const svg = [...document.querySelectorAll('svg')].find((s) => (s.getAttribute('aria-label') || '').startsWith('Floor plan')); return { walls: svg ? svg.querySelectorAll('line[stroke="#ef4444"]').length : 0, deadEnds: /dead-ends/i.test(document.body.innerText) } })
+  ok('fire-compartment overlay draws rated walls + the table reports dead-ends', fire.walls > 0 && fire.deadEnds, fire)
+
   const realErrors = errors.filter((e) => !/404|favicon|tile|Failed to load resource/i.test(e))
   ok('no console errors', realErrors.length === 0, realErrors.slice(0, 4))
 } catch (e) {

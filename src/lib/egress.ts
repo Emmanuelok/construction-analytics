@@ -15,13 +15,13 @@ const LEN = SCENE_LEN_TO_M
 const r1 = (n: number) => Math.round(n * 10) / 10
 const dist = (a: Pt, b: Pt) => Math.hypot(b.x - a.x, b.z - a.z)
 
-export type EgressRoom = { id: string; level: number; name: string; area: number; occupancy: number; travel: number; ok: boolean; reason?: string }
-export type EgressFloor = { level: number; name: string; rooms: number; occupancy: number; exits: number; maxTravel: number; requiredWidth: number; providedWidth: number; area: number; maxCompartment: number; compartments: number; ok: boolean; issues: string[] }
+export type EgressRoom = { id: string; level: number; name: string; area: number; occupancy: number; travel: number; routes: number; ok: boolean; reason?: string }
+export type EgressFloor = { level: number; name: string; rooms: number; occupancy: number; exits: number; maxTravel: number; requiredWidth: number; providedWidth: number; area: number; maxCompartment: number; compartments: number; deadEnds: number; ok: boolean; issues: string[] }
 export type EgressResult = {
   code: CodeKey
   rooms: EgressRoom[]
   floors: EgressFloor[]
-  summary: { occupancy: number; maxTravel: number; maxTravelLimit: number; roomsOverTravel: number; maxCompartments: number; worstFloor: string; ok: boolean }
+  summary: { occupancy: number; maxTravel: number; maxTravelLimit: number; roomsOverTravel: number; maxCompartments: number; deadEnds: number; worstFloor: string; ok: boolean }
 }
 
 const levelName = (i: number, storeys: number) => (i === 0 ? 'Ground' : i >= storeys ? 'Roof' : `Level ${i}`)
@@ -97,9 +97,13 @@ export function egressAnalysis(m: BuildingModel, opts: { code?: CodeKey } = {}):
     const { dist } = shortestFromCore(g)
     const lvlRooms: EgressRoom[] = rs.map((room, i) => {
       const occupancy = Math.max(1, Math.ceil(room.area / lim.occLoadFactor))
+      const routes = g.adj[i].length // doorways out of this room
       const reachable = isFinite(dist[i]) && exits.length > 0
       const travel = reachable ? r1(dist[i]) : 0
-      return { id: room.id, level: lvl, name: room.name, area: room.area, occupancy, travel, ok: reachable && travel <= lim.maxTravel + 1e-6, reason: exits.length === 0 ? 'no exit on floor' : !reachable ? 'no door route to a stair' : travel > lim.maxTravel ? 'beyond travel limit' : undefined }
+      const deadEnd = reachable && routes <= 1 && travel > lim.commonPath
+      const ok = reachable && travel <= lim.maxTravel + 1e-6 && !deadEnd
+      const reason = exits.length === 0 ? 'no exit on floor' : !reachable ? 'no door route to a stair' : travel > lim.maxTravel ? 'beyond travel limit' : deadEnd ? `single-egress dead end > ${lim.commonPath}m` : undefined
+      return { id: room.id, level: lvl, name: room.name, area: room.area, occupancy, travel, routes, ok, reason }
     })
     rooms.push(...lvlRooms)
     const occupancy = lvlRooms.reduce((s, r) => s + r.occupancy, 0)
@@ -107,8 +111,10 @@ export function egressAnalysis(m: BuildingModel, opts: { code?: CodeKey } = {}):
     const requiredWidth = (occupancy * lim.widthPerOccupantMm) / 1000
     const providedWidth = m.stairs.filter((s) => s.level === lvl).reduce((s, st) => s + st.widthScene * LEN, 0) || (m.core ? lim.minExitWidth : 0)
     const issues: string[] = []
-    const stranded = lvlRooms.filter((r) => !!r.reason && r.reason !== 'beyond travel limit').length
+    const stranded = lvlRooms.filter((r) => r.reason === 'no door route to a stair').length
+    const deadEnds = lvlRooms.filter((r) => !!r.reason && /dead end/.test(r.reason)).length
     if (stranded) issues.push(`${stranded} room(s) with no door route to a stair`)
+    if (deadEnds) issues.push(`${deadEnds} single-egress dead-end room(s) > ${lim.commonPath}m`)
     if (maxTravel > lim.maxTravel + 1e-6) issues.push(`travel ${Math.round(maxTravel)}m > ${lim.maxTravel}m`)
     if (occupancy > lim.twoExitsAbove && exits.length < 2) issues.push(`${occupancy} occupants need ≥2 exits (have ${exits.length})`)
     if (providedWidth + 1e-6 < requiredWidth) issues.push(`exit width ${Math.round(providedWidth * 1000)}mm < ${Math.round(requiredWidth * 1000)}mm required`)
@@ -116,7 +122,7 @@ export function egressAnalysis(m: BuildingModel, opts: { code?: CodeKey } = {}):
     if (exits.length === 0) issues.push('no exit serving this floor')
     const area = r1(rs.reduce((s, r) => s + r.area, 0))
     const compartments = Math.max(1, Math.ceil(area / lim.maxCompartment))
-    floors.push({ level: lvl, name: levelName(lvl, storeys), rooms: rs.length, occupancy, exits: exits.length, maxTravel: r1(maxTravel), requiredWidth: Math.round(requiredWidth * 1000) / 1000, providedWidth: Math.round(providedWidth * 1000) / 1000, area, maxCompartment: lim.maxCompartment, compartments, ok: issues.length === 0, issues })
+    floors.push({ level: lvl, name: levelName(lvl, storeys), rooms: rs.length, occupancy, exits: exits.length, maxTravel: r1(maxTravel), requiredWidth: Math.round(requiredWidth * 1000) / 1000, providedWidth: Math.round(providedWidth * 1000) / 1000, area, maxCompartment: lim.maxCompartment, compartments, deadEnds, ok: issues.length === 0, issues })
   }
 
   const occupancy = floors.reduce((s, f) => s + f.occupancy, 0)
@@ -124,7 +130,7 @@ export function egressAnalysis(m: BuildingModel, opts: { code?: CodeKey } = {}):
   const worst = floors.find((f) => !f.ok)
   return {
     code, rooms, floors,
-    summary: { occupancy, maxTravel: r1(maxTravel), maxTravelLimit: lim.maxTravel, roomsOverTravel: rooms.filter((r) => !r.ok).length, maxCompartments: Math.max(...floors.map((f) => f.compartments), 0), worstFloor: worst ? worst.name : '—', ok: floors.length > 0 && floors.every((f) => f.ok) },
+    summary: { occupancy, maxTravel: r1(maxTravel), maxTravelLimit: lim.maxTravel, roomsOverTravel: rooms.filter((r) => !r.ok).length, maxCompartments: Math.max(...floors.map((f) => f.compartments), 0), deadEnds: floors.reduce((s, f) => s + f.deadEnds, 0), worstFloor: worst ? worst.name : '—', ok: floors.length > 0 && floors.every((f) => f.ok) },
   }
 }
 
