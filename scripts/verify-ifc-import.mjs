@@ -47,7 +47,8 @@ try {
   // schedules carry the imported elements; the editor can delete one
   await page.evaluate(() => { const t = [...document.querySelectorAll('button')].find((x) => /^Columns \(/.test((x.textContent || '').trim())); t?.click() })
   await new Promise((r) => setTimeout(r, 300))
-  const rows0 = await page.evaluate(() => document.querySelectorAll('tbody tr').length)
+  const colCount = () => page.evaluate(() => { const t = [...document.querySelectorAll('button')].find((x) => /^Columns \(/.test((x.textContent || '').trim())); return t ? Number((t.textContent.match(/\((\d+)\)/) || [])[1]) : -1 })
+  const rows0 = await colCount()
   ok('imported model produces a Columns schedule with rows', rows0 > 0, { rows0 })
 
   // select the first column row, enable Edit, delete it
@@ -57,7 +58,7 @@ try {
   await new Promise((r) => setTimeout(r, 200))
   ok('clicked Delete on the selected imported element', await clickText('Delete'))
   await new Promise((r) => setTimeout(r, 400))
-  const rows1 = await page.evaluate(() => { const t = [...document.querySelectorAll('button')].find((x) => /^Columns \(/.test((x.textContent || '').trim())); return t ? Number((t.textContent.match(/\((\d+)\)/) || [])[1]) : -1 })
+  const rows1 = await colCount()
   ok('deleting an imported element updates the schedule (count −1)', rows1 === rows0 - 1, { rows0, rows1 })
 
   // the inspector carries the original IFC name + type for an imported element

@@ -34,6 +34,9 @@ import { floorPartitions } from './building-partitions.ts'
 import { coreStairs, stairCheck } from './building-stairs.ts'
 import { egressAnalysis, egressPathFor } from './egress.ts'
 import { floorCompartments, buildingFire } from './fire.ts'
+import { structuralCheck } from './structure.ts'
+import { energyAnalysis } from './energy.ts'
+import { schedule4d } from './schedule4d.ts'
 import { CODE_PRESETS, CODE_KEYS } from './building-code.ts'
 import { explodeIfc, meshGeom, friendlyType, sliceMeshes, cutHeightFor } from './ifc-explorer.ts'
 import { ifcToModel } from './ifc-to-model.ts'
@@ -962,6 +965,44 @@ section('fire')
   const bf = buildingFire(m, { maxArea: lim.maxCompartment, occLoadFactor: lim.occLoadFactor, costPerM2: 1800 })
   ok('buildingFire totals compartments, rated wall & fit-out cost across storeys', bf.compartments > 0 && bf.ratedWall > 0 && bf.cost > 0 && bf.floors.length === 6)
   ok('rooms get assigned to compartments (sum ≈ floor rooms)', (() => { const assigned = ff.compartments.reduce((s, c) => s + c.rooms, 0); return assigned > 0 && assigned <= m.rooms.filter((r) => r.level === 0).length })())
+}
+
+// ── structure (preliminary gravity check) ───────────────────────────────────────
+section('structure')
+{
+  const m = buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 20, shape: 'rect' }), { coreRatio: 0.16 })
+  const st = structuralCheck(m, { storeyHeight: 3.6 })
+  ok('every column gets an axial load, capacity & utilisation', st.columns.length === m.columns.length && st.columns.every((c) => c.axial > 0 && c.capacity > 0 && c.utilization >= 0))
+  ok('every beam gets a span, moment, capacity & utilisation', st.beams.length === m.beams.length && st.beams.every((b) => b.span > 0 && b.moment >= 0 && b.capacity > 0))
+  ok('lower columns carry more than upper columns (more floors above)', (() => { const g = st.columns.find((c) => c.level === 0)!; const top = st.columns.find((c) => c.level === m.counts.storeys - 1)!; return g.axial > top.axial && g.floorsAbove > top.floorsAbove })())
+  ok('a taller building pushes column utilisation higher', structuralCheck(buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 40, shape: 'rect' }), { coreRatio: 0.16 })).summary.maxColUtil > structuralCheck(buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0.16 })).summary.maxColUtil)
+  ok('a higher f′c raises capacity → lower utilisation', structuralCheck(m, { fc: 50 }).summary.maxColUtil < structuralCheck(m, { fc: 20 }).summary.maxColUtil)
+  ok('summary reports utilisations + total gravity load', st.summary.maxColUtil > 0 && st.summary.maxBeamUtil >= 0 && st.summary.totalGravity > 0 && typeof st.summary.ok === 'boolean')
+}
+
+// ── energy & daylight ───────────────────────────────────────────────────────────
+section('energy')
+{
+  const m = buildBuilding(buildMassing({ gfa: 80_000, progress: 100, storeys: 8, shape: 'rect' }), { coreRatio: 0.16, wwr: 0.6 })
+  const e = energyAnalysis(m, { storeyHeight: 3.6 })
+  ok('every room gets a daylight ratio (window-to-floor)', e.rooms.length === m.rooms.length && e.rooms.every((r) => r.daylight >= 0 && r.area > 0))
+  ok('rooms split into daylit + dark, summing to all rooms', e.summary.daylitRooms > 0 && e.summary.daylitRooms + e.summary.darkRooms === m.rooms.length)
+  ok('orientation breakdown sums to the glazing area', (() => { const sum = e.orientations.reduce((s, o) => s + o.windowArea, 0); return near(sum, e.summary.glazing, Math.max(1, e.summary.glazing * 0.03)) })())
+  ok('a higher WWR raises the glazing area', energyAnalysis(buildBuilding(buildMassing({ gfa: 80_000, progress: 100, storeys: 8, shape: 'rect' }), { coreRatio: 0.16, wwr: 0.8 })).summary.glazing > e.summary.glazing)
+  ok('envelope estimate: heat-loss coefficient, EUI + rating', e.summary.heatLoss > 0 && e.summary.eui > 0 && /^[A-F]$/.test(e.summary.rating))
+  ok('better U-values lower the EUI', energyAnalysis(m, { uWall: 0.15, uWindow: 1.0, uRoof: 0.1 }).summary.eui < energyAnalysis(m, { uWall: 0.6, uWindow: 3.0, uRoof: 0.4 }).summary.eui)
+}
+
+// ── schedule-4d (construction sequencing) ───────────────────────────────────────
+section('schedule-4d')
+{
+  const m = buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 10, shape: 'rect' }), { coreRatio: 0.16 })
+  const s = schedule4d(m, { start: '2026-01-05' })
+  ok('a phased schedule per storey (structure → envelope → fit-out)', s.floors.length === 10 && s.floors.every((f) => f.structure.end <= f.envelope.start + 1e-9 && f.envelope.end <= f.fitout.start + 1e-9))
+  ok('each trade crew moves up sequentially (floor L after L−1)', s.floors.every((f, i, a) => i === 0 || f.structure.start >= a[i - 1].structure.end - 1e-9))
+  ok('total duration + completion date computed', s.totalDays > 0 && s.weeks > 0 && /^\d{4}-\d\d-\d\d$/.test(s.finishDate) && s.finishDate > s.startDate)
+  ok('floors carry calendar start/finish dates', s.floors.every((f) => /^\d{4}-\d\d-\d\d$/.test(f.startDate) && f.endDate >= f.startDate))
+  ok('more storeys → longer programme', schedule4d(buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 20, shape: 'rect' }), { coreRatio: 0.16 })).totalDays > s.totalDays)
 }
 
 // ── building-export (OBJ round-trip) ────────────────────────────────────────────
