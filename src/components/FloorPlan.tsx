@@ -15,7 +15,7 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
   addMode?: boolean
   onMoveElement?: (id: string, dx: number, dz: number) => void
   onAddAt?: (x: number, z: number) => void
-  egressPath?: { from: { x: number; z: number }; to: { x: number; z: number } } | null
+  egressPath?: { points: { x: number; z: number }[] } | null
   height?: number
 }) {
   const { b, w, h, pad, toX, toY, ext } = useMemo(() => {
@@ -131,11 +131,11 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
             </g>
           )
         })}</g>
-        {/* egress path for the selected room (centre → nearest exit) */}
-        {egressPath && (
+        {/* routed egress path for the selected room (room → doorways → core → nearest stair) */}
+        {egressPath && egressPath.points.length >= 2 && (
           <g aria-hidden className="pointer-events-none">
-            <line x1={toX(egressPath.from.x)} y1={toY(egressPath.from.z)} x2={toX(egressPath.to.x)} y2={toY(egressPath.to.z)} stroke="#fbbf24" strokeWidth={2} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" strokeLinecap="round" />
-            <circle cx={toX(egressPath.to.x)} cy={toY(egressPath.to.z)} r={colR * 1.6} fill="none" stroke="#fbbf24" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+            <polyline points={egressPath.points.map((p) => `${toX(p.x)},${toY(p.z)}`).join(' ')} fill="none" stroke="#fbbf24" strokeWidth={2} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
+            {(() => { const e = egressPath.points[egressPath.points.length - 1]; return <circle cx={toX(e.x)} cy={toY(e.z)} r={colR * 1.6} fill="none" stroke="#fbbf24" strokeWidth={1.5} vectorEffect="non-scaling-stroke" /> })()}
           </g>
         )}
         {/* windows + doors (draggable) */}

@@ -96,8 +96,9 @@ try {
   await new Promise((r) => setTimeout(r, 250))
   await page.evaluate(() => document.querySelector('tbody tr')?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
   await new Promise((r) => setTimeout(r, 400))
-  const hasPath = await page.evaluate(() => { const svg = [...document.querySelectorAll('svg')].find((s) => (s.getAttribute('aria-label') || '').startsWith('Floor plan')); return !!svg && !!svg.querySelector('line[stroke-dasharray="4 3"]') })
-  ok('selecting a room draws its egress path in the plan', hasPath)
+  const hasPath = await page.evaluate(() => { const svg = [...document.querySelectorAll('svg')].find((s) => (s.getAttribute('aria-label') || '').startsWith('Floor plan')); return !!svg && !!svg.querySelector('polyline[stroke-dasharray="4 3"]') })
+  ok('selecting a room draws its routed egress path in the plan', hasPath)
+  ok('the life-safety table reports fire compartments per floor', await page.evaluate(() => /Compartments/i.test((document.querySelector('[aria-label^="Egress by floor"]') || document.body).textContent || '')))
 
   // switching the code jurisdiction re-runs the analysis (UK denser than IBC)
   const occOf = () => page.evaluate(() => { const m = document.body.innerText.match(/([\d,]+)\s*ppl/); return m ? Number(m[1].replace(/,/g, '')) : -1 })
