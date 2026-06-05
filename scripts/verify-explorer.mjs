@@ -116,6 +116,17 @@ try {
   const fire = await page.evaluate(() => { const svg = [...document.querySelectorAll('svg')].find((s) => (s.getAttribute('aria-label') || '').startsWith('Floor plan')); return { walls: svg ? svg.querySelectorAll('line[stroke="#ef4444"]').length : 0, deadEnds: /dead-ends/i.test(document.body.innerText) } })
   ok('fire-compartment overlay draws rated walls + the table reports dead-ends', fire.walls > 0 && fire.deadEnds, fire)
 
+  // structural, energy & 4D-schedule analysis cards
+  const adv = await page.evaluate(() => {
+    const t = document.body.innerText
+    return {
+      structure: /Structure — preliminary gravity check/.test(t) && /Max column util/.test(t) && !!document.querySelector('[aria-label^="Columns by utilisation"]'),
+      energy: /Energy & daylight/.test(t) && /Energy intensity/.test(t) && /solar exposure/i.test(t),
+      sched: /Construction schedule \(4D\)/.test(t) && /Programme/.test(t),
+    }
+  })
+  ok('structural / energy / 4D-schedule cards render with their data', adv.structure && adv.energy && adv.sched, adv)
+
   const realErrors = errors.filter((e) => !/404|favicon|tile|Failed to load resource/i.test(e))
   ok('no console errors', realErrors.length === 0, realErrors.slice(0, 4))
 } catch (e) {

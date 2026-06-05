@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame } from 'lucide-react'
+import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame, Gauge, Sun, CalendarClock } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge, Tabs } from '@/components/ui'
 import { ScrollableTable } from '@/components/ScrollableTable'
 const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
@@ -13,6 +13,9 @@ import { toObj } from '@/lib/building-export'
 import { toIfc } from '@/lib/building-ifc'
 import { egressAnalysis, egressPathFor } from '@/lib/egress'
 import { buildingFire, floorCompartments } from '@/lib/fire'
+import { structuralCheck } from '@/lib/structure'
+import { energyAnalysis } from '@/lib/energy'
+import { schedule4d } from '@/lib/schedule4d'
 import { CODE_PRESETS, CODE_KEYS, type CodeKey } from '@/lib/building-code'
 import type { IfcLabels } from '@/lib/ifc-to-model'
 import { idbGet, idbSet, idbDel } from '@/lib/idb'
@@ -119,6 +122,11 @@ export default function BuildingExplorer() {
   const fireOpts = useMemo(() => ({ maxArea: CODE_PRESETS[code].egress.maxCompartment, occLoadFactor: CODE_PRESETS[code].egress.occLoadFactor, costPerM2: 1800 }), [code])
   const fire = useMemo(() => buildingFire(model, fireOpts), [model, fireOpts])
   const floorFire = useMemo(() => floorCompartments(model, activeLevel, fireOpts), [model, activeLevel, fireOpts])
+  const struct = useMemo(() => structuralCheck(model, { storeyHeight }), [model, storeyHeight])
+  const energy = useMemo(() => energyAnalysis(model, { storeyHeight }), [model, storeyHeight])
+  const sched = useMemo(() => schedule4d(model, {}), [model])
+  const topColumns = useMemo(() => [...struct.columns].sort((a, b) => b.utilization - a.utilization).slice(0, ROW_CAP), [struct])
+  const darkFirst = useMemo(() => [...energy.rooms].sort((a, b) => a.daylight - b.daylight).slice(0, ROW_CAP), [energy])
   const plan = useMemo(() => planForLevel(model, activeLevel), [model, activeLevel])
   const egressPath = useMemo(() => (selectedId && selectedId.startsWith('room-') ? egressPathFor(model, selectedId) : null), [model, selectedId])
   const nEdits = editCount(edits)
@@ -488,10 +496,142 @@ export default function BuildingExplorer() {
           <p className="mt-3 text-[11px] text-slate-500">Travel distance is routed through the actual doorways (room → doors → core → nearest stair) via shortest path — select a room in the plan to see its route. A dead-end is a single-door room past the {CODE_PRESETS[code].egress.commonPath} m common-path limit (give it a 2nd door to clear it). Fire-rated subdivision: <span className="text-rose-300">{fire.compartments} compartments · {formatNumber(fire.ratedWall)} m rated wall · indicative fit-out ${formatNumber(fire.cost)}</span> — toggle “Fire compartments” on the plan. Occupant load {CODE_PRESETS[code].egress.occLoadFactor} m²/person (indicative, design-stage).</p>
         </div>
       </Card>
+
+      {/* structure — preliminary gravity check */}
+      <Card>
+        <CardHeader
+          icon={Gauge} accent={struct.summary.ok ? 'emerald' : 'amber'} title="Structure — preliminary gravity check"
+          subtitle={`Per column: axial = tributary area × (${struct.loads.dead}+${struct.loads.live} kPa) × floors above, vs 0.4·f′c·Ag; per beam: wL²/8 vs the RC limit (f′c ${struct.loads.fc} MPa). Preliminary sizing, not a designed/reinforced structure.`}
+          action={<button onClick={() => downloadText(`${slug(project.name)}-structure.csv`, structCsv(struct), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-4">
+          <StatTile label="Max column util" value={`${Math.round(struct.summary.maxColUtil * 100)}%`} accent={struct.summary.maxColUtil > 1 ? 'rose' : 'emerald'} />
+          <StatTile label="Max beam util" value={`${Math.round(struct.summary.maxBeamUtil * 100)}%`} accent={struct.summary.maxBeamUtil > 1 ? 'rose' : 'emerald'} />
+          <StatTile label="Overstressed" value={`${struct.summary.colOver} col · ${struct.summary.beamOver} bm`} accent={struct.summary.colOver + struct.summary.beamOver ? 'amber' : 'emerald'} />
+          <StatTile label="Gravity load" value={`${formatNumber(struct.summary.totalGravity)} kN`} accent="violet" />
+        </div>
+        <div className="border-t border-edge/50 p-4">
+          <ScrollableTable label="Columns by utilisation">
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Mark', 'Level', 'Section (m)', 'Axial (kN)', 'Capacity (kN)', 'Utilisation', 'Status'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && i <= 5 && 'text-right')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {topColumns.map((c) => (
+                  <tr key={c.id} onClick={() => selectEl(c.id)} className={cn('cursor-pointer border-b border-edge/30 transition-colors', c.id === selectedId ? 'bg-amber-500/10' : 'hover:bg-elevated/40')}>
+                    <td className="px-3 py-1.5 font-medium text-slate-200">{c.id}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{c.level === 0 ? 'G' : c.level}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{c.section.toFixed(2)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(c.axial)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(c.capacity)}</td>
+                    <td className={cn('data-mono px-3 py-1.5 text-right', c.utilization > 1 ? 'text-rose-300' : c.utilization > 0.85 ? 'text-amber-300' : 'text-slate-300')}>{Math.round(c.utilization * 100)}%</td>
+                    <td className="px-3 py-1.5">{c.ok ? <span className="text-emerald-300">OK</span> : <span className="text-rose-300">Over</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollableTable>
+          <p className="mt-3 text-[11px] text-slate-500">Most-utilised columns first (click a row to locate it). {struct.summary.worst !== '—' ? <span className="text-amber-300">Worst: {struct.summary.worst}.</span> : 'All elements within capacity.'} Beam check + full list in the CSV.</p>
+        </div>
+      </Card>
+
+      {/* energy & daylight */}
+      {(() => { const eAcc = energy.summary.rating <= 'C' ? 'emerald' : energy.summary.rating <= 'E' ? 'amber' : 'rose'; return (
+      <Card>
+        <CardHeader
+          icon={Sun} accent={eAcc} title="Energy & daylight"
+          subtitle="Per-room daylight (exterior window area ÷ floor area), per-orientation solar exposure, and an envelope energy-use intensity from U-values × areas. Indicative design-stage figures."
+          action={<button onClick={() => downloadText(`${slug(project.name)}-energy.csv`, energyCsv(energy), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-4">
+          <StatTile label="Energy intensity" value={`${energy.summary.eui} kWh/m²`} accent={eAcc} />
+          <StatTile label="Rating" value={energy.summary.rating} accent={eAcc} />
+          <StatTile label="Window-to-wall" value={`${Math.round(energy.summary.wwr * 100)}%`} accent="sky" />
+          <StatTile label="Dark rooms" value={String(energy.summary.darkRooms)} accent={energy.summary.darkRooms ? 'amber' : 'emerald'} />
+        </div>
+        <div className="flex flex-wrap gap-1.5 border-t border-edge/50 px-5 py-3">
+          <span className="mr-1 text-[11px] uppercase tracking-wide text-slate-500">Solar exposure by façade</span>
+          {energy.orientations.map((o) => (
+            <span key={o.dir} className="inline-flex items-center gap-1.5 rounded-lg bg-elevated/40 px-2 py-1 text-[11px] text-slate-300 ring-1 ring-inset ring-edge/50" title={`${o.windowArea} m² glazing · solar index ${o.solar}`}>
+              <span className="font-medium text-amber-200">{o.dir}</span> {formatNumber(o.windowArea)} m²
+            </span>
+          ))}
+        </div>
+        <div className="border-t border-edge/50 p-4">
+          <ScrollableTable label="Rooms by daylight">
+            <table className="w-full min-w-[560px] text-left text-sm">
+              <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Room', 'Level', 'Area (m²)', 'Window (m²)', 'Daylight', 'Status'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && i <= 4 && 'text-right')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {darkFirst.map((r) => (
+                  <tr key={r.id} onClick={() => selectEl(r.id)} className={cn('cursor-pointer border-b border-edge/30 transition-colors', r.id === selectedId ? 'bg-amber-500/10' : 'hover:bg-elevated/40')}>
+                    <td className="px-3 py-1.5 font-medium text-slate-200">{r.name}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{r.level === 0 ? 'G' : r.level}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{r.area}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{r.windowArea}</td>
+                    <td className={cn('data-mono px-3 py-1.5 text-right', r.ok ? 'text-slate-300' : 'text-amber-300')}>{r.daylight}%</td>
+                    <td className="px-3 py-1.5">{r.ok ? <span className="text-emerald-300">Daylit</span> : <span className="text-amber-300">Dark</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollableTable>
+          <p className="mt-3 text-[11px] text-slate-500">Lowest-daylight rooms first (click to locate). “Dark” = window-to-floor below 10% (interior rooms have no external glazing). U-values: wall 0.3 / window 1.8 / roof 0.2 W/m²K; envelope EUI is indicative.</p>
+        </div>
+      </Card>
+      ) })()}
+
+      {/* construction schedule (4D) */}
+      <Card>
+        <CardHeader
+          icon={CalendarClock} accent="cyan" title="Construction schedule (4D)"
+          subtitle="Floor-by-floor sequencing — structure → envelope → fit-out crews moving up, each trailing the one below. Working-day calendar from the start date; durations are tunable assumptions."
+          action={<button onClick={() => downloadText(`${slug(project.name)}-schedule.csv`, schedCsv(sched), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-4">
+          <StatTile label="Programme" value={`${sched.weeks} weeks`} accent="cyan" />
+          <StatTile label="Floors" value={String(sched.floors.length)} accent="blue" />
+          <StatTile label="Start" value={sched.startDate} accent="violet" />
+          <StatTile label="Topping out → finish" value={sched.finishDate} accent="emerald" />
+        </div>
+        <div className="border-t border-edge/50 p-5">
+          <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+            {sched.phases.map((p) => <span key={p.name} className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-3 rounded-sm" style={{ background: p.color }} /> {p.name}</span>)}
+          </div>
+          <div className="space-y-1">
+            {[...sched.floors].reverse().map((f) => (
+              <div key={f.level} className="flex items-center gap-2">
+                <div className="w-16 shrink-0 truncate text-[11px] text-slate-400">{f.name}</div>
+                <div className="relative h-3 flex-1 overflow-hidden rounded bg-base/60 ring-1 ring-inset ring-edge/40">
+                  {([['structure', '#64748b'], ['envelope', '#38bdf8'], ['fitout', '#34d399']] as const).map(([ph, col]) => { const p = f[ph]; return <div key={ph} className="absolute top-0 h-3" title={`${ph}: day ${p.start}–${p.end}`} style={{ left: `${(p.start / sched.totalDays) * 100}%`, width: `${Math.max(0.5, ((p.end - p.start) / sched.totalDays) * 100)}%`, background: col }} /> })}
+                </div>
+                <div className="data-mono w-24 shrink-0 text-right text-[11px] text-slate-500">{f.endDate}</div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-[11px] text-slate-500">Crews: structure {12} d/floor, envelope {8} d/floor, fit-out {10} d/floor (working days). Total {sched.totalDays} working days → {sched.finishDate}.</p>
+        </div>
+      </Card>
       </>
       )}
     </div>
   )
+}
+
+function structCsv(s: ReturnType<typeof structuralCheck>): string {
+  const cols = ['Mark', 'Level', 'Section (m)', 'Tributary (m²)', 'Floors above', 'Axial (kN)', 'Capacity (kN)', 'Utilisation', 'Status']
+  const cr = s.columns.map((c) => [c.id, c.level, c.section, c.tributary, c.floorsAbove, c.axial, c.capacity, c.utilization, c.ok ? 'OK' : 'OVER'].join(','))
+  const bh = ['Beam', 'Level', 'Span (m)', 'Depth (m)', 'UDL (kN/m)', 'Moment (kNm)', 'Capacity (kNm)', 'Utilisation', 'Status']
+  const br = s.beams.map((b) => [b.id, b.level, b.span, b.depth, b.udl, b.moment, b.capacity, b.utilization, b.ok ? 'OK' : 'OVER'].join(','))
+  return ['COLUMNS', cols.join(','), ...cr, '', 'BEAMS', bh.join(','), ...br].join('\n')
+}
+function energyCsv(e: ReturnType<typeof energyAnalysis>): string {
+  const h = ['Room', 'Level', 'Area (m²)', 'Window area (m²)', 'Daylight (%)', 'Status']
+  const r = e.rooms.map((x) => [csvCell(x.name), x.level, x.area, x.windowArea, x.daylight, x.ok ? 'Daylit' : 'Dark'].join(','))
+  const o = ['', 'ORIENTATION', 'Facing,Window area (m²),Solar index', ...e.orientations.map((x) => `${x.dir},${x.windowArea},${x.solar}`)]
+  return [h.join(','), ...r, ...o].join('\n')
+}
+function schedCsv(s: ReturnType<typeof schedule4d>): string {
+  const h = ['Level', 'Structure start (d)', 'Structure end (d)', 'Envelope start (d)', 'Envelope end (d)', 'Fit-out start (d)', 'Fit-out end (d)', 'Floor start', 'Floor finish']
+  const r = s.floors.map((f) => [f.name, f.structure.start, f.structure.end, f.envelope.start, f.envelope.end, f.fitout.start, f.fitout.end, f.startDate, f.endDate].join(','))
+  return [h.join(','), ...r].join('\n')
 }
 
 function egressCsv(e: ReturnType<typeof egressAnalysis>): string {
