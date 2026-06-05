@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check } from 'lucide-react'
+import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge, Tabs } from '@/components/ui'
 import { ScrollableTable } from '@/components/ScrollableTable'
 const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
@@ -11,6 +11,8 @@ import { explodeBuilding, planForLevel, type Schedule, type ScheduleCol, type Bu
 import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, addDoorAt, duplicateColumn, editCount, type BuildingEdits } from '@/lib/building-edits'
 import { toObj } from '@/lib/building-export'
 import { toIfc } from '@/lib/building-ifc'
+import { egressAnalysis, egressPathFor } from '@/lib/egress'
+import { CODE_PRESETS, CODE_KEYS, type CodeKey } from '@/lib/building-code'
 import type { IfcLabels } from '@/lib/ifc-to-model'
 import { idbGet, idbSet, idbDel } from '@/lib/idb'
 import { PLATE_SCALE } from '@/lib/massing'
@@ -34,7 +36,7 @@ function csvFor(s: Schedule): string {
 }
 
 // the persisted building design (params + manual edits), per project
-type Cfg = { storeys: number; shape: ShapeKind; aspect: number; storeyHeight: number; slabThickness: number; wwr: number; bayWidth: number; mullions: boolean; edits: BuildingEdits }
+type Cfg = { storeys: number; shape: ShapeKind; aspect: number; storeyHeight: number; slabThickness: number; wwr: number; bayWidth: number; mullions: boolean; code: CodeKey; edits: BuildingEdits }
 const cfgKey = (id: string) => `aec-bld-${id}`
 const loadCfg = (id: string): Partial<Cfg> | null => { try { return JSON.parse(localStorage.getItem(cfgKey(id)) || 'null') } catch { return null } }
 
@@ -60,6 +62,7 @@ export default function BuildingExplorer() {
   const [wwr, setWwr] = useState(() => init0?.wwr ?? 0.55)
   const [bayWidth, setBayWidth] = useState(() => init0?.bayWidth ?? 3.4)
   const [mullions, setMullions] = useState(() => init0?.mullions ?? true)
+  const [code, setCode] = useState<CodeKey>(() => init0?.code ?? 'IBC')
   const [editMode, setEditMode] = useState(false)
   const [addKind, setAddKind] = useState<'column' | 'door' | null>(null)
   const [edits, setEdits] = useState<BuildingEdits>(() => init0?.edits ?? emptyEdits())
@@ -76,8 +79,8 @@ export default function BuildingExplorer() {
   // auto-save the generated design (params + edits) per project; imported models are in-memory only
   useEffect(() => {
     if (imported) return
-    try { localStorage.setItem(cfgKey(projectId), JSON.stringify({ storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, edits })) } catch { /* ignore */ }
-  }, [imported, projectId, storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, edits])
+    try { localStorage.setItem(cfgKey(projectId), JSON.stringify({ storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, code, edits })) } catch { /* ignore */ }
+  }, [imported, projectId, storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, code, edits])
   // bring an uploaded IFC into the editor; rebuild the editing state around it + persist
   const importIfcModel = (m: BuildingModel, sh: number, name: string, labels: IfcLabels) => {
     const h = Math.round(sh * 10) / 10
@@ -105,12 +108,14 @@ export default function BuildingExplorer() {
   const applyCfg = (c: Partial<Cfg>, gfa: number) => {
     setStoreys(c.storeys ?? deriveStoreys(gfa)); setShape(c.shape ?? 'rect'); setAspect(c.aspect ?? 1)
     setStoreyHeight(c.storeyHeight ?? 3.6); setSlabThickness(c.slabThickness ?? 0.3)
-    setWwr(c.wwr ?? 0.55); setBayWidth(c.bayWidth ?? 3.4); setMullions(c.mullions ?? true)
+    setWwr(c.wwr ?? 0.55); setBayWidth(c.bayWidth ?? 3.4); setMullions(c.mullions ?? true); setCode(c.code ?? 'IBC')
     setEdits(c.edits ?? emptyEdits()); setPast([]); setFuture([]); setSelectedId(null)
   }
   const switchProject = (id: string) => { setProjectId(id); const p = PROJECTS.find((x) => x.id === id) ?? PROJECTS[0]; applyCfg(loadCfg(id) ?? {}, p.gfa) }
-  const ex = useMemo(() => explodeBuilding(model, { storeyHeight, slabThickness }), [model, storeyHeight, slabThickness])
+  const ex = useMemo(() => explodeBuilding(model, { storeyHeight, slabThickness, code }), [model, storeyHeight, slabThickness, code])
+  const egress = useMemo(() => egressAnalysis(model, { code }), [model, code])
   const plan = useMemo(() => planForLevel(model, activeLevel), [model, activeLevel])
+  const egressPath = useMemo(() => (selectedId && selectedId.startsWith('room-') ? egressPathFor(model, selectedId) : null), [model, selectedId])
   const nEdits = editCount(edits)
   // nudge steps: 1 m in plan → scene via PLATE_SCALE; 0.5 m vertical → scene via storey height
   const stepXZ = 1 * PLATE_SCALE, stepY = 0.5 / storeyHeight
@@ -118,7 +123,7 @@ export default function BuildingExplorer() {
   const edit = (fn: (e: BuildingEdits) => BuildingEdits) => commit(fn(edits))
   const del = (id: string) => { commit(removeElement(edits, id)); setSelectedId(null) }
   const resetEdits = () => { commit(emptyEdits()); setAddKind(null); setSelectedId(null) }
-  const exportCfg = () => downloadText(`${slug(project.name)}-building-design.json`, JSON.stringify({ project: project.name, storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, edits }, null, 2), 'JSON')
+  const exportCfg = () => downloadText(`${slug(project.name)}-building-design.json`, JSON.stringify({ project: project.name, storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, code, edits }, null, 2), 'JSON')
   const importCfg = async (e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; if (!f) return; try { applyCfg(JSON.parse(await f.text()), project.gfa) } catch { /* ignore */ } e.target.value = '' }
   const selectedEl: BuildingElement | null = selectedId ? ex.byId[selectedId] ?? null : null
   const activeSchedule = ex.schedules.find((s) => s.category === schedTab) ?? ex.schedules[0]
@@ -296,7 +301,7 @@ export default function BuildingExplorer() {
         <Card className="overflow-hidden">
           <CardHeader icon={Table2} accent="teal" title={`Floor plan — ${activeLevelInfo?.name ?? `Level ${activeLevel}`}`} subtitle="Scroll to zoom, drag the background to pan. Click an element to inspect it; in Edit mode, drag a column/window/door to move it, or use Add door and click a partition to place a doorway. Selection syncs with the 3D model & schedules." />
           <div className="border-t border-edge/50 p-4">
-            <FloorPlan plan={plan} selected={selectedId} onSelect={selectEl} height={340}
+            <FloorPlan plan={plan} selected={selectedId} onSelect={selectEl} height={340} egressPath={egressPath}
               editable={editMode} addMode={addKind !== null}
               onMoveElement={(id, dx, dz) => edit((e) => nudge(e, id, { x: dx, y: 0, z: dz }))}
               onAddAt={(x, z) => { const lv = activeLevel < 0 ? 0 : Math.min(activeLevel, storeys - 1); edit((e) => (addKind === 'door' ? addDoorAt(e, model, lv, x, z) : addColumnAt(e, model, lv, x, z))); setAddKind(null) }} />
@@ -422,10 +427,66 @@ export default function BuildingExplorer() {
           </ScrollableTable>
         </div>
       </Card>
+
+      {/* life safety / egress */}
+      <Card>
+        <CardHeader
+          icon={ShieldCheck} accent={egress.summary.ok ? 'emerald' : 'amber'} title="Life safety — egress & occupancy"
+          subtitle={`Occupant load, travel distance to the nearest protected stair and exit-width capacity per floor, checked against the selected code. ${CODE_PRESETS[code].note} Indicative design-stage check, not certification.`}
+          action={
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="sr-only" htmlFor="egress-code">Code</label>
+              <select id="egress-code" value={code} onChange={(e) => setCode(e.target.value as CodeKey)} className="rounded-lg border border-edge/60 bg-elevated/50 px-2.5 py-1.5 text-xs text-slate-200 focus:border-blue-500/50 focus:outline-none">
+                {CODE_KEYS.map((k) => <option key={k} value={k}>{CODE_PRESETS[k].label}</option>)}
+              </select>
+              <Badge variant={egress.summary.ok ? 'success' : 'warn'} dot>{egress.summary.ok ? 'Compliant' : 'Review egress'}</Badge>
+              <button onClick={() => downloadText(`${slug(project.name)}-egress-${code}.csv`, egressCsv(egress), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>
+            </div>
+          }
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-4">
+          <StatTile label="Occupant load" value={`${formatNumber(egress.summary.occupancy)} ppl`} accent="violet" />
+          <StatTile label="Max travel" value={`${egress.summary.maxTravel} / ${egress.summary.maxTravelLimit} m`} accent={egress.summary.maxTravel > egress.summary.maxTravelLimit ? 'rose' : 'teal'} />
+          <StatTile label="Rooms over travel" value={String(egress.summary.roomsOverTravel)} accent={egress.summary.roomsOverTravel ? 'amber' : 'emerald'} />
+          <StatTile label="Worst floor" value={egress.summary.worstFloor} accent={egress.summary.ok ? 'emerald' : 'rose'} />
+        </div>
+        <div className="border-t border-edge/50 p-4">
+          <ScrollableTable label="Egress by floor">
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">
+                  {['Level', 'Rooms', 'Occupants', 'Exits', 'Max travel (m)', 'Req. width (m)', 'Provided (m)', 'Status'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && i <= 6 && 'text-right')}>{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {egress.floors.map((f) => (
+                  <tr key={f.level} onClick={() => gotoLevel(f.level)} className={cn('cursor-pointer border-b border-edge/30 transition-colors', f.level === activeLevel ? 'bg-amber-500/10' : 'hover:bg-elevated/40')}>
+                    <td className="px-3 py-1.5 font-medium text-slate-200">{f.name}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{f.rooms}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(f.occupancy)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{f.exits}</td>
+                    <td className={cn('data-mono px-3 py-1.5 text-right', f.maxTravel > egress.summary.maxTravelLimit ? 'text-rose-300' : 'text-slate-300')}>{f.maxTravel}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{f.requiredWidth.toFixed(2)}</td>
+                    <td className={cn('data-mono px-3 py-1.5 text-right', f.providedWidth < f.requiredWidth ? 'text-rose-300' : 'text-slate-300')}>{f.providedWidth.toFixed(2)}</td>
+                    <td className="px-3 py-1.5">{f.ok ? <span className="text-emerald-300">Pass</span> : <span className="text-amber-300" title={f.issues.join('; ')}>{f.issues.length} issue{f.issues.length > 1 ? 's' : ''}</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollableTable>
+          <p className="mt-3 text-[11px] text-slate-500">Travel distance is a straight-line room-centre → nearest stair estimate × 1.3 (circuitous factor). Select a room in the plan to see its egress path. Occupant load factor: {CODE_PRESETS[code].egress.occLoadFactor} m²/person.</p>
+        </div>
+      </Card>
       </>
       )}
     </div>
   )
+}
+
+function egressCsv(e: ReturnType<typeof egressAnalysis>): string {
+  const head = ['Level', 'Rooms', 'Occupants', 'Exits', 'Max travel (m)', 'Required width (m)', 'Provided width (m)', 'Status', 'Issues'].join(',')
+  const rows = e.floors.map((f) => [f.name, f.rooms, f.occupancy, f.exits, f.maxTravel, f.requiredWidth, f.providedWidth, f.ok ? 'Pass' : 'Fail', `"${f.issues.join('; ')}"`].join(','))
+  return [head, ...rows].join('\n')
 }
 
 function NudgeBtn({ label, icon: Icon, onClick }: { label: string; icon?: typeof Copy; onClick: () => void }) {

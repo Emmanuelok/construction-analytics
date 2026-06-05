@@ -32,6 +32,8 @@ import { handleMcpRpc, MCP_PROTOCOL, SERVER_INFO } from './mcp-rpc.ts'
 import { floorRooms, floorGrid } from './building-rooms.ts'
 import { floorPartitions } from './building-partitions.ts'
 import { coreStairs, stairCheck } from './building-stairs.ts'
+import { egressAnalysis, egressPathFor } from './egress.ts'
+import { CODE_PRESETS, CODE_KEYS } from './building-code.ts'
 import { explodeIfc, meshGeom, friendlyType, sliceMeshes, cutHeightFor } from './ifc-explorer.ts'
 import { ifcToModel } from './ifc-to-model.ts'
 import type { IfcGeometryResult, IfcMesh } from './ifc-geometry.ts'
@@ -777,7 +779,7 @@ section('building')
   // interior partitions + doorways + a half-turn stair per storey
   ok('interior partition walls are generated, level-tagged', b.partitions.length > 0 && b.counts.partitions === b.partitions.length && b.partitions.every((p) => p.level !== undefined && Math.hypot(p.b.x - p.a.x, p.b.z - p.a.z) > 0 && p.h > 0))
   ok('doorways are cut into the partitions (shorter than the wall)', b.interiorDoors.length > 0 && b.counts.interiorDoors === b.interiorDoors.length && b.interiorDoors.every((d) => d.h > 0 && d.h < b.partitions[0].h + 1e-9 && d.level !== undefined))
-  ok('a half-turn stair per storey (2 flights + landing + rails), in the core', b.stairs.length === 10 && b.counts.stairs === 10 && b.stairs.every((s) => s.flights.length === 2 && s.landings.length === 1 && s.rails.length === 2 && s.risers >= 14 && s.top > s.base))
+  ok('a half-turn stair per storey (2 flights + landing + rails), in the core', b.stairs.length === 20 && b.counts.stairs === 20 && b.stairs.every((s) => s.flights.length === 2 && s.landings.length === 1 && s.rails.length === 2 && s.risers >= 14 && s.top > s.base))
   ok('stair treads climb (each tread higher than the last)', b.stairs[0].treads.every((t, i, a) => i === 0 || t.y > a[i - 1].y))
   ok('no core → no stairs', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 5, shape: 'rect' }), { coreRatio: 0 }).stairs.length === 0)
 }
@@ -817,10 +819,10 @@ section('building-explorer')
   ok('Partition + Interior Door + Stair schedules with rows', ['Partition', 'Interior Door', 'Stair'].every((c) => ex.schedules.some((s) => s.category === c)) && ex.summary.partitions === model.partitions.length && ex.summary.interiorDoors === model.interiorDoors.length && ex.summary.stairs === model.stairs.length)
   ok('a partition schedule row totals interior wall length', (() => { const ps = ex.schedules.find((s) => s.category === 'Partition')!; return ps.rows.length === model.partitions.length && ps.totals.length > 0 })())
   ok('an interior-door element carries width/height/leaf area', (() => { const e = ex.byId[model.interiorDoors[0].id!]; return !!e && e.category === 'Interior Door' && Number(e.data.width) > 0 && Number(e.data.area) > 0 })())
-  ok('a stair element carries flights + risers + a riser height + going', (() => { const e = ex.byId['stair-0']; return !!e && Number(e.data.flights) === 2 && Number(e.data.risers) >= 14 && Number(e.data.rise) > 0 && Number(e.data.going) > 0 })())
-  ok('a stair element reports a building-code status (Pass) + pitch', (() => { const e = ex.byId['stair-0']; return !!e && e.data.code === 'Pass' && Number(e.data.pitch) > 0 && Number(e.data.pitch) < 42 && Number(e.data.rise) <= 0.19 })())
-  ok('the level plan carries partitions + interior doors + a stair', (() => { const p = planForLevel(model, 0); return p.partitions.length > 0 && p.interiorDoors.length > 0 && p.stairs.length === 1 && p.stairs[0].id === 'stair-0' })())
-  ok('findElementGeom locates a partition + interior door + a stair', !!findElementGeom(model, model.partitions[0].id!) && !!findElementGeom(model, model.interiorDoors[0].id!) && (() => { const g = findElementGeom(model, 'stair-0'); return !!g && g.size.y > 0 })())
+  ok('a stair element carries flights + risers + a riser height + going', (() => { const e = ex.byId['stair-0-1']; return !!e && Number(e.data.flights) === 2 && Number(e.data.risers) >= 14 && Number(e.data.rise) > 0 && Number(e.data.going) > 0 })())
+  ok('a stair element reports a building-code status (Pass) + pitch', (() => { const e = ex.byId['stair-0-1']; return !!e && e.data.code === 'Pass' && Number(e.data.pitch) > 0 && Number(e.data.pitch) < 42 && Number(e.data.rise) <= 0.19 })())
+  ok('the level plan carries partitions + interior doors + a stair', (() => { const p = planForLevel(model, 0); return p.partitions.length > 0 && p.interiorDoors.length > 0 && p.stairs.length === 2 && p.stairs.some((s) => s.id === 'stair-0-1') })())
+  ok('findElementGeom locates a partition + interior door + a stair', !!findElementGeom(model, model.partitions[0].id!) && !!findElementGeom(model, model.interiorDoors[0].id!) && (() => { const g = findElementGeom(model, 'stair-0-1'); return !!g && g.size.y > 0 })())
   // highlight geometry
   ok('findElementGeom locates a column box', (() => { const g = findElementGeom(model, 'col-0-0'); return !!g && Math.abs(g.size.x - model.columns[0].w) < 1e-9 })())
   ok('findElementGeom gives a panel an edge direction', (() => { const g = findElementGeom(model, 'pan-0-0'); return !!g && !!g.dir })())
@@ -907,14 +909,29 @@ section('building-partitions')
 
   const floors = [{ base: 0, height: 0.92, level: 0 }, { base: 1, height: 0.92, level: 1 }]
   const stairs = coreStairs(core, floors, { storeyHeight: 3.6 })
-  ok('coreStairs makes a half-turn stair (2 flights) per storey', stairs.length === 2 && stairs.every((s) => s.flights.length === 2 && s.treads.length > 0 && s.landings.length === 1 && s.rails.length === 2))
+  ok('coreStairs makes two egress half-turn stairs per storey', stairs.length === 4 && stairs.every((s) => s.flights.length === 2 && s.treads.length > 0 && s.landings.length === 1 && s.rails.length === 2))
   ok('the two flights split the storey rise (each rises half)', stairs.every((s) => near(s.flights[0].top - s.flights[0].base, 0.46, 1e-6) && near(s.flights[1].base, s.flights[0].top, 1e-6) && s.flights[1].risers + s.flights[0].risers === s.risers))
   ok('a stair rises a full storey & runs along the core', stairs.every((s) => near(s.top - s.base, 0.92, 1e-9) && (s.dir === 'x' || s.dir === 'z') && s.widthScene > 0))
-  ok('all stair parts carry the stair id (click any → select it)', stairs[0].treads.concat(stairs[0].landings, stairs[0].rails).every((t) => t.id === 'stair-0'))
+  ok('all stair parts carry the stair id (click any → select it)', stairs[0].treads.concat(stairs[0].landings, stairs[0].rails).every((t) => t.id === stairs[0].id))
   ok('flight A treads climb monotonically', stairs[0].flights[0].treads.every((t, i, a) => i === 0 || t.y > a[i - 1].y))
-  ok('stairs are code-dimensioned & pass the stair check', stairs.every((s) => { const c = stairCheck(s, 3.6); return c.ok && c.riseM <= 0.19 && c.goingM >= 0.25 && c.widthM >= 1.0 && c.pitch < 42 }))
+  ok('stairs are code-dimensioned & pass under every preset', stairs.every((s) => CODE_KEYS.every((k) => stairCheck(s, 3.6, CODE_PRESETS[k].stair).ok)))
   ok('stairCheck flags a too-steep stair (tiny going)', (() => { const c = stairCheck({ ...stairs[0], treadDepth: 0.02, flights: stairs[0].flights }, 3.6); return !c.ok && c.issues.some((i) => /going/.test(i)) })())
   ok('no core → no stairs', coreStairs(null, floors).length === 0)
+}
+
+// ── building-code + egress (life-safety analysis) ───────────────────────────────
+section('egress')
+{
+  ok('three code presets carry stair + egress limits', CODE_KEYS.length === 3 && CODE_KEYS.every((k) => CODE_PRESETS[k].stair.maxRise > 0 && CODE_PRESETS[k].egress.maxTravel > 0 && CODE_PRESETS[k].egress.occLoadFactor > 0))
+  const m = buildBuilding(buildMassing({ gfa: 120_000, progress: 100, storeys: 8, shape: 'rect' }), { coreRatio: 0.16 })
+  const eg = egressAnalysis(m, { code: 'IBC' })
+  ok('every room gets an occupant load + a travel distance to an exit', eg.rooms.length === m.rooms.length && eg.rooms.every((r) => r.occupancy >= 1 && r.travel >= 0 && !!r.exit))
+  ok('a floor summary per storey with occupancy, exits & required width', eg.floors.length > 0 && eg.floors.every((f) => f.occupancy > 0 && f.exits >= 1 && f.requiredWidth >= 0 && f.providedWidth > 0))
+  ok('occupancy is denser under UK than IBC (lower load factor)', egressAnalysis(m, { code: 'UK' }).summary.occupancy > eg.summary.occupancy)
+  ok('a tighter travel limit fails at least as many rooms (EU ≤ IBC limit)', egressAnalysis(m, { code: 'EU' }).summary.roomsOverTravel >= eg.summary.roomsOverTravel)
+  ok('the building summary totals occupancy + worst travel', eg.summary.occupancy === eg.floors.reduce((s, f) => s + f.occupancy, 0) && eg.summary.maxTravel >= 0 && eg.summary.maxTravelLimit === CODE_PRESETS.IBC.egress.maxTravel)
+  ok('egressPathFor gives a centre→exit line for a room', (() => { const p = egressPathFor(m, m.rooms[0].id); return !!p && !!p.from && !!p.to })())
+  ok('no stairs & no core → every room is flagged (no exit)', (() => { const e2 = egressAnalysis({ ...m, stairs: [], core: null }); return e2.rooms.every((r) => !r.ok) && e2.floors.every((f) => !f.ok) })())
 }
 
 // ── building-export (OBJ round-trip) ────────────────────────────────────────────
@@ -944,7 +961,7 @@ section('building-ifc')
   ok('parametric extruded-solid geometry + property sets', count('IFCEXTRUDEDAREASOLID') > 0 && count('IFCPROPERTYSET') > 0 && count('IFCRELDEFINESBYPROPERTIES') > 0)
   ok('spatial structure + each stair aggregates its parts', count('IFCRELAGGREGATES') === 3 + model.stairs.length && count('IFCRELCONTAINEDINSPATIALSTRUCTURE') >= 1)
   ok('interior rooms export as IfcSpace', count('IFCSPACE') === model.rooms.length && model.rooms.length > 0)
-  ok('stairs are half-turn IfcStair decomposed into IfcStairFlight + IfcRailing', count('IFCSTAIR') === model.stairs.length && model.stairs.length === 4 && count('IFCSTAIRFLIGHT') === model.stairs.length * 2 && count('IFCRAILING') === model.stairs.length * 2 && /\.HALF_TURN_STAIR\./.test(ifc))
+  ok('stairs are half-turn IfcStair decomposed into IfcStairFlight + IfcRailing', count('IFCSTAIR') === model.stairs.length && model.stairs.length === 8 && count('IFCSTAIRFLIGHT') === model.stairs.length * 2 && count('IFCRAILING') === model.stairs.length * 2 && /\.HALF_TURN_STAIR\./.test(ifc))
   ok('interior partitions export as IfcWall (.PARTITIONING.)', model.partitions.length > 0 && (ifc.match(/\.PARTITIONING\./g) || []).length === model.partitions.length)
   // every #ref resolves to a defined #id (no dangling references)
   ok('every entity reference resolves (well-formed model)', (() => {
@@ -1074,7 +1091,7 @@ section('agent-tools')
   ok('runTool parse_ifc summarises a model', Array.isArray(ifc.entityCounts) && ifc.entityCounts.length > 0)
   // export_building → a pullable model file (the Connections hub + MCP + APS publish use this)
   const xi = (await runTool('export_building', { gfa: 40000, storeys: 6, shape: 'rect', name: 'Tower X', format: 'ifc' })) as { format: string; filename: string; content: string; bytes: number; counts: { stairs: number; partitions: number } }
-  ok('export_building emits a real IFC4 file (typed products incl. stairs)', xi.format === 'ifc' && xi.filename === 'tower-x.ifc' && /^ISO-10303-21;/.test(xi.content) && /IFCSTAIR\(/.test(xi.content) && xi.bytes > 1000 && xi.counts.stairs === 6)
+  ok('export_building emits a real IFC4 file (typed products incl. stairs)', xi.format === 'ifc' && xi.filename === 'tower-x.ifc' && /^ISO-10303-21;/.test(xi.content) && /IFCSTAIR\(/.test(xi.content) && xi.bytes > 1000 && xi.counts.stairs === 12)
   const xo = (await runTool('export_building', { gfa: 40000, storeys: 6, format: 'obj' })) as { format: string; content: string }
   ok('export_building emits a grouped OBJ when asked', xo.format === 'obj' && /\ng Columns/.test(xo.content) && /\ng Stairs/.test(xo.content))
   const xj = (await runTool('export_building', { gfa: 40000, storeys: 6, format: 'json' })) as { format: string; schedules: unknown[]; summary: { storeys: number } }

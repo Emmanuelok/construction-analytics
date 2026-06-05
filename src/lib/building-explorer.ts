@@ -11,6 +11,7 @@ import { bearing, compass } from './geo'
 import { SCENE_LEN_TO_M } from './massing'
 import type { BuildingModel, Box, Quad, Beam, Plate, Stair } from './building'
 import { stairCheck } from './building-stairs'
+import { CODE_PRESETS, type CodeKey } from './building-code'
 
 const LEN = SCENE_LEN_TO_M // scene plan unit → metres
 const AREA = LEN * LEN
@@ -46,7 +47,7 @@ export type LevelInfo = {
 
 export type Schedule = { group: string; category: ElementCategory; columns: ScheduleCol[]; rows: (Record<string, number | string> & { id: string })[]; totals: Record<string, number> }
 
-export type ExplodeOpts = { storeyHeight?: number; slabThickness?: number }
+export type ExplodeOpts = { storeyHeight?: number; slabThickness?: number; code?: CodeKey }
 
 export type BuildingExplosion = {
   elements: BuildingElement[]
@@ -173,6 +174,7 @@ const plateBBox = (poly: Pt[]) => {
 /** Explode the building into inspectable elements, levels and schedules. */
 export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): BuildingExplosion {
   const sh = Math.max(0.1, opts.storeyHeight ?? 3.6)
+  const stairLimits = CODE_PRESETS[opts.code ?? 'IBC'].stair
   const slabT = Math.max(0.05, opts.slabThickness ?? 0.3)
   const storeys = m.counts.storeys
   const elements: BuildingElement[] = []
@@ -276,7 +278,7 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
   for (const s of m.stairs) {
     const lvl = levelName(s.level, storeys)
     const mark = `ST-${s.level === 0 ? 'G' : pad(s.level)}`
-    const chk = stairCheck(s, sh)
+    const chk = stairCheck(s, sh, stairLimits)
     elements.push({ id: s.id, category: 'Stair', level: s.level, levelName: lvl, mark, title: `Stair ${mark}`, cols: STAIR_COLS,
       data: { mark, level: lvl, flights: s.flights.length, risers: s.risers, rise: r2(chk.riseM), going: r2(chk.goingM), width: r2(chk.widthM), pitch: r1(chk.pitch), rise_total: r2((s.top - s.base) * sh), code: chk.ok ? 'Pass' : chk.issues.join('; ') } })
   }
@@ -349,7 +351,7 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
       gfa: r1(gfa), grossVolume: r1(grossVolume), facadeArea: r1(facadeArea), height: r1(storeys * sh),
       concreteVolume: r1(concreteVolume), coreVolume: coreEls.length ? Number(coreEls[0].data.volume) : 0,
     },
-    opts: { storeyHeight: sh, slabThickness: slabT },
+    opts: { storeyHeight: sh, slabThickness: slabT, code: opts.code ?? 'IBC' },
   }
 }
 

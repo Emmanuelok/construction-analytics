@@ -7,7 +7,7 @@ import { compass } from '@/lib/geo'
  * Click an element to inspect it. Scroll to zoom, drag the background to pan. In edit
  * mode, drag a column / window / door to move it, or (with Add active) click to drop a
  * new column. North is up (scene x = East, z = North). */
-export function FloorPlan({ plan, selected, onSelect, editable = false, addMode = false, onMoveElement, onAddAt, height = 320 }: {
+export function FloorPlan({ plan, selected, onSelect, editable = false, addMode = false, onMoveElement, onAddAt, egressPath, height = 320 }: {
   plan: LevelPlan
   selected: string | null
   onSelect: (id: string) => void
@@ -15,6 +15,7 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
   addMode?: boolean
   onMoveElement?: (id: string, dx: number, dz: number) => void
   onAddAt?: (x: number, z: number) => void
+  egressPath?: { from: { x: number; z: number }; to: { x: number; z: number } } | null
   height?: number
 }) {
   const { b, w, h, pad, toX, toY, ext } = useMemo(() => {
@@ -130,6 +131,13 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
             </g>
           )
         })}</g>
+        {/* egress path for the selected room (centre → nearest exit) */}
+        {egressPath && (
+          <g aria-hidden className="pointer-events-none">
+            <line x1={toX(egressPath.from.x)} y1={toY(egressPath.from.z)} x2={toX(egressPath.to.x)} y2={toY(egressPath.to.z)} stroke="#fbbf24" strokeWidth={2} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" strokeLinecap="round" />
+            <circle cx={toX(egressPath.to.x)} cy={toY(egressPath.to.z)} r={colR * 1.6} fill="none" stroke="#fbbf24" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+          </g>
+        )}
         {/* windows + doors (draggable) */}
         <g>{plan.panels.map((p) => lineGroup(p.id, p.a, p.b, '#38bdf8', 2.5))}</g>
         <g>{plan.doors.map((p) => lineGroup(p.id, p.a, p.b, '#34d399', 4))}</g>

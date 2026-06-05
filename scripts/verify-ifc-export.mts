@@ -23,7 +23,7 @@ ok('web-ifc opens the generated IFC (valid model)', mid >= 0, { mid })
 const n = (t: number) => { try { return api.GetLineIDsWithType(mid, t).size() } catch { return -1 } }
 ok('storeys round-trip (4 IfcBuildingStorey)', n(IFCBUILDINGSTOREY) === 4, { storeys: n(IFCBUILDINGSTOREY) })
 ok('interior rooms round-trip as IfcSpace', n(IFCSPACE) === model.rooms.length && model.rooms.length > 0, { spaces: n(IFCSPACE), rooms: model.rooms.length })
-ok('stairs round-trip as half-turn IfcStair + IfcStairFlight + IfcRailing', n(IFCSTAIR) === model.stairs.length && model.stairs.length === 4 && n(IFCSTAIRFLIGHT) === model.stairs.length * 2 && n(IFCRAILING) === model.stairs.length * 2, { stair: n(IFCSTAIR), flight: n(IFCSTAIRFLIGHT), rail: n(IFCRAILING) })
+ok('stairs round-trip as half-turn IfcStair + IfcStairFlight + IfcRailing', n(IFCSTAIR) === model.stairs.length && model.stairs.length === 8 && n(IFCSTAIRFLIGHT) === model.stairs.length * 2 && n(IFCRAILING) === model.stairs.length * 2, { stair: n(IFCSTAIR), flight: n(IFCSTAIRFLIGHT), rail: n(IFCRAILING) })
 ok('typed products round-trip (columns/slabs+landings/walls+partitions/windows/beams/doors+interior)', n(IFCCOLUMN) === model.columns.length && n(IFCSLAB) === model.slabs.length + 1 + model.stairs.length && n(IFCWALL) === model.walls.length + model.partitions.length && n(IFCWINDOW) === model.glazing.length && n(IFCBEAM) === model.beams.length && n(IFCDOOR) === model.doors.length + model.interiorDoors.length,
   { col: n(IFCCOLUMN), slab: n(IFCSLAB), expectSlab: model.slabs.length + 1 + model.stairs.length, wall: n(IFCWALL), win: n(IFCWINDOW), beam: n(IFCBEAM), door: n(IFCDOOR) })
 
