@@ -23,12 +23,14 @@ export type IfcMesh = {
 
 export type IfcStorey = { expressID: number; name: string; elevation: number }
 
+export type IfcProp = { name: string; value: string | number }
 export type IfcGeometryResult = {
   meshes: IfcMesh[]
   vertexCount: number
   triangleCount: number
   bbox: { min: [number, number, number]; max: [number, number, number] } | null
   storeys: IfcStorey[] // building storeys, for floor-by-floor review
+  props?: Record<number, IfcProp[]> // IfcPropertySet / IfcElementQuantity values, by element expressID
 }
 
 /** How to locate the web-ifc WASM. In Node/tests pass `wasmPath` (a directory);
@@ -120,6 +122,54 @@ async function readSpatial(api: Api, modelID: number): Promise<Spatial> {
   } catch { return blank }
 }
 
+/** Read property sets + element quantities (IfcRelDefinesByProperties → IfcPropertySet /
+ *  IfcElementQuantity) for the elements that have geometry, so an imported model keeps
+ *  its real parameters. Fully guarded + capped; only the wanted ids are collected. */
+async function readProperties(api: Api, modelID: number, wanted: Set<number>): Promise<Record<number, IfcProp[]>> {
+  const out: Record<number, IfcProp[]> = {}
+  try {
+    const W = (await import('web-ifc')) as unknown as Record<string, number>
+    const REL = W.IFCRELDEFINESBYPROPERTIES, PSET = W.IFCPROPERTYSET, EQ = W.IFCELEMENTQUANTITY
+    if (typeof REL !== 'number') return out
+    const a = api as unknown as { GetLineIDsWithType: (m: number, t: number) => { size: () => number; get: (i: number) => number }; GetLine: (m: number, id: number) => Record<string, { value?: unknown } | { value?: unknown }[] | undefined>; GetLineType: (m: number, id: number) => number }
+    const CAP = 24
+    const rels = a.GetLineIDsWithType(modelID, REL)
+    const psetCache = new Map<number, IfcProp[]>()
+    const val = (v: unknown): string | number | null => (typeof v === 'number' ? v : v == null ? null : String(v))
+    for (let i = 0; i < rels.size(); i++) {
+      try {
+        const r = a.GetLine(modelID, rels.get(i))
+        const related = (r?.RelatedObjects ?? []) as { value?: number }[]
+        const targets = related.map((o) => o?.value).filter((v): v is number => typeof v === 'number' && wanted.has(v))
+        if (!targets.length) continue
+        const pdId = (r?.RelatingPropertyDefinition as { value?: number })?.value
+        if (typeof pdId !== 'number') continue
+        let props = psetCache.get(pdId)
+        if (!props) {
+          props = []
+          const pd = a.GetLine(modelID, pdId)
+          const ptype = a.GetLineType(modelID, pdId)
+          const handles = (ptype === PSET ? pd?.HasProperties : ptype === EQ ? pd?.Quantities : []) as { value?: number }[] | undefined
+          for (const h of handles ?? []) {
+            if (props.length >= CAP) break
+            try {
+              const p = a.GetLine(modelID, h.value as number) as Record<string, { value?: unknown } | undefined>
+              const nm = p?.Name?.value
+              const raw = p?.NominalValue?.value ?? p?.LengthValue?.value ?? p?.AreaValue?.value ?? p?.VolumeValue?.value ?? p?.CountValue?.value ?? p?.WeightValue?.value
+              const v = val(raw)
+              if (nm != null && v != null) props.push({ name: String(nm), value: v })
+            } catch { /* skip property */ }
+          }
+          psetCache.set(pdId, props)
+        }
+        if (!props.length) continue
+        for (const t of targets) { const arr = out[t] ?? (out[t] = []); for (const p of props) if (arr.length < CAP) arr.push(p) }
+      } catch { /* skip relation */ }
+    }
+  } catch { /* no properties */ }
+  return out
+}
+
 /** Tessellate IFC bytes → meshes. Never throws; returns an empty result on any
  *  kernel/parse failure so the caller can fall back to the reconstruction. */
 export async function extractGeometry(bytes: Uint8Array, opts: ExtractOptions = {}): Promise<IfcGeometryResult> {
@@ -203,12 +253,15 @@ export async function extractGeometry(bytes: Uint8Array, opts: ExtractOptions = 
       if (nm) m.name = nm
     }
 
+    const props = meshes.length ? await readProperties(api, modelID, new Set(meshes.map((m) => m.expressID))) : {}
+
     return {
       meshes,
       vertexCount,
       triangleCount,
       bbox: meshes.length ? { min, max } : null,
       storeys: spatial.storeys,
+      props,
     }
   } catch {
     return empty

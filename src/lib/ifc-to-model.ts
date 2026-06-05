@@ -9,7 +9,7 @@
  * scene units convert back via the plan scale + storey height. No DOM, no Three.js. */
 
 import type { BuildingModel, Box, Quad, Beam, Plate, Room } from './building'
-import type { IfcGeometryResult, IfcMesh } from './ifc-geometry'
+import type { IfcGeometryResult, IfcMesh, IfcProp } from './ifc-geometry'
 import { meshGeom } from './ifc-explorer'
 import { PLATE_SCALE, SCENE_LEN_TO_M } from './massing'
 
@@ -36,7 +36,7 @@ function bucketFor(t: string, sx: number, sy: number, sz: number): Bucket {
 
 type ElBox = { expressID: number; type: string; bucket: Bucket; level: number; name?: string; min: [number, number, number]; max: [number, number, number] }
 
-export type IfcLabels = Record<string, { name?: string; ifcType: string }>
+export type IfcLabels = Record<string, { name?: string; ifcType: string; props?: IfcProp[] }>
 
 /** Rationalize a tessellated IFC into an editable BuildingModel + the storey height
  *  it was reconstructed at + a map of each element's original IFC name & type. */
@@ -120,7 +120,7 @@ export function ifcToModel(res: IfcGeometryResult, opts: { storeyHeight?: number
     counts: { storeys: S, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: 0, partitions: 0, interiorDoors: 0, stairs: 0, slabs: slabs.length, rooms: rooms.length },
   }
   const labels: IfcLabels = {}
-  for (const e of els) labels[`ifc-${e.expressID}`] = { name: e.name?.trim() || undefined, ifcType: e.type }
+  for (const e of els) labels[`ifc-${e.expressID}`] = { name: e.name?.trim() || undefined, ifcType: e.type, props: res.props?.[e.expressID] }
   return { model, storeyHeight: sh, labels }
 }
 

@@ -10,6 +10,7 @@ import { type Pt, polygonArea, polygonPerimeter, polygonCentroid } from './zonin
 import { bearing, compass } from './geo'
 import { SCENE_LEN_TO_M } from './massing'
 import type { BuildingModel, Box, Quad, Beam, Plate, Stair } from './building'
+import { stairCheck } from './building-stairs'
 
 const LEN = SCENE_LEN_TO_M // scene plan unit → metres
 const AREA = LEN * LEN
@@ -130,7 +131,9 @@ const STAIR_COLS: ScheduleCol[] = [
   { key: 'rise', label: 'Riser', unit: 'm', numeric: true },
   { key: 'going', label: 'Going', unit: 'm', numeric: true },
   { key: 'width', label: 'Width', unit: 'm', numeric: true },
+  { key: 'pitch', label: 'Pitch', unit: '°', numeric: true },
   { key: 'rise_total', label: 'Rise', unit: 'm', numeric: true },
+  { key: 'code', label: 'Code' },
 ]
 const INT_DOOR_COLS: ScheduleCol[] = [
   { key: 'mark', label: 'Mark' },
@@ -273,9 +276,9 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
   for (const s of m.stairs) {
     const lvl = levelName(s.level, storeys)
     const mark = `ST-${s.level === 0 ? 'G' : pad(s.level)}`
-    const rise = ((s.top - s.base) / Math.max(1, s.risers)) * sh
+    const chk = stairCheck(s, sh)
     elements.push({ id: s.id, category: 'Stair', level: s.level, levelName: lvl, mark, title: `Stair ${mark}`, cols: STAIR_COLS,
-      data: { mark, level: lvl, flights: s.flights.length, risers: s.risers, rise: r2(rise), going: r2(s.treadDepth * LEN), width: r2(s.widthScene * LEN), rise_total: r2((s.top - s.base) * sh) } })
+      data: { mark, level: lvl, flights: s.flights.length, risers: s.risers, rise: r2(chk.riseM), going: r2(chk.goingM), width: r2(chk.widthM), pitch: r1(chk.pitch), rise_total: r2((s.top - s.base) * sh), code: chk.ok ? 'Pass' : chk.issues.join('; ') } })
   }
 
   // core
