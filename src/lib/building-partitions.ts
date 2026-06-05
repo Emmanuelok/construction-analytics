@@ -15,7 +15,7 @@ const dist = (a: Pt, b: Pt) => Math.hypot(b.x - a.x, b.z - a.z)
 const lerp = (a: Pt, b: Pt, t: number): Pt => ({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t })
 
 /** Ray-cast point-in-polygon (x east, z north). */
-function pointInPoly(p: Pt, poly: Pt[]): boolean {
+export function pointInPoly(p: Pt, poly: Pt[]): boolean {
   let inside = false
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
     const a = poly[i], b = poly[j]
@@ -29,7 +29,7 @@ function pointInPoly(p: Pt, poly: Pt[]): boolean {
 
 /** Sub-segments of a→b that lie inside the polygon (handles convex & non-convex
  *  floors: splits at every edge crossing, keeps the spans whose midpoint is inside). */
-function clipSegment(a: Pt, b: Pt, poly: Pt[]): [Pt, Pt][] {
+export function clipSegment(a: Pt, b: Pt, poly: Pt[]): [Pt, Pt][] {
   const dx = b.x - a.x, dz = b.z - a.z
   const ts = [0, 1]
   for (let i = 0; i < poly.length; i++) {

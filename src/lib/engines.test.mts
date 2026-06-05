@@ -33,6 +33,7 @@ import { floorRooms, floorGrid } from './building-rooms.ts'
 import { floorPartitions } from './building-partitions.ts'
 import { coreStairs, stairCheck } from './building-stairs.ts'
 import { egressAnalysis, egressPathFor } from './egress.ts'
+import { floorCompartments, buildingFire } from './fire.ts'
 import { CODE_PRESETS, CODE_KEYS } from './building-code.ts'
 import { explodeIfc, meshGeom, friendlyType, sliceMeshes, cutHeightFor } from './ifc-explorer.ts'
 import { ifcToModel } from './ifc-to-model.ts'
@@ -942,6 +943,25 @@ section('egress')
   ok('routed travel needs doors (no doors → rooms stranded)', (() => { const e2 = egressAnalysis({ ...m, interiorDoors: [] }); return e2.rooms.every((r) => !r.ok && r.reason === 'no door route to a stair') })())
   ok('egressPathFor returns a routed polyline (room → … → exit)', (() => { const p = egressPathFor(m, m.rooms[0].id); return !!p && p.points.length >= 2 })())
   ok('no stairs & no core → every room is flagged (no exit)', (() => { const e2 = egressAnalysis({ ...m, stairs: [], core: null }); return e2.rooms.every((r) => !r.ok) && e2.floors.every((f) => !f.ok) })())
+  // dead-end / common-path: each room reports its doorways out; a tighter common path flags more
+  ok('rooms report their number of egress routes (doorways out)', eg.rooms.every((r) => r.routes >= 0) && eg.floors.every((f) => f.deadEnds >= 0) && typeof eg.summary.deadEnds === 'number')
+  ok('removing most doors strands / dead-ends far more rooms', egressAnalysis({ ...m, interiorDoors: m.interiorDoors.slice(0, 3) }).summary.roomsOverTravel > eg.summary.roomsOverTravel)
+  ok('a single-door room past the common path is flagged a dead end', (() => { const r = eg.rooms.find((x) => x.routes <= 1 && x.travel > CODE_PRESETS.IBC.egress.commonPath && x.travel <= CODE_PRESETS.IBC.egress.maxTravel); return !r || /dead end/.test(r.reason ?? '') })())
+}
+
+// ── fire (compartmentation + per-compartment takeoff) ───────────────────────────
+section('fire')
+{
+  const m = buildBuilding(buildMassing({ gfa: 120_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0.16 })
+  const lim = CODE_PRESETS.UK.egress
+  const ff = floorCompartments(m, 0, { maxArea: lim.maxCompartment, occLoadFactor: lim.occLoadFactor, costPerM2: 1800 })
+  ok('floorCompartments subdivides a floor into ≤ max-area compartments', ff.compartments.length > 1 && ff.compartments.every((c) => c.area <= lim.maxCompartment * 1.1 && c.polygon.length >= 3))
+  ok('each compartment carries rooms, occupancy, rated wall & cost', ff.compartments.every((c) => c.rooms >= 0 && c.occupancy >= 0 && c.ratedWall > 0 && c.cost > 0))
+  ok('fire-rated walls are drawn between compartments', ff.walls.length > 0 && ff.walls.every((w) => Math.hypot(w.b.x - w.a.x, w.b.z - w.a.z) > 0))
+  ok('a smaller max-compartment area → more compartments', floorCompartments(m, 0, { maxArea: lim.maxCompartment / 2, occLoadFactor: lim.occLoadFactor }).compartments.length > ff.compartments.length)
+  const bf = buildingFire(m, { maxArea: lim.maxCompartment, occLoadFactor: lim.occLoadFactor, costPerM2: 1800 })
+  ok('buildingFire totals compartments, rated wall & fit-out cost across storeys', bf.compartments > 0 && bf.ratedWall > 0 && bf.cost > 0 && bf.floors.length === 6)
+  ok('rooms get assigned to compartments (sum ≈ floor rooms)', (() => { const assigned = ff.compartments.reduce((s, c) => s + c.rooms, 0); return assigned > 0 && assigned <= m.rooms.filter((r) => r.level === 0).length })())
 }
 
 // ── building-export (OBJ round-trip) ────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck } from 'lucide-react'
+import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge, Tabs } from '@/components/ui'
 import { ScrollableTable } from '@/components/ScrollableTable'
 const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
@@ -12,6 +12,7 @@ import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, add
 import { toObj } from '@/lib/building-export'
 import { toIfc } from '@/lib/building-ifc'
 import { egressAnalysis, egressPathFor } from '@/lib/egress'
+import { buildingFire, floorCompartments } from '@/lib/fire'
 import { CODE_PRESETS, CODE_KEYS, type CodeKey } from '@/lib/building-code'
 import type { IfcLabels } from '@/lib/ifc-to-model'
 import { idbGet, idbSet, idbDel } from '@/lib/idb'
@@ -64,6 +65,7 @@ export default function BuildingExplorer() {
   const [mullions, setMullions] = useState(() => init0?.mullions ?? true)
   const [code, setCode] = useState<CodeKey>(() => init0?.code ?? 'IBC')
   const [editMode, setEditMode] = useState(false)
+  const [showFire, setShowFire] = useState(false)
   const [addKind, setAddKind] = useState<'column' | 'door' | 'stair' | null>(null)
   const [edits, setEdits] = useState<BuildingEdits>(() => init0?.edits ?? emptyEdits())
   const [past, setPast] = useState<BuildingEdits[]>([])
@@ -114,6 +116,9 @@ export default function BuildingExplorer() {
   const switchProject = (id: string) => { setProjectId(id); const p = PROJECTS.find((x) => x.id === id) ?? PROJECTS[0]; applyCfg(loadCfg(id) ?? {}, p.gfa) }
   const ex = useMemo(() => explodeBuilding(model, { storeyHeight, slabThickness, code }), [model, storeyHeight, slabThickness, code])
   const egress = useMemo(() => egressAnalysis(model, { code }), [model, code])
+  const fireOpts = useMemo(() => ({ maxArea: CODE_PRESETS[code].egress.maxCompartment, occLoadFactor: CODE_PRESETS[code].egress.occLoadFactor, costPerM2: 1800 }), [code])
+  const fire = useMemo(() => buildingFire(model, fireOpts), [model, fireOpts])
+  const floorFire = useMemo(() => floorCompartments(model, activeLevel, fireOpts), [model, activeLevel, fireOpts])
   const plan = useMemo(() => planForLevel(model, activeLevel), [model, activeLevel])
   const egressPath = useMemo(() => (selectedId && selectedId.startsWith('room-') ? egressPathFor(model, selectedId) : null), [model, selectedId])
   const nEdits = editCount(edits)
@@ -300,9 +305,10 @@ export default function BuildingExplorer() {
       {/* floor plan + element inspector */}
       <div className="grid gap-6 lg:grid-cols-[1.25fr_1fr]">
         <Card className="overflow-hidden">
-          <CardHeader icon={Table2} accent="teal" title={`Floor plan — ${activeLevelInfo?.name ?? `Level ${activeLevel}`}`} subtitle="Scroll to zoom, drag the background to pan. Click an element to inspect it; in Edit mode, drag a column/window/door to move it, or use Add door and click a partition to place a doorway. Selection syncs with the 3D model & schedules." />
+          <CardHeader icon={Table2} accent="teal" title={`Floor plan — ${activeLevelInfo?.name ?? `Level ${activeLevel}`}`} subtitle="Scroll to zoom, drag the background to pan. Click an element to inspect it; in Edit mode, drag a column/window/door to move it, or use Add door and click a partition to place a doorway. Selection syncs with the 3D model & schedules."
+            action={<button onClick={() => setShowFire((v) => !v)} aria-pressed={showFire} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', showFire ? 'bg-rose-500/20 text-rose-100 ring-rose-500/40' : 'text-slate-300 ring-edge/60 hover:bg-elevated/50')}><Flame className="h-3.5 w-3.5" /> Fire compartments</button>} />
           <div className="border-t border-edge/50 p-4">
-            <FloorPlan plan={plan} selected={selectedId} onSelect={selectEl} height={340} egressPath={egressPath}
+            <FloorPlan plan={plan} selected={selectedId} onSelect={selectEl} height={340} egressPath={egressPath} compartments={showFire ? floorFire : null}
               editable={editMode} addMode={addKind !== null}
               onMoveElement={(id, dx, dz) => edit((e) => nudge(e, id, { x: dx, y: 0, z: dz }))}
               onAddAt={(x, z) => { const lv = activeLevel < 0 ? 0 : Math.min(activeLevel, storeys - 1); edit((e) => (addKind === 'stair' ? addStairAt(e, model, x, z) : addKind === 'door' ? addDoorAt(e, model, lv, x, z) : addColumnAt(e, model, lv, x, z))); setAddKind(null) }} />
@@ -445,11 +451,12 @@ export default function BuildingExplorer() {
             </div>
           }
         />
-        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-6">
           <StatTile label="Occupant load" value={`${formatNumber(egress.summary.occupancy)} ppl`} accent="violet" />
           <StatTile label="Max travel" value={`${egress.summary.maxTravel} / ${egress.summary.maxTravelLimit} m`} accent={egress.summary.maxTravel > egress.summary.maxTravelLimit ? 'rose' : 'teal'} />
           <StatTile label="Rooms over travel" value={String(egress.summary.roomsOverTravel)} accent={egress.summary.roomsOverTravel ? 'amber' : 'emerald'} />
-          <StatTile label="Fire compartments" value={`${egress.summary.maxCompartments} / floor`} accent="amber" />
+          <StatTile label="Dead-ends" value={String(egress.summary.deadEnds)} accent={egress.summary.deadEnds ? 'amber' : 'emerald'} />
+          <StatTile label="Fire compartments" value={`${fire.compartments}`} accent="rose" />
           <StatTile label="Worst floor" value={egress.summary.worstFloor} accent={egress.summary.ok ? 'emerald' : 'rose'} />
         </div>
         <div className="border-t border-edge/50 p-4">
@@ -457,7 +464,7 @@ export default function BuildingExplorer() {
             <table className="w-full min-w-[640px] text-left text-sm">
               <thead>
                 <tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">
-                  {['Level', 'Rooms', 'Occupants', 'Exits', 'Max travel (m)', 'Req. width (m)', 'Provided (m)', 'Compartments', 'Status'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && i <= 7 && 'text-right')}>{h}</th>)}
+                  {['Level', 'Rooms', 'Occupants', 'Exits', 'Max travel (m)', 'Req. width (m)', 'Provided (m)', 'Dead-ends', 'Compartments', 'Status'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && i <= 8 && 'text-right')}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -470,6 +477,7 @@ export default function BuildingExplorer() {
                     <td className={cn('data-mono px-3 py-1.5 text-right', f.maxTravel > egress.summary.maxTravelLimit ? 'text-rose-300' : 'text-slate-300')}>{f.maxTravel}</td>
                     <td className="data-mono px-3 py-1.5 text-right text-slate-300">{f.requiredWidth.toFixed(2)}</td>
                     <td className={cn('data-mono px-3 py-1.5 text-right', f.providedWidth < f.requiredWidth ? 'text-rose-300' : 'text-slate-300')}>{f.providedWidth.toFixed(2)}</td>
+                    <td className={cn('data-mono px-3 py-1.5 text-right', f.deadEnds ? 'text-amber-300' : 'text-slate-300')}>{f.deadEnds}</td>
                     <td className="data-mono px-3 py-1.5 text-right text-slate-300" title={`${formatNumber(f.area)} m² ÷ ${formatNumber(f.maxCompartment)} m² max`}>{f.compartments}</td>
                     <td className="px-3 py-1.5">{f.ok ? <span className="text-emerald-300">Pass</span> : <span className="text-amber-300" title={f.issues.join('; ')}>{f.issues.length} issue{f.issues.length > 1 ? 's' : ''}</span>}</td>
                   </tr>
@@ -477,7 +485,7 @@ export default function BuildingExplorer() {
               </tbody>
             </table>
           </ScrollableTable>
-          <p className="mt-3 text-[11px] text-slate-500">Travel distance is routed through the actual doorways (room → doors → core → nearest stair) via shortest path — select a room in the plan to see its route. Occupant load factor {CODE_PRESETS[code].egress.occLoadFactor} m²/person; fire compartments = floor area ÷ {formatNumber(CODE_PRESETS[code].egress.maxCompartment)} m² max (indicative).</p>
+          <p className="mt-3 text-[11px] text-slate-500">Travel distance is routed through the actual doorways (room → doors → core → nearest stair) via shortest path — select a room in the plan to see its route. A dead-end is a single-door room past the {CODE_PRESETS[code].egress.commonPath} m common-path limit (give it a 2nd door to clear it). Fire-rated subdivision: <span className="text-rose-300">{fire.compartments} compartments · {formatNumber(fire.ratedWall)} m rated wall · indicative fit-out ${formatNumber(fire.cost)}</span> — toggle “Fire compartments” on the plan. Occupant load {CODE_PRESETS[code].egress.occLoadFactor} m²/person (indicative, design-stage).</p>
         </div>
       </Card>
       </>
@@ -487,8 +495,8 @@ export default function BuildingExplorer() {
 }
 
 function egressCsv(e: ReturnType<typeof egressAnalysis>): string {
-  const head = ['Level', 'Rooms', 'Occupants', 'Exits', 'Max travel (m)', 'Required width (m)', 'Provided width (m)', 'Floor area (m²)', 'Fire compartments', 'Status', 'Issues'].join(',')
-  const rows = e.floors.map((f) => [f.name, f.rooms, f.occupancy, f.exits, f.maxTravel, f.requiredWidth, f.providedWidth, f.area, f.compartments, f.ok ? 'Pass' : 'Fail', `"${f.issues.join('; ')}"`].join(','))
+  const head = ['Level', 'Rooms', 'Occupants', 'Exits', 'Max travel (m)', 'Required width (m)', 'Provided width (m)', 'Dead-ends', 'Floor area (m²)', 'Fire compartments', 'Status', 'Issues'].join(',')
+  const rows = e.floors.map((f) => [f.name, f.rooms, f.occupancy, f.exits, f.maxTravel, f.requiredWidth, f.providedWidth, f.deadEnds, f.area, f.compartments, f.ok ? 'Pass' : 'Fail', `"${f.issues.join('; ')}"`].join(','))
   return [head, ...rows].join('\n')
 }
 
