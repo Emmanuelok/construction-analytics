@@ -786,6 +786,11 @@ section('building')
   ok('a half-turn stair per storey (2 flights + landing + rails), in the core', b.stairs.length === 20 && b.counts.stairs === 20 && b.stairs.every((s) => s.flights.length === 2 && s.landings.length === 1 && s.rails.length === 2 && s.risers >= 14 && s.top > s.base))
   ok('stair treads climb (each tread higher than the last)', b.stairs[0].treads.every((t, i, a) => i === 0 || t.y > a[i - 1].y))
   ok('no core → no stairs', buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 5, shape: 'rect' }), { coreRatio: 0 }).stairs.length === 0)
+  // full anatomy: substructure + finishes
+  ok('a pad footing under every ground column + a core raft', b.foundations.length === b.columns.filter((c) => c.level === 0).length + 1 && b.counts.foundations === b.foundations.length && b.foundations.every((c) => c.y < 0))
+  ok('perimeter ground beams tie the footings below grade', b.groundBeams.length === 4 && b.groundBeams.every((g) => g.y < 0))
+  ok('a floor finish + a suspended ceiling per storey', b.floorFinishes.length === 10 && b.ceilings.length === 10 && b.counts.finishes === 10 && b.counts.ceilings === 10)
+  ok('a roof-edge parapet above the roof slab', b.parapets.length === 4 && b.parapets.every((p) => p.y > b.totalHeight - 1) && b.counts.parapets === 4)
 }
 
 // ── building-explorer (Revit-style floor/element/schedule review) ───────────────
@@ -827,6 +832,9 @@ section('building-explorer')
   ok('a stair element reports a building-code status (Pass) + pitch', (() => { const e = ex.byId['stair-0-1']; return !!e && e.data.code === 'Pass' && Number(e.data.pitch) > 0 && Number(e.data.pitch) < 42 && Number(e.data.rise) <= 0.19 })())
   ok('the level plan carries partitions + interior doors + a stair', (() => { const p = planForLevel(model, 0); return p.partitions.length > 0 && p.interiorDoors.length > 0 && p.stairs.length === 2 && p.stairs.some((s) => s.id === 'stair-0-1') })())
   ok('findElementGeom locates a partition + interior door + a stair', !!findElementGeom(model, model.partitions[0].id!) && !!findElementGeom(model, model.interiorDoors[0].id!) && (() => { const g = findElementGeom(model, 'stair-0-1'); return !!g && g.size.y > 0 })())
+  ok('Foundation / Ground beam / Finish / Ceiling / Parapet schedules exist', ['Foundation', 'Ground Beam', 'Finish', 'Ceiling', 'Parapet'].every((c) => ex.schedules.some((s) => s.category === c)))
+  ok('a footing element carries plan, depth & concrete; geometry resolves', (() => { const e = ex.byId[model.foundations[0].id!]; const g = findElementGeom(model, model.foundations[0].id!); return !!e && Number(e.data.volume) > 0 && Number(e.data.depth) > 0 && !!g && g.center.y < 0 })())
+  ok('ceiling + finish elements carry area & thickness; geometry resolves', (() => { const c = ex.byId['ceil-0'], fn = ex.byId['fin-0']; return !!c && !!fn && Number(c.data.area) > 0 && Number(fn.data.thickness) > 0 && !!findElementGeom(model, 'ceil-0') && !!findElementGeom(model, 'fin-0') })())
   // highlight geometry
   ok('findElementGeom locates a column box', (() => { const g = findElementGeom(model, 'col-0-0'); return !!g && Math.abs(g.size.x - model.columns[0].w) < 1e-9 })())
   ok('findElementGeom gives a panel an edge direction', (() => { const g = findElementGeom(model, 'pan-0-0'); return !!g && !!g.dir })())
@@ -1014,9 +1022,9 @@ section('building-export')
   ok('OBJ has a header + object name', obj.startsWith('#') && /\no Test Tower/.test(obj))
   ok('OBJ emits vertices + triangle faces', st.verts > 0 && st.faces > 0)
   ok('every face index is within the vertex range (valid mesh)', st.maxIndex <= st.verts && st.maxIndex > 0, { maxIndex: st.maxIndex, verts: st.verts })
-  ok('OBJ groups every trade present in the model', ['Slabs', 'Columns', 'Beams', 'Walls', 'Partitions', 'Windows', 'Doors', 'Stairs', 'Core'].every((g) => st.groups.includes(g)), st.groups)
+  ok('OBJ groups every trade present in the model', ['Slabs', 'Columns', 'Beams', 'Walls', 'Partitions', 'Windows', 'Doors', 'Stairs', 'Foundations', 'GroundBeams', 'Ceilings', 'Finishes', 'Parapets', 'Core'].every((g) => st.groups.includes(g)), st.groups)
   ok('a box element contributes 8 verts / 12 tris', (() => { const before = objStats(toObj(buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0 }))).faces; return before < st.faces })())
-  ok('a window panel is 4 verts / 2 tris each (quad)', objStats(toObj({ ...model, glazing: model.glazing.slice(0, 1), columns: [], beams: [], walls: [], partitions: [], interiorDoors: [], stairs: [], doors: [], mullions: [], slabs: [], roof: null, core: null })).faces === 2)
+  ok('a window panel is 4 verts / 2 tris each (quad)', objStats(toObj({ ...model, glazing: model.glazing.slice(0, 1), columns: [], beams: [], walls: [], partitions: [], interiorDoors: [], stairs: [], doors: [], mullions: [], slabs: [], foundations: [], groundBeams: [], ceilings: [], floorFinishes: [], parapets: [], roof: null, core: null })).faces === 2)
   ok('edited model exports too (deleted element gone)', (() => { const del = applyEdits(model, removeElement(emptyEdits(), model.columns[0].id!)); return objStats(toObj(del)).verts < st.verts })())
 }
 
@@ -1028,7 +1036,8 @@ section('building-ifc')
   const count = (t: string) => (ifc.match(new RegExp(`=${t}\\(`, 'g')) || []).length
   ok('valid IFC-SPF header + IFC4 schema + footer', ifc.startsWith('ISO-10303-21;') && /FILE_SCHEMA\(\('IFC4'\)\)/.test(ifc) && /END-ISO-10303-21;/.test(ifc))
   ok('one IfcProject, IfcSite, IfcBuilding + a storey per level', count('IFCPROJECT') === 1 && count('IFCSITE') === 1 && count('IFCBUILDING') === 1 && count('IFCBUILDINGSTOREY') === 4)
-  ok('typed products: columns, slabs(+landings), beams, walls(+partitions), windows, doors(+interior)', count('IFCCOLUMN') === model.columns.length && count('IFCSLAB') === model.slabs.length + 1 + model.stairs.length && count('IFCBEAM') === model.beams.length && count('IFCWALL') === model.walls.length + model.partitions.length && count('IFCWINDOW') === model.glazing.length && count('IFCDOOR') === model.doors.length + model.interiorDoors.length)
+  ok('typed products: columns, slabs(+landings), beams(+ground), walls(+partitions+parapets), windows, doors(+interior)', count('IFCCOLUMN') === model.columns.length && count('IFCSLAB') === model.slabs.length + 1 + model.stairs.length && count('IFCBEAM') === model.beams.length + model.groundBeams.length && count('IFCWALL') === model.walls.length + model.partitions.length + model.parapets.length && count('IFCWINDOW') === model.glazing.length && count('IFCDOOR') === model.doors.length + model.interiorDoors.length)
+  ok('substructure + finishes export: IfcFooting + IfcCovering (flooring/ceiling)', count('IFCFOOTING') === model.foundations.length && model.foundations.length > 0 && count('IFCCOVERING') === model.ceilings.length + model.floorFinishes.length && /\.FLOORING\./.test(ifc) && /\.CEILING\./.test(ifc) && /\.PAD_FOOTING\./.test(ifc))
   ok('parametric extruded-solid geometry + property sets', count('IFCEXTRUDEDAREASOLID') > 0 && count('IFCPROPERTYSET') > 0 && count('IFCRELDEFINESBYPROPERTIES') > 0)
   ok('spatial structure + each stair aggregates its parts', count('IFCRELAGGREGATES') === 3 + model.stairs.length && count('IFCRELCONTAINEDINSPATIALSTRUCTURE') >= 1)
   ok('interior rooms export as IfcSpace', count('IFCSPACE') === model.rooms.length && model.rooms.length > 0)

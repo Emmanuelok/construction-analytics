@@ -30,12 +30,17 @@ export type BuildingModel = {
   partitions: Quad[] // interior walls between rooms / around the core
   interiorDoors: Quad[] // doorways cut into the partitions
   stairs: Stair[] // a half-turn stair (two flights + landing) per storey, in the core
+  foundations: Box[] // substructure: a pad footing under every ground column + a core raft
+  groundBeams: Beam[] // substructure: perimeter ground beams tying the footings
+  ceilings: Plate[] // finishes: a suspended ceiling per storey
+  floorFinishes: Plate[] // finishes: the floor build-up on every slab
+  parapets: Quad[] // finishes: the roof-edge upstand
   core: Box | null
   roof: Plate | null
   rooms: Room[] // interior spaces, per floor
   totalHeight: number
   footprint: number
-  counts: { storeys: number; columns: number; beams: number; windows: number; doors: number; walls: number; mullions: number; partitions: number; interiorDoors: number; stairs: number; slabs: number; rooms: number }
+  counts: { storeys: number; columns: number; beams: number; windows: number; doors: number; walls: number; mullions: number; partitions: number; interiorDoors: number; stairs: number; foundations: number; groundBeams: number; ceilings: number; finishes: number; parapets: number; slabs: number; rooms: number }
 }
 
 const dist = (a: Pt, b: Pt) => Math.hypot(b.x - a.x, b.z - a.z)
@@ -154,10 +159,53 @@ export function buildBuilding(m: Massing, opts?: {
   // a half-turn stair per storey, climbing inside the core
   const stairs = coreStairs(coreBox, m.floors.map((f) => ({ base: f.y - f.height / 2, height: f.height, level: f.index })))
 
+  // ---- substructure: a pad footing under every ground column, a raft under the
+  // core, and perimeter ground beams tying the footings at formation level ----
+  const fdnDepth = 0.35 // scene (≈1.25 m at a 3.6 m storey)
+  const foundations: Box[] = []
+  let fi = 0
+  for (const c of columns) {
+    if (c.level !== 0) continue
+    const pad = Math.max(c.w, c.d) * 2.6
+    foundations.push({ x: c.x, y: -fdnDepth / 2, z: c.z, w: pad, h: fdnDepth, d: pad, level: 0, id: `fdn-${fi++}` })
+  }
+  if (core) foundations.push({ x: core.x, y: -(fdnDepth * 1.3) / 2, z: core.z, w: core.w * 1.15, h: fdnDepth * 1.3, d: core.d * 1.15, level: 0, id: 'fdn-core' })
+  const groundBeams: Beam[] = []
+  if (f0) {
+    let gi = 0
+    const poly = f0.polygon
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length]
+      if (dist(a, b) < 1e-3) continue
+      groundBeams.push({ a, b, y: -fdnDepth * 0.45, depth: fdnDepth * 0.7, width: 0.14, level: 0, id: `gb-${gi++}` })
+    }
+  }
+
+  // ---- finishes: a floor build-up on every slab, a suspended ceiling per storey,
+  // and the roof-edge parapet ----
+  const floorFinishes: Plate[] = []
+  const ceilings: Plate[] = []
+  for (const f of m.floors) {
+    const base = f.y - f.height / 2
+    floorFinishes.push({ polygon: f.polygon, hole: f.hole, y: base + slabT, thickness: 0.018, level: f.index, id: `fin-${f.index}` })
+    ceilings.push({ polygon: f.polygon, hole: f.hole, y: base + f.height - slabT - 0.12, thickness: 0.02, level: f.index, id: `ceil-${f.index}` })
+  }
+  const parapets: Quad[] = []
+  if (top && roof) {
+    let pi2 = 0
+    const rp = top.polygon
+    for (let i = 0; i < rp.length; i++) {
+      const a = rp[i], b = rp[(i + 1) % rp.length]
+      if (dist(a, b) < 1e-3) continue
+      parapets.push({ a, b, y: roof.y + roof.thickness, h: 0.28, level: m.floors.length, id: `par-${pi2++}` })
+    }
+  }
+
   return {
-    slabs, columns, beams, walls, glazing, doors, mullions, partitions, interiorDoors, stairs, core, roof, rooms,
+    slabs, columns, beams, walls, glazing, doors, mullions, partitions, interiorDoors, stairs,
+    foundations, groundBeams, ceilings, floorFinishes, parapets, core, roof, rooms,
     totalHeight: m.totalHeight,
     footprint: m.footprint,
-    counts: { storeys: m.storeys, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: mullions.length, partitions: partitions.length, interiorDoors: interiorDoors.length, stairs: stairs.length, slabs: slabs.length, rooms: rooms.length },
+    counts: { storeys: m.storeys, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: mullions.length, partitions: partitions.length, interiorDoors: interiorDoors.length, stairs: stairs.length, foundations: foundations.length, groundBeams: groundBeams.length, ceilings: ceilings.length, finishes: floorFinishes.length, parapets: parapets.length, slabs: slabs.length, rooms: rooms.length },
   }
 }

@@ -81,6 +81,11 @@ export function toObj(m: BuildingModel, name = 'building'): string {
   for (const d of m.interiorDoors) emitQuad(mesh, d, 'InteriorDoors')
   for (const c of m.mullions) emitBox(mesh, c, 'Mullions')
   for (const s of m.stairs) for (const t of [...s.treads, ...s.landings, ...s.rails]) emitBox(mesh, t, 'Stairs')
+  for (const c of m.foundations) emitBox(mesh, c, 'Foundations')
+  for (const b of m.groundBeams) emitBeam(mesh, b, 'GroundBeams')
+  for (const p of m.ceilings) emitPlate(mesh, p, 'Ceilings')
+  for (const p of m.floorFinishes) emitPlate(mesh, p, 'Finishes')
+  for (const w of m.parapets) emitQuad(mesh, w, 'Parapets')
   if (m.core) emitBox(mesh, m.core, 'Core')
 
   const out: string[] = [`# ${name} — exported from AEC Data & Intelligence Studio`, `# ${m.counts.storeys} storeys · ${mesh.verts.length} vertices · ${mesh.faces.length} triangles`, `o ${name}`]
