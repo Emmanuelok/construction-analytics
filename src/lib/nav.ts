@@ -72,8 +72,7 @@ export const NAV: NavItem[] = [
   // Intelligence engines (supporting analytics)
   { path: '/insights', label: 'Executive Insights', blurb: 'Portfolio KPIs, risk & decisions', icon: Gauge, accent: 'cyan', group: 'Intelligence' },
   { path: '/bim', label: 'BIM Intelligence', blurb: 'Parse, classify, clash & quantify models', icon: Boxes, accent: 'blue', group: 'Intelligence' },
-  { path: '/building-explorer', label: 'Building Explorer', blurb: 'Walk the building floor-by-floor — isolate levels, click any element, read schedules', icon: Building2, accent: 'sky', group: 'Intelligence', tag: 'NEW' },
-  { path: '/model-studio', label: 'Model Studio', blurb: 'Develop or revise full BIM models — substructure to finishes, with Revit-style rendering', icon: Building2, accent: 'violet', group: 'Intelligence', tag: 'NEW' },
+  { path: '/building-explorer', label: 'Building Explorer', blurb: 'The full BIM studio — model every layer, render Revit-style, analyse, edit & export', icon: Building2, accent: 'sky', group: 'Intelligence', tag: 'NEW' },
   { path: '/site-zoning', label: 'Site & Zoning', blurb: 'Site boundary, FAR/height/setback envelope & live compliance', icon: Map, accent: 'teal', group: 'Intelligence', tag: 'NEW' },
   { path: '/documents', label: 'Document Intelligence', blurb: 'Drawings, specs, contracts, RFIs', icon: FileText, accent: 'amber', group: 'Intelligence' },
   { path: '/cost-schedule', label: 'Cost & Schedule', blurb: 'Forecast overruns, delays & earned value', icon: CalendarClock, accent: 'rose', group: 'Intelligence' },

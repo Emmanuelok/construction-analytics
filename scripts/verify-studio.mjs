@@ -1,6 +1,6 @@
-/* Headless verification of Model Studio: the full BIM window mounts with the model
+/* Headless verification of the studio tools merged into Building Explorer: the model
  * browser (per-category eye toggles), Revit-style visual styles, the section box and
- * the PNG render snapshot. Run: node scripts/verify-studio.mjs */
+ * the PNG render snapshot — all on /building-explorer. Run: node scripts/verify-studio.mjs */
 import puppeteer from 'puppeteer'
 
 const BASE = process.env.BASE || 'http://localhost:4173/construction-analytics'
@@ -18,7 +18,7 @@ await page.evaluateOnNewDocument(() => {
 const studio = () => page.evaluate(() => document.querySelector('[aria-label^="3D building model"]')?.__studio ?? null)
 
 try {
-  await page.goto(BASE + '/model-studio', { waitUntil: 'domcontentloaded', timeout: 30000 })
+  await page.goto(BASE + '/building-explorer', { waitUntil: 'domcontentloaded', timeout: 30000 })
   await page.waitForSelector('[aria-label^="3D building model"]', { timeout: 25000 })
   await new Promise((r) => setTimeout(r, 1800))
 
@@ -60,5 +60,5 @@ try {
   console.error('✗ harness error —', e.message)
 }
 await browser.close()
-console.log(failures ? `\n${failures} check(s) failed` : '\nall Model Studio checks passed')
+console.log(failures ? `\n${failures} check(s) failed` : '\nall studio-tool checks passed')
 process.exit(failures ? 1 : 0)

@@ -13,8 +13,8 @@ export type RankedTool = ToolRef & { score: number; reason: string }
 
 // each role's home-turf tools, strongest first
 const ROLE_TOOLS: Record<string, string[]> = {
-  Architect: ['/model-studio', '/building-explorer', '/site-zoning', '/bim'],
-  'Structural Engineer': ['/building-explorer', '/model-studio', '/bim', '/cost-schedule'],
+  Architect: ['/building-explorer', '/site-zoning', '/bim', '/sustainability'],
+  'Structural Engineer': ['/building-explorer', '/bim', '/cost-schedule', '/field'],
   'MEP Engineer': ['/building-explorer', '/sustainability', '/digital-twin', '/bim'],
   Contractor: ['/cost-schedule', '/field', '/building-explorer', '/procurement'],
   Developer: ['/site-zoning', '/overview', '/cost-schedule', '/marketplace'],
@@ -28,7 +28,7 @@ const ROLE_TOOLS: Record<string, string[]> = {
 const GOAL_TOOLS: [RegExp, string[]][] = [
   [/carbon|sustain|energy/i, ['/sustainability', '/building-explorer']],
   [/cost|budget|estimat/i, ['/cost-schedule', '/procurement']],
-  [/model|bim|design/i, ['/model-studio', '/building-explorer', '/bim']],
+  [/model|bim|design/i, ['/building-explorer', '/bim']],
   [/site|zoning|feasib/i, ['/site-zoning']],
   [/schedule|programme|4d|construction/i, ['/cost-schedule', '/building-explorer']],
   [/safety|risk/i, ['/field', '/building-explorer']],
