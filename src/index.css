@@ -174,3 +174,47 @@
     scrollbar-width: none;
   }
 }
+
+/* ---- personal accent: the chrome quietly recolours to the signed-in role ---- */
+@layer base {
+  :root { --accent: 99 102 241; }
+  [data-accent='blue'] { --accent: 59 130 246; }
+  [data-accent='violet'] { --accent: 139 92 246; }
+  [data-accent='cyan'] { --accent: 34 211 238; }
+  [data-accent='teal'] { --accent: 45 212 191; }
+  [data-accent='amber'] { --accent: 245 158 11; }
+  [data-accent='sky'] { --accent: 56 189 248; }
+  [data-accent='emerald'] { --accent: 52 211 153; }
+  [data-accent='lime'] { --accent: 163 230 53; }
+  [data-accent='fuchsia'] { --accent: 232 121 249; }
+  [data-accent='rose'] { --accent: 251 113 133; }
+
+  body {
+    /* a second aurora keyed to the personal accent, layered over the base wash */
+    background-image:
+      radial-gradient(70% 50% at 85% -5%, rgb(var(--accent) / 0.07) 0%, transparent 60%),
+      radial-gradient(90% 60% at 50% -10%, rgba(59, 130, 246, 0.1) 0%, transparent 70%);
+    background-attachment: fixed;
+  }
+  *:focus-visible { outline-color: rgb(var(--accent)); }
+  ::selection { background: rgb(var(--accent) / 0.28); }
+
+  /* refined scrollbars to match the surface system */
+  * { scrollbar-width: thin; scrollbar-color: rgb(var(--c-edge)) transparent; }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-thumb { background: rgb(var(--c-edge)); border-radius: 8px; border: 2px solid rgb(var(--c-base)); }
+  *::-webkit-scrollbar-thumb:hover { background: rgb(var(--c-slate-600)); }
+  *::-webkit-scrollbar-track { background: transparent; }
+}
+
+@layer utilities {
+  /* live tiles breathe; everything respects reduced motion */
+  @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .live-dot { animation: pulse-dot 2.4s ease-in-out infinite; }
+  .lift { transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease; }
+  .lift:hover { transform: translateY(-2px); box-shadow: 0 12px 32px -16px rgb(var(--accent) / 0.35); }
+  @media (prefers-reduced-motion: reduce) {
+    .live-dot { animation: none; }
+    .lift, .lift:hover { transition: none; transform: none; }
+  }
+}
