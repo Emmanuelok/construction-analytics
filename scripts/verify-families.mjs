@@ -35,8 +35,23 @@ try {
 
   // ── families card ──
   const fam = await cardText('[data-families]')
-  ok('the Families & Types catalog renders all 12 families', /Families & types — \d+ types across 12 families/.test(fam))
+  ok('the Families & Types catalog renders all 16 families', /Families & types — \d+ types across 16 families/.test(fam))
   ok('catalog cells show material + rate for the active type', /C32\/40 concrete/.test(fam) && /\$\d/.test(fam))
+  // every type has a clickable render preview (swatch); clicking one selects it
+  const swatches = await page.evaluate(() => document.querySelectorAll('[data-families] [role="group"] button svg').length)
+  ok('every type carries a render-preview swatch (65+)', swatches >= 65, swatches)
+  await page.evaluate(() => { const b = [...document.querySelectorAll('[data-families] button')].find((x) => x.getAttribute('aria-label') === 'Floor finishes: Engineered timber'); b?.click() })
+  await wait(700)
+  ok('clicking a swatch selects that type (timber floor active)', await page.evaluate(() => document.querySelector('select[aria-label="Floor finishes type"]')?.value) === 'timber')
+  // Preview in 3D: isolates the family's elements, then restores
+  const catsBefore = await page.evaluate(() => JSON.stringify((document.querySelector('[data-main-viewer] [aria-label^="3D building model"]')?.__studio ?? {}).cats ?? {}))
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === 'Preview Columns in 3D'); b?.click() })
+  await wait(900)
+  const catsIso = await page.evaluate(() => (document.querySelector('[data-main-viewer] [aria-label^="3D building model"]')?.__studio ?? {}).cats ?? {})
+  ok('Preview-in-3D isolates the family (columns visible, walls/slabs hidden)', catsIso && !catsIso.columns && catsIso.walls === true && catsIso.slabs === true, catsIso)
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /Show all/.test(x.textContent || '')); b?.click() })
+  await wait(700)
+  ok('Show all restores the prior layer set', await page.evaluate(() => JSON.stringify((document.querySelector('[data-main-viewer] [aria-label^="3D building model"]')?.__studio ?? {}).cats ?? {})) === catsBefore)
 
   // ── glazing swap re-runs energy ──
   const euiBefore = num(await page.evaluate(() => document.body.innerText), /([\d,.]+)\s*kWh\/m²/)

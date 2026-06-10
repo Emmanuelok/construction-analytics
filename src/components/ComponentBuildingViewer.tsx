@@ -187,6 +187,7 @@ export function ComponentBuildingViewer({
     const ceilMat = new THREE.MeshStandardMaterial({ color: '#cfd6e2', roughness: 0.95, metalness: 0, side: THREE.DoubleSide, map: ceilGridTex })
     const finMat = new THREE.MeshStandardMaterial({ color: '#cab27e', roughness: 0.8, metalness: 0.02, map: carpetTex })
     const roofMat = new THREE.MeshStandardMaterial({ color: '#b8c2d0', roughness: 0.9, metalness: 0.03, map: concreteTex })
+    const parapetMat = new THREE.MeshStandardMaterial({ color: '#9aa7b8', roughness: 0.85, metalness: 0.05, side: THREE.DoubleSide })
     const allMats: THREE.MeshStandardMaterial[] = []
     // furniture + floor-tint materials, cached per colour (created lazily during build)
     const furMats = new Map<string, THREE.MeshStandardMaterial>()
@@ -221,6 +222,8 @@ export function ComponentBuildingViewer({
       const p = t('partition'); setBase(partMat, p.color, p.opacity ?? 1)
       setBase(finMat, t('floorFinish').color); setBase(ceilMat, t('ceiling').color)
       setBase(roofMat, t('roof').color); setBase(fdnMat, t('foundation').color); setBase(stairMat, t('stair').color)
+      setBase(slabMat, t('slab').color); setBase(coreMat, t('core').color); setBase(mullionMat, t('mullion').color)
+      const bal = t('balustrade'); setBase(parapetMat, bal.color, bal.id === 'glass' ? 0.45 : 1)
     }
 
     // On-demand rendering: the loop only redraws when the scene actually changes
@@ -511,7 +514,7 @@ export function ComponentBuildingViewer({
       grid.position.y = ground.position.y + 0.01
       if (vis('walls', 'facade')) planeInst(m.walls.map((g, i) => ({ g, id: g.id ?? wallIds[i] })).filter(({ g }) => show(g.level) && inFocusQ(g)), wallMat)
       if (vis('mullions', 'facade')) boxInst(m.mullions.filter((c) => show(c.level) && inFocus(c.x, c.z)).map((c) => ({ c })), mullionMat) // framing — visual only
-      if (vis('parapets', 'facade')) planeInst(m.parapets.map((g, i) => ({ g, id: g.id ?? `par-${i}` })).filter(({ g }) => (!isolating || (fLvl ?? -1) >= storeys - 1) && inFocusQ(g)), wallMat)
+      if (vis('parapets', 'facade')) planeInst(m.parapets.map((g, i) => ({ g, id: g.id ?? `par-${i}` })).filter(({ g }) => (!isolating || (fLvl ?? -1) >= storeys - 1) && inFocusQ(g)), parapetMat)
       if (vis('windows', 'glazing')) planeInst(m.glazing.map((g, i) => ({ g, id: g.id ?? panIds[i] })).filter(({ g }) => show(g.level) && inFocusQ(g)), glassMat, { shadow: false, outset: 0.02 })
       if (vis('doors', 'glazing')) planeInst(m.doors.map((g, i) => ({ g, id: g.id ?? doorIds[i] })).filter(({ g }) => show(g.level) && inFocusQ(g)), doorMat, { outset: 0.02 })
       if (vis('partitions', 'interior')) planeInst(m.partitions.map((g, i) => ({ g, id: g.id ?? partIds[i] })).filter(({ g }) => show(g.level) && inFocusQ(g)), partMat)
@@ -574,7 +577,7 @@ export function ComponentBuildingViewer({
     rebuildRef.current = build
 
     // ---- Revit-style visual styles + section box (shared by every material) ----
-    allMats.push(slabMat, colMat, beamMat, coreMat, wallMat, partMat, idoorMat, stairMat, glassMat, doorMat, mullionMat, fdnMat, gbMat, ceilMat, finMat, roofMat)
+    allMats.push(slabMat, colMat, beamMat, coreMat, wallMat, partMat, idoorMat, stairMat, glassMat, doorMat, mullionMat, fdnMat, gbMat, ceilMat, finMat, roofMat, parapetMat)
     for (const mt of allMats) mt.userData.base = { color: mt.color.getHex(), transparent: mt.transparent, opacity: mt.opacity, depthWrite: mt.depthWrite, map: mt.map }
     const clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0)
     const applyStyle = () => {
@@ -751,7 +754,7 @@ export function ComponentBuildingViewer({
       cancelAnimationFrame(raf); window.clearInterval(walkTimer); ro.disconnect()
       el.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); el.removeEventListener('contextmenu', onCtx); el.removeEventListener('dblclick', onDbl); mount.removeEventListener('keydown', onKey)
       window.removeEventListener('keydown', onWalkKeyDown); window.removeEventListener('keyup', onWalkKeyUp)
-      clear(); unitBox.dispose(); unitCyl.dispose(); unitPlane.dispose(); [slabMat, colMat, beamMat, coreMat, wallMat, partMat, idoorMat, stairMat, glassMat, doorMat, mullionMat, fdnMat, gbMat, ceilMat, finMat, roofMat].forEach((m) => m.dispose())
+      clear(); unitBox.dispose(); unitCyl.dispose(); unitPlane.dispose(); [slabMat, colMat, beamMat, coreMat, wallMat, partMat, idoorMat, stairMat, glassMat, doorMat, mullionMat, fdnMat, gbMat, ceilMat, finMat, roofMat, parapetMat].forEach((m) => m.dispose())
       for (const mt of furMats.values()) mt.dispose()
       ;[concreteTex, carpetTex, woodTex, ceilGridTex, skyTex].forEach((t) => t.dispose())
       envTex?.dispose(); pmrem.dispose()
