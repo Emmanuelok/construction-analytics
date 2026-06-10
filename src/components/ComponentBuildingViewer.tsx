@@ -4,6 +4,8 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { Building2, Footprints } from 'lucide-react'
 import type { BuildingModel, Plate, Quad, Beam } from '@/lib/building'
 import type { FurnitureItem, RoomPatch } from '@/lib/building-furniture'
+import type { SvcItem } from '@/lib/building-services'
+import { familyType, type TypeSelections } from '@/lib/families'
 import { PLATE_SCALE } from '@/lib/massing'
 import { sunDirection } from '@/lib/sun'
 import { findElementGeom } from '@/lib/building-explorer'
@@ -33,6 +35,8 @@ export function ComponentBuildingViewer({
   clipY = null,
   focus = null,
   furniture = null,
+  services = null,
+  types = null,
   walk = null,
   onWalkEnd,
   sun,
@@ -49,6 +53,8 @@ export function ComponentBuildingViewer({
   clipY?: number | null // horizontal section box: clip everything above this scene height
   focus?: { level: number; minX: number; maxX: number; minZ: number; maxZ: number } | null // isolate + frame one room/floor region
   furniture?: { items: FurnitureItem[]; patches: RoomPatch[] } | null // FF&E layer (from furnitureFor)
+  services?: { items: SvcItem[] } | null // MEP layer (from buildingServices)
+  types?: TypeSelections | null // family/type selections (colour, section shape, façade system…)
   walk?: WalkSpawn | null // first-person walkthrough: spawn point + level (null = orbit mode)
   onWalkEnd?: () => void
   sun?: { azimuth: number; altitude: number }
@@ -60,8 +66,8 @@ export function ComponentBuildingViewer({
 }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
-  const propsRef = useRef({ model, hidden, cats, style, clipY, focus, furniture, walk, onWalkEnd, sun, shadows, isolateLevel, selected, onSelect })
-  propsRef.current = { model, hidden, cats, style, clipY, focus, furniture, walk, onWalkEnd, sun, shadows, isolateLevel, selected, onSelect }
+  const propsRef = useRef({ model, hidden, cats, style, clipY, focus, furniture, services, types, walk, onWalkEnd, sun, shadows, isolateLevel, selected, onSelect })
+  propsRef.current = { model, hidden, cats, style, clipY, focus, furniture, services, types, walk, onWalkEnd, sun, shadows, isolateLevel, selected, onSelect }
 
   const rebuildRef = useRef<(() => void) | null>(null)
   const sunFnRef = useRef<(() => void) | null>(null)
@@ -70,7 +76,7 @@ export function ComponentBuildingViewer({
   const styleRef = useRef<(() => void) | null>(null)
   const clipRef = useRef<(() => void) | null>(null)
   const walkFnRef = useRef<(() => void) | null>(null)
-  useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs, hidden.facade, hidden.interior, cats, isolateLevel, furniture])
+  useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs, hidden.facade, hidden.interior, cats, isolateLevel, furniture, services, types])
   useEffect(() => { styleRef.current?.() }, [style])
   useEffect(() => { clipRef.current?.() }, [clipY])
   useEffect(() => { rebuildRef.current?.(); frameRef.current?.() }, [focus])
@@ -180,6 +186,7 @@ export function ComponentBuildingViewer({
     const gbMat = new THREE.MeshStandardMaterial({ color: '#46536a', roughness: 0.85, metalness: 0.05 })
     const ceilMat = new THREE.MeshStandardMaterial({ color: '#cfd6e2', roughness: 0.95, metalness: 0, side: THREE.DoubleSide, map: ceilGridTex })
     const finMat = new THREE.MeshStandardMaterial({ color: '#cab27e', roughness: 0.8, metalness: 0.02, map: carpetTex })
+    const roofMat = new THREE.MeshStandardMaterial({ color: '#b8c2d0', roughness: 0.9, metalness: 0.03, map: concreteTex })
     const allMats: THREE.MeshStandardMaterial[] = []
     // furniture + floor-tint materials, cached per colour (created lazily during build)
     const furMats = new Map<string, THREE.MeshStandardMaterial>()
@@ -193,7 +200,28 @@ export function ComponentBuildingViewer({
       return mt
     }
     const unitBox = new THREE.BoxGeometry(1, 1, 1)
+    const unitCyl = new THREE.CylinderGeometry(0.5, 0.5, 1, 18) // circular sections (scaled like the box)
     const unitPlane = new THREE.PlaneGeometry(1, 1)
+
+    // Family/type selections drive material colours (and glazing opacity, column
+    // shape) — written into each material's base so the visual styles respect them.
+    const setBase = (mt: THREE.MeshStandardMaterial, color?: string, opacity?: number) => {
+      const base = mt.userData.base as { color: number; transparent: boolean; opacity: number } | undefined
+      if (!base) return
+      if (color) base.color = new THREE.Color(color).getHex()
+      if (opacity != null) { base.opacity = opacity; base.transparent = opacity < 1 }
+    }
+    const applyTypes = () => {
+      const sel = propsRef.current.types ?? {}
+      const t = (k: string) => familyType(k, sel[k])
+      setBase(colMat, t('column').color); setBase(beamMat, t('beam').color)
+      setBase(wallMat, t('facade').color)
+      const g = t('glazing'); setBase(glassMat, g.color, g.opacity ?? 0.32)
+      setBase(doorMat, t('door').color); setBase(idoorMat, t('interiorDoor').color)
+      const p = t('partition'); setBase(partMat, p.color, p.opacity ?? 1)
+      setBase(finMat, t('floorFinish').color); setBase(ceilMat, t('ceiling').color)
+      setBase(roofMat, t('roof').color); setBase(fdnMat, t('foundation').color); setBase(stairMat, t('stair').color)
+    }
 
     // On-demand rendering: the loop only redraws when the scene actually changes
     // (or while walking / auto-spinning). Keeps the main thread idle when static —
@@ -423,9 +451,9 @@ export function ComponentBuildingViewer({
       })
       inst.instanceMatrix.needsUpdate = true; inst.userData.ids = items.map((x) => x.id); group.add(inst); objects.push(inst)
     }
-    const boxInst = (items: { c: { x: number; y: number; z: number; w: number; h: number; d: number }; id?: string }[], mat: THREE.Material) => {
+    const boxInst = (items: { c: { x: number; y: number; z: number; w: number; h: number; d: number }; id?: string }[], mat: THREE.Material, geo: THREE.BufferGeometry = unitBox) => {
       if (!items.length) return
-      const inst = new THREE.InstancedMesh(unitBox, mat, items.length)
+      const inst = new THREE.InstancedMesh(geo, mat, items.length)
       inst.castShadow = true; inst.receiveShadow = true
       const m4 = new THREE.Matrix4(), iq = new THREE.Quaternion(), pos = new THREE.Vector3(), scl = new THREE.Vector3()
       items.forEach(({ c }, i) => { m4.compose(pos.set(c.x, c.y, c.z), iq, scl.set(c.w, c.h, c.d)); inst.setMatrixAt(i, m4) })
@@ -461,9 +489,11 @@ export function ComponentBuildingViewer({
       const vis = (cat: string, grp: 'slabs' | 'structure' | 'facade' | 'glazing' | 'interior') => (cats ? !cats[cat] : !h[grp])
       const colIds = idsFor(m.columns, 'col'), panIds = idsFor(m.glazing, 'pan'), wallIds = idsFor(m.walls, 'wall'), doorIds = idsFor(m.doors, 'door'), beamIds = idsFor(m.beams, 'beam'), partIds = idsFor(m.partitions, 'part'), idoorIds = idsFor(m.interiorDoors, 'idoor')
 
+      applyTypes() // family selections → base colours/opacity before materials style
+      const colShape = familyType('column', (propsRef.current.types ?? {}).column).shape === 'cylinder' ? unitCyl : unitBox
       if (vis('slabs', 'slabs')) for (const s of m.slabs) if (show(s.level)) plate(s, slabMat, s.id ?? `floor-${s.level ?? 0}`)
-      if (vis('roof', 'slabs') && m.roof && (!isolating || (fLvl ?? -1) >= storeys)) plate(m.roof, slabMat, m.roof.id ?? 'roof')
-      if (vis('columns', 'structure')) boxInst(m.columns.map((c, i) => ({ c, id: c.id ?? colIds[i] })).filter(({ c }) => show(c.level) && inFocus(c.x, c.z)), colMat)
+      if (vis('roof', 'slabs') && m.roof && (!isolating || (fLvl ?? -1) >= storeys)) plate(m.roof, roofMat, m.roof.id ?? 'roof')
+      if (vis('columns', 'structure')) boxInst(m.columns.map((c, i) => ({ c, id: c.id ?? colIds[i] })).filter(({ c }) => show(c.level) && inFocus(c.x, c.z)), colMat, colShape)
       if (vis('beams', 'structure')) beamInst(m.beams.map((b, i) => ({ b, id: b.id ?? beamIds[i] })).filter(({ b }) => show(b.level) && inFocusQ(b)), beamMat)
       if (vis('core', 'structure') && m.core && inFocus(m.core.x, m.core.z) && !(isolating && (fLvl ?? -1) >= storeys)) {
         let cy = m.core.y, ch = m.core.h
@@ -525,14 +555,26 @@ export function ComponentBuildingViewer({
         }
         for (const [color, parts] of buckets) boxInst(parts, furMat(color, { map: /^#a07a4e|^#8a6f4a|^#7a5d46/.test(color) ? woodTex : null }))
       }
+      // MEP layer (lighting / hvac / fire / sanitary) — same level-of-detail rule
+      const svc = propsRef.current.services
+      if (svc) {
+        const svcBuckets = new Map<string, { c: { x: number; y: number; z: number; w: number; h: number; d: number }; id: string }[]>()
+        for (const it of svc.items) {
+          if (!vis(it.system, 'interior') || !furShow(it.level)) continue
+          if (!inFocus(it.parts[0]?.x ?? 0, it.parts[0]?.z ?? 0)) continue
+          for (const p of it.parts) { const b = svcBuckets.get(p.color) ?? []; b.push({ c: p, id: it.id }); svcBuckets.set(p.color, b) }
+        }
+        for (const [color, parts] of svcBuckets) boxInst(parts, furMat(color, { rough: 0.45 }))
+      }
       applySun(); applyHighlight(); applyStyle(); applyClip(); invalidate()
-      ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, windows: m.counts.windows, glazing: m.counts.windows, beams: m.counts.beams, doors: m.counts.doors, slabs: m.counts.slabs, partitions: m.counts.partitions, interiorDoors: m.counts.interiorDoors, stairs: m.counts.stairs, foundations: m.counts.foundations, ceilings: m.counts.ceilings, finishes: m.counts.finishes, parapets: m.counts.parapets, furniture: fur && vis('furniture', 'interior') ? fur.items.length : 0 }
-      ;(mount as HTMLElement & { __studio?: object }).__studio = { style: propsRef.current.style, clipY: propsRef.current.clipY ?? null, cats: propsRef.current.cats ?? null, focus: propsRef.current.focus ?? null }
+      const svcCount = (sys: string) => (svc && vis(sys, 'interior') ? svc.items.filter((i) => i.system === sys).length : 0)
+      ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, windows: m.counts.windows, glazing: m.counts.windows, beams: m.counts.beams, doors: m.counts.doors, slabs: m.counts.slabs, partitions: m.counts.partitions, interiorDoors: m.counts.interiorDoors, stairs: m.counts.stairs, foundations: m.counts.foundations, ceilings: m.counts.ceilings, finishes: m.counts.finishes, parapets: m.counts.parapets, furniture: fur && vis('furniture', 'interior') ? fur.items.length : 0, lighting: svcCount('lighting'), hvac: svcCount('hvac'), fire: svcCount('fire'), sanitary: svcCount('sanitary') }
+      ;(mount as HTMLElement & { __studio?: object }).__studio = { style: propsRef.current.style, clipY: propsRef.current.clipY ?? null, cats: propsRef.current.cats ?? null, focus: propsRef.current.focus ?? null, types: propsRef.current.types ?? null }
     }
     rebuildRef.current = build
 
     // ---- Revit-style visual styles + section box (shared by every material) ----
-    allMats.push(slabMat, colMat, beamMat, coreMat, wallMat, partMat, idoorMat, stairMat, glassMat, doorMat, mullionMat, fdnMat, gbMat, ceilMat, finMat)
+    allMats.push(slabMat, colMat, beamMat, coreMat, wallMat, partMat, idoorMat, stairMat, glassMat, doorMat, mullionMat, fdnMat, gbMat, ceilMat, finMat, roofMat)
     for (const mt of allMats) mt.userData.base = { color: mt.color.getHex(), transparent: mt.transparent, opacity: mt.opacity, depthWrite: mt.depthWrite, map: mt.map }
     const clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0)
     const applyStyle = () => {
@@ -709,7 +751,7 @@ export function ComponentBuildingViewer({
       cancelAnimationFrame(raf); window.clearInterval(walkTimer); ro.disconnect()
       el.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); el.removeEventListener('contextmenu', onCtx); el.removeEventListener('dblclick', onDbl); mount.removeEventListener('keydown', onKey)
       window.removeEventListener('keydown', onWalkKeyDown); window.removeEventListener('keyup', onWalkKeyUp)
-      clear(); unitBox.dispose(); unitPlane.dispose(); [slabMat, colMat, beamMat, coreMat, wallMat, partMat, idoorMat, stairMat, glassMat, doorMat, mullionMat, fdnMat, gbMat, ceilMat, finMat].forEach((m) => m.dispose())
+      clear(); unitBox.dispose(); unitCyl.dispose(); unitPlane.dispose(); [slabMat, colMat, beamMat, coreMat, wallMat, partMat, idoorMat, stairMat, glassMat, doorMat, mullionMat, fdnMat, gbMat, ceilMat, finMat, roofMat].forEach((m) => m.dispose())
       for (const mt of furMats.values()) mt.dispose()
       ;[concreteTex, carpetTex, woodTex, ceilGridTex, skyTex].forEach((t) => t.dispose())
       envTex?.dispose(); pmrem.dispose()

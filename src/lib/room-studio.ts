@@ -79,6 +79,28 @@ export function roomReport(m: BuildingModel, roomId: string, opts: { storeyHeigh
   }
 }
 
+export type FinishRow = { id: string; level: number; room: string; use: string; grade: string; gradeLabel: string; floorArea: number; wallArea: number; ceilingArea: number; cost: number }
+/** The room-by-room finishes schedule (floor + walls + ceiling areas, graded cost)
+ *  — the takeoff a finishes package is bought against. Light: no egress routing. */
+export function finishSchedule(m: BuildingModel, opts: { storeyHeight?: number } = {}): { rows: FinishRow[]; totals: { rooms: number; floorArea: number; cost: number } } {
+  const sh = opts.storeyHeight ?? 3.6
+  const hM = sh - 0.12
+  const rows: FinishRow[] = m.rooms.filter((r) => r.level < m.counts.storeys).map((room) => {
+    const t = spaceType(room.use)
+    const fin = finishGrade(room.finish ?? t.finish)
+    const per = polygonPerimeter(room.polygon) * LEN // unrounded, to match roomReport exactly
+    const finishArea = r1(room.area * 2 + per * hM)
+    return { id: room.id, level: room.level, room: room.name, use: t.label, grade: fin.id, gradeLabel: fin.label, floorArea: room.area, wallArea: r1(per * hM), ceilingArea: room.area, cost: Math.round(finishArea * fin.cost) }
+  })
+  return { rows, totals: { rooms: rows.length, floorArea: r1(rows.reduce((s, r) => s + r.floorArea, 0)), cost: rows.reduce((s, r) => s + r.cost, 0) } }
+}
+/** Finishes schedule CSV. */
+export function finishCsv(f: ReturnType<typeof finishSchedule>): string {
+  const head = 'Room,Level,Use,Finish grade,Floor (m²),Walls (m²),Ceiling (m²),Cost ($)'
+  const rows = f.rows.map((r) => `${r.room},${r.level},${r.use},${r.gradeLabel},${r.floorArea},${r.wallArea},${r.ceilingArea},${r.cost}`)
+  return [head, ...rows, `TOTAL,${f.totals.rooms} rooms,,,${f.totals.floorArea},,,${f.totals.cost}`].join('\n')
+}
+
 export type FloorReport = {
   level: number; name: string; area: number; rooms: number; occupancy: number
   windows: number; doors: number; columns: number; finishCost: number

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame, Gauge, Sun, CalendarClock, Sparkles, Wand2, Camera, EyeOff, LayoutGrid, Ruler, Users, Maximize2, Minimize2, X, Footprints, Armchair, Hammer } from 'lucide-react'
+import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame, Gauge, Sun, CalendarClock, Sparkles, Wand2, Camera, EyeOff, LayoutGrid, Ruler, Users, Maximize2, Minimize2, X, Footprints, Armchair, Hammer, Library, Lamp, PaintRoller } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge, Tabs } from '@/components/ui'
 import { ScrollableTable } from '@/components/ScrollableTable'
 const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
@@ -10,9 +10,11 @@ import { buildMassing, deriveStoreys, SHAPE_KINDS, type ShapeKind } from '@/lib/
 import { buildBuilding, type BuildingModel } from '@/lib/building'
 import { explodeBuilding, planForLevel, type Schedule, type ScheduleCol, type BuildingElement } from '@/lib/building-explorer'
 import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, addDoorAt, addStairAt, duplicateColumn, editCount, setRoomName, setRoomUse, setRoomFinish, scaleRoom, type BuildingEdits } from '@/lib/building-edits'
-import { roomReport, floorReport } from '@/lib/room-studio'
+import { roomReport, floorReport, finishSchedule, finishCsv } from '@/lib/room-studio'
 import { SPACE_TYPES, FINISHES } from '@/lib/room-types'
-import { furnitureFor, ffeCsv, FFE_CATALOG } from '@/lib/building-furniture'
+import { furnitureFor, ffeCsv, FFE_CATALOG, FFE_ALTERNATES } from '@/lib/building-furniture'
+import { FAMILIES, DEFAULT_TYPES, familyType, familyCount, engineeringFor, familiesCsv, type TypeSelections } from '@/lib/families'
+import { buildingServices, servicesCsv, SVC_TYPES, type SvcSelections } from '@/lib/building-services'
 import { fastenerTakeoff, fastenersCsv } from '@/lib/fasteners'
 import { toObj } from '@/lib/building-export'
 import { toIfc } from '@/lib/building-ifc'
@@ -71,7 +73,7 @@ function csvFor(s: Schedule): string {
 }
 
 // the persisted building design (params + manual edits), per project
-type Cfg = { storeys: number; shape: ShapeKind; aspect: number; storeyHeight: number; slabThickness: number; wwr: number; bayWidth: number; mullions: boolean; code: CodeKey; edits: BuildingEdits }
+type Cfg = { storeys: number; shape: ShapeKind; aspect: number; storeyHeight: number; slabThickness: number; wwr: number; bayWidth: number; mullions: boolean; code: CodeKey; edits: BuildingEdits; types?: TypeSelections; ffe?: Record<string, string>; svc?: SvcSelections }
 const cfgKey = (id: string) => `aec-bld-${id}`
 const loadCfg = (id: string): Partial<Cfg> | null => { try { return JSON.parse(localStorage.getItem(cfgKey(id)) || 'null') } catch { return null } }
 
@@ -110,6 +112,10 @@ export default function BuildingExplorer() {
   const [studioStyle, setStudioStyle] = useState<ViewerStyle>('realistic') // render style for the studio preview
   const [nameDraft, setNameDraft] = useState('') // room-rename text buffer (committed on blur/Enter)
   const [walk, setWalk] = useState<{ x: number; z: number; level: number } | null>(null) // first-person walkthrough spawn
+  // family/type selections — the element catalog, persisted with the design
+  const [types, setTypes] = useState<TypeSelections>(() => ({ ...DEFAULT_TYPES, ...(init0?.types ?? {}) }))
+  const [ffeSel, setFfeSel] = useState<Record<string, string>>(() => init0?.ffe ?? {})
+  const [svcSel, setSvcSel] = useState<SvcSelections>(() => init0?.svc ?? {})
   const [edits, setEdits] = useState<BuildingEdits>(() => init0?.edits ?? emptyEdits())
   const [past, setPast] = useState<BuildingEdits[]>([])
   const [future, setFuture] = useState<BuildingEdits[]>([])
@@ -124,8 +130,8 @@ export default function BuildingExplorer() {
   // auto-save the generated design (params + edits) per project; imported models are in-memory only
   useEffect(() => {
     if (imported) return
-    try { localStorage.setItem(cfgKey(projectId), JSON.stringify({ storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, code, edits })) } catch { /* ignore */ }
-  }, [imported, projectId, storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, code, edits])
+    try { localStorage.setItem(cfgKey(projectId), JSON.stringify({ storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, code, edits, types, ffe: ffeSel, svc: svcSel })) } catch { /* ignore */ }
+  }, [imported, projectId, storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, code, edits, types, ffeSel, svcSel])
   // bring an uploaded IFC into the editor; rebuild the editing state around it + persist
   const importIfcModel = (m: BuildingModel, sh: number, name: string, labels: IfcLabels) => {
     const h = Math.round(sh * 10) / 10
@@ -155,6 +161,7 @@ export default function BuildingExplorer() {
     setStoreyHeight(c.storeyHeight ?? 3.6); setSlabThickness(c.slabThickness ?? 0.3)
     setWwr(c.wwr ?? 0.55); setBayWidth(c.bayWidth ?? 3.4); setMullions(c.mullions ?? true); setCode(c.code ?? 'IBC')
     setEdits(c.edits ?? emptyEdits()); setPast([]); setFuture([]); setSelectedId(null)
+    setTypes({ ...DEFAULT_TYPES, ...(c.types ?? {}) }); setFfeSel(c.ffe ?? {}); setSvcSel(c.svc ?? {})
   }
   const switchProject = (id: string) => { setProjectId(id); const p = PROJECTS.find((x) => x.id === id) ?? PROJECTS[0]; applyCfg(loadCfg(id) ?? {}, p.gfa) }
   const ex = useMemo(() => explodeBuilding(model, { storeyHeight, slabThickness, code }), [model, storeyHeight, slabThickness, code])
@@ -162,8 +169,10 @@ export default function BuildingExplorer() {
   const fireOpts = useMemo(() => ({ maxArea: CODE_PRESETS[code].egress.maxCompartment, occLoadFactor: CODE_PRESETS[code].egress.occLoadFactor, costPerM2: 1800 }), [code])
   const fire = useMemo(() => buildingFire(model, fireOpts), [model, fireOpts])
   const floorFire = useMemo(() => floorCompartments(model, activeLevel, fireOpts), [model, activeLevel, fireOpts])
-  const struct = useMemo(() => structuralCheck(model, { storeyHeight }), [model, storeyHeight])
-  const energy = useMemo(() => energyAnalysis(model, { storeyHeight }), [model, storeyHeight])
+  // family/type selections feed the engines: U-values → energy, section strength → structure
+  const eng = useMemo(() => engineeringFor(types), [types])
+  const struct = useMemo(() => structuralCheck(model, { storeyHeight, fc: eng.fcColumn }), [model, storeyHeight, eng.fcColumn])
+  const energy = useMemo(() => energyAnalysis(model, { storeyHeight, uWall: eng.uWall, uWindow: eng.uWindow, uRoof: eng.uRoof }), [model, storeyHeight, eng.uWall, eng.uWindow, eng.uRoof])
   const sched = useMemo(() => schedule4d(model, {}), [model])
   const { profile } = useProfile()
   const advice = useMemo(() => adviseBuilding({ model, storeyHeight, code, wwr }, { role: profile.role }), [model, storeyHeight, code, wwr, profile.role])
@@ -178,8 +187,10 @@ export default function BuildingExplorer() {
   const sun = useMemo(() => { if (!sunOn) return undefined; const p = sunPosition(momentOf(month, hour), 40.71, -74.0); return { azimuth: p.azimuth, altitude: p.altitude } }, [sunOn, month, hour])
   const clipY = section >= 100 ? null : (section / 100) * model.totalHeight
   // FF&E: furnish every room from its programmed use; fixings: hardware down to the nails
-  const furniture = useMemo(() => furnitureFor(model, { storeyHeight }), [model, storeyHeight])
+  const furniture = useMemo(() => furnitureFor(model, { storeyHeight, ffe: ffeSel }), [model, storeyHeight, ffeSel])
   const fixings = useMemo(() => fastenerTakeoff(model, { storeyHeight }), [model, storeyHeight])
+  const services = useMemo(() => buildingServices(model, { storeyHeight, types: svcSel }), [model, storeyHeight, svcSel])
+  const finSched = useMemo(() => finishSchedule(model, { storeyHeight }), [model, storeyHeight])
   // first-person walkthrough: spawn inside a real room on a level (clear of the core)
   const walkTo = (level: number, at?: { x: number; z: number }) => {
     const lvl = Math.max(0, Math.min(model.counts.storeys - 1, level))
@@ -377,6 +388,31 @@ export default function BuildingExplorer() {
       </Card>
       )}
 
+      {/* families & types — the element catalog, like a CAD family tree */}
+      <Card data-families>
+        <CardHeader
+          icon={Library} accent="sky" title={`Families & types — ${familyCount()} types across ${FAMILIES.length} families`}
+          subtitle="Every critical element carries real alternatives, like swapping a family type in CAD: structural sections (RC / steel / PT / timber), façade systems, glazing builds, door sets, partitions, floor finishes, ceilings, roof build-ups, foundations and stairs. Selecting a type recolours the model and re-runs the engines — U-values into energy, section strength into structure, rates into cost."
+          action={<button onClick={() => downloadText(`${slug(project.name)}-families.csv`, familiesCsv(types), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid gap-x-4 gap-y-3 border-t border-edge/50 p-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {FAMILIES.map((f) => {
+            const active = familyType(f.key, types[f.key])
+            const props = Object.entries(active.props).slice(0, 2).map(([k, v]) => `${k} ${v}`).join(' · ')
+            return (
+              <label key={f.key} className="block rounded-lg bg-base/40 p-2.5 ring-1 ring-inset ring-edge/50">
+                <span className="mb-1 flex items-center justify-between text-[11px] uppercase tracking-wide text-slate-500"><span>{f.label}</span><span className="data-mono normal-case text-slate-400">${formatNumber(active.cost)}/{active.unit}</span></span>
+                <select value={types[f.key] ?? f.types[0].id} onChange={(e) => setTypes((t) => ({ ...t, [f.key]: e.target.value }))} aria-label={`${f.label} type`} className="w-full rounded-lg border border-edge/60 bg-elevated/50 px-2 py-1.5 text-sm text-slate-100 focus:border-sky-500/50 focus:outline-none">
+                  {f.types.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                </select>
+                <span className="mt-1 block truncate text-[11px] text-slate-500" title={`${active.material}${props ? ` · ${props}` : ''}`}>{active.material}{props ? ` · ${props}` : ''}</span>
+              </label>
+            )
+          })}
+        </div>
+        <p className="border-t border-edge/50 px-5 py-2.5 text-[11px] text-slate-500">Active envelope: wall U {eng.uWall} · window U {eng.uWindow} · roof U {eng.uRoof} W/m²K → the Energy card. Column strength {eng.fcColumn} MPa-eq → the Structure card. Selections persist with the design and land in the families CSV schedule.</p>
+      </Card>
+
       {/* 3D model + level navigator */}
       <div className="grid gap-6 lg:grid-cols-[1.55fr_1fr]">
         <Card className="overflow-hidden">
@@ -417,7 +453,7 @@ export default function BuildingExplorer() {
           </div>
           <div className="border-t border-edge/50" data-main-viewer>
             <Suspense fallback={<div style={{ height: 560 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-              <ComponentBuildingViewer model={model} cats={cats} style={style} clipY={clipY} sun={sun} furniture={furniture} walk={walk} onWalkEnd={() => setWalk(null)} isolateLevel={isolate ? activeLevel : null} selected={selectedId} onSelect={selectEl} height={560} />
+              <ComponentBuildingViewer model={model} cats={cats} style={style} clipY={clipY} sun={sun} furniture={furniture} services={services} types={types} walk={walk} onWalkEnd={() => setWalk(null)} isolateLevel={isolate ? activeLevel : null} selected={selectedId} onSelect={selectEl} height={560} />
             </Suspense>
           </div>
         </Card>
@@ -426,7 +462,13 @@ export default function BuildingExplorer() {
         <Card className="flex flex-col">
           <CardHeader icon={Layers} accent="violet" title="Model browser" subtitle="Every layer, substructure to finishes — toggle visibility per category." />
           <ul className="max-h-[300px] divide-y divide-edge/40 overflow-y-auto border-t border-edge/50">
-            {[...CATS, { key: 'furniture', label: 'Furnishings (FF&E)', count: () => furniture.items.length }].map((c) => {
+            {[...CATS,
+              { key: 'furniture', label: 'Furnishings (FF&E)', count: () => furniture.items.length },
+              { key: 'lighting', label: 'Lighting (MEP)', count: () => services.items.filter((i) => i.system === 'lighting').length },
+              { key: 'hvac', label: 'Air diffusers (MEP)', count: () => services.items.filter((i) => i.system === 'hvac').length },
+              { key: 'fire', label: 'Sprinklers + detectors (MEP)', count: () => services.items.filter((i) => i.system === 'fire').length },
+              { key: 'sanitary', label: 'Sanitary (MEP)', count: () => services.items.filter((i) => i.system === 'sanitary').length },
+            ].map((c) => {
               const n = c.count(model)
               const hiddenCat = !!cats[c.key]
               return (
@@ -505,7 +547,7 @@ export default function BuildingExplorer() {
               </div>
               <div data-studio-preview className="border-t border-edge/50">
                 <Suspense fallback={<div style={{ height: 420 }} className="grid place-items-center text-sm text-slate-500">Loading preview…</div>}>
-                  <ComponentBuildingViewer model={model} cats={cats} style={studioStyle} focus={studioFocus} furniture={furniture} selected={selectedId} onSelect={selectEl} height={420} />
+                  <ComponentBuildingViewer model={model} cats={cats} style={studioStyle} focus={studioFocus} furniture={furniture} services={services} types={types} selected={selectedId} onSelect={selectEl} height={420} />
                 </Suspense>
               </div>
             </div>
@@ -785,6 +827,21 @@ export default function BuildingExplorer() {
           subtitle="Workstations, conference tables, classroom ranks, beds & wardrobes, lab benches, shelving, racking and plant skids — derived from each room's programmed use, drawn in the 3D model (toggle in the Model browser, or walk through them) and priced from the catalog. Re-programme a room in the Room Studio and its furniture re-derives."
           action={<button onClick={() => downloadText(`${slug(project.name)}-ffe.csv`, ffeCsv(furniture), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
         />
+        <div className="flex flex-wrap items-end gap-3 border-t border-edge/50 px-5 py-3">
+          <span className="text-[11px] uppercase tracking-wide text-slate-500">Type alternatives</span>
+          {furniture.byKind.map((k) => {
+            const alts = FFE_ALTERNATES[k.kind]
+            if (!alts || alts.length < 2) return null
+            return (
+              <label key={k.kind} className="block">
+                <span className="mb-0.5 block text-[11px] text-slate-500">{FFE_CATALOG[k.kind]?.label ?? k.kind}</span>
+                <select value={ffeSel[k.kind] ?? alts[0].id} onChange={(e) => setFfeSel((s) => ({ ...s, [k.kind]: e.target.value }))} aria-label={`${FFE_CATALOG[k.kind]?.label ?? k.kind} type`} className="rounded-lg border border-edge/60 bg-elevated/50 px-2 py-1 text-xs text-slate-100 focus:border-amber-500/50 focus:outline-none">
+                  {alts.map((a) => <option key={a.id} value={a.id}>{a.label} (${a.cost})</option>)}
+                </select>
+              </label>
+            )
+          })}
+        </div>
         <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-4">
           <StatTile label="FF&E items" value={formatNumber(furniture.total.items)} accent="amber" />
           <StatTile label="FF&E budget" value={`$${formatNumber(furniture.total.cost)}`} accent="emerald" />
@@ -809,6 +866,84 @@ export default function BuildingExplorer() {
             </table>
           </ScrollableTable>
           <p className="mt-3 text-[11px] text-slate-500">Click any piece of furniture in the 3D model to inspect it. Catalog rates are indicative procurement figures; the CSV adds a per-level roll-up.</p>
+        </div>
+      </Card>
+
+      {/* building services (MEP) */}
+      <Card data-mep>
+        <CardHeader
+          icon={Lamp} accent="cyan" title="Building services (MEP) — lighting, air, fire, power, sanitary"
+          subtitle={`Every room is serviced on design spacing rules: luminaires (~1/12 m² → ${services.totals.lightingWm2} W/m² lighting density), supply diffusers (~1/16 m²), sprinkler heads (~1/12 m²) + smoke detectors, counted socket outlets per use, and a sanitary suite beside the core on every floor. Drawn in the 3D model (toggle each system in the Model browser) and priced; swap the head/fitting type and it reprices.`}
+          action={<button onClick={() => downloadText(`${slug(project.name)}-mep.csv`, servicesCsv(services), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="flex flex-wrap items-end gap-3 border-t border-edge/50 px-5 py-3">
+          <span className="text-[11px] uppercase tracking-wide text-slate-500">System types</span>
+          {(Object.keys(SVC_TYPES) as (keyof SvcSelections)[]).map((sys) => (
+            <label key={sys} className="block">
+              <span className="mb-0.5 block text-[11px] capitalize text-slate-500">{sys}</span>
+              <select value={svcSel[sys] ?? SVC_TYPES[sys][0].id} onChange={(e) => setSvcSel((s) => ({ ...s, [sys]: e.target.value }))} aria-label={`${sys} type`} className="rounded-lg border border-edge/60 bg-elevated/50 px-2 py-1 text-xs text-slate-100 focus:border-cyan-500/50 focus:outline-none">
+                {SVC_TYPES[sys].map((t) => <option key={t.id} value={t.id}>{t.label} (${t.cost})</option>)}
+              </select>
+            </label>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-4">
+          <StatTile label="MEP items drawn" value={formatNumber(services.totals.items)} accent="cyan" />
+          <StatTile label="Install budget" value={`$${formatNumber(services.totals.cost)}`} accent="emerald" />
+          <StatTile label="Lighting density" value={`${services.totals.lightingWm2} W/m²`} accent="amber" />
+          <StatTile label="Socket outlets" value={formatNumber(services.totals.sockets)} accent="violet" />
+        </div>
+        <div className="border-t border-edge/50 p-4">
+          <ScrollableTable label="MEP schedule by level">
+            <table className="w-full min-w-[680px] text-left text-sm">
+              <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Level', 'Luminaires', 'Diffusers', 'Sprinklers', 'Detectors', 'Sockets', 'Sanitary suites'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && 'text-right')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {services.schedule.slice(0, ROW_CAP).map((r) => (
+                  <tr key={r.level} onClick={() => gotoLevel(r.level)} className={cn('cursor-pointer border-b border-edge/30 transition-colors', r.level === activeLevel ? 'bg-amber-500/10' : 'hover:bg-elevated/40')}>
+                    <td className="px-3 py-1.5 font-medium text-slate-200">{r.name}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(r.luminaires)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(r.diffusers)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(r.sprinklers)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(r.detectors)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(r.sockets)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{r.sanitary}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollableTable>
+          <p className="mt-3 text-[11px] text-slate-500">{services.byKind.map((k) => `${k.label}: ${formatNumber(k.count)}`).join(' · ')}. Spacings are design rules of thumb — an indicative installation takeoff, not a services design.</p>
+        </div>
+      </Card>
+
+      {/* finishes schedule — room by room */}
+      <Card data-finishes>
+        <CardHeader
+          icon={PaintRoller} accent="teal" title="Finishes schedule — room by room"
+          subtitle={`Floor + wall + ceiling areas per room, priced at the room's finish grade (set it in the Room Studio, or floor-wide in the Floor Studio). ${formatNumber(finSched.totals.rooms)} rooms · ${formatNumber(finSched.totals.floorArea)} m² floor finish.`}
+          action={<button onClick={() => downloadText(`${slug(project.name)}-finishes.csv`, finishCsv(finSched), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="border-t border-edge/50 p-4">
+          <ScrollableTable label="Finishes schedule">
+            <table className="w-full min-w-[680px] text-left text-sm">
+              <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Room', 'Level', 'Use', 'Finish grade', 'Floor (m²)', 'Walls (m²)', 'Cost ($)'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 4 && 'text-right')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {finSched.rows.slice(0, ROW_CAP).map((r) => (
+                  <tr key={r.id} onClick={() => selectEl(r.id)} className={cn('cursor-pointer border-b border-edge/30 transition-colors', r.id === selectedId ? 'bg-amber-500/10' : 'hover:bg-elevated/40')}>
+                    <td className="px-3 py-1.5 font-medium text-slate-200">{r.room}</td>
+                    <td className="data-mono px-3 py-1.5 text-slate-300">{r.level === 0 ? 'G' : r.level}</td>
+                    <td className="px-3 py-1.5 text-slate-300">{r.use}</td>
+                    <td className="px-3 py-1.5 text-slate-300">{r.gradeLabel}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{r.floorArea}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{r.wallArea}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(r.cost)}</td>
+                  </tr>
+                ))}
+                {finSched.rows.length > ROW_CAP && <tr><td colSpan={7} className="px-3 py-2 text-center text-[11px] text-slate-500">Showing first {ROW_CAP} of {formatNumber(finSched.rows.length)} — export CSV for the full schedule.</td></tr>}
+              </tbody>
+              <tfoot><tr className="border-t border-edge/60 text-sm font-semibold text-slate-200"><td className="px-3 py-2">Total</td><td /><td /><td /><td className="data-mono px-3 py-2 text-right">{formatNumber(finSched.totals.floorArea)}</td><td /><td className="data-mono px-3 py-2 text-right">{formatNumber(finSched.totals.cost)}</td></tr></tfoot>
+            </table>
+          </ScrollableTable>
         </div>
       </Card>
 
@@ -978,7 +1113,7 @@ export default function BuildingExplorer() {
               </tbody>
             </table>
           </ScrollableTable>
-          <p className="mt-3 text-[11px] text-slate-500">Lowest-daylight rooms first (click to locate). “Dark” = window-to-floor below 10% (interior rooms have no external glazing). U-values: wall 0.3 / window 1.8 / roof 0.2 W/m²K; envelope EUI is indicative.</p>
+          <p className="mt-3 text-[11px] text-slate-500">Lowest-daylight rooms first (click to locate). “Dark” = window-to-floor below 10% (interior rooms have no external glazing). U-values follow the selected families — wall {eng.uWall} ({familyType('facade', types.facade).label}) / window {eng.uWindow} ({familyType('glazing', types.glazing).label}) / roof {eng.uRoof} W/m²K; envelope EUI is indicative.</p>
         </div>
       </Card>
       ) })()}

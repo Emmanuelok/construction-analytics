@@ -42,6 +42,62 @@ export const FFE_CATALOG: Record<string, { label: string; cost: number }> = {
   'plant-unit': { label: 'Plant / AHU skid', cost: 9400 },
 }
 
+// Alternatives per kind — like swapping a family type in CAD. The first entry is
+// the default and matches the base catalog rate; widthFactor stretches the drawn
+// footprint so the swap is visible in 3D, not just in the budget.
+export type FfeAlt = { id: string; label: string; cost: number; widthFactor?: number }
+export const FFE_ALTERNATES: Record<string, FfeAlt[]> = {
+  desk: [
+    { id: 'standard', label: 'Standard 1400', cost: 420 },
+    { id: 'sit-stand', label: 'Sit-stand electric', cost: 680 },
+    { id: 'bench', label: 'Bench 1600 (shared spine)', cost: 360, widthFactor: 1.14 },
+  ],
+  chair: [
+    { id: 'task', label: 'Task chair', cost: 160 },
+    { id: 'ergonomic', label: 'Ergonomic mesh', cost: 420 },
+    { id: 'stacking', label: 'Stacking side chair', cost: 95 },
+  ],
+  'meeting-table': [
+    { id: 'board-8', label: 'Boardroom 8-seat', cost: 1450 },
+    { id: 'board-12', label: 'Boardroom 12-seat', cost: 2100, widthFactor: 1.2 },
+    { id: 'huddle', label: 'Huddle round', cost: 820, widthFactor: 0.7 },
+  ],
+  bed: [
+    { id: 'double', label: 'Double', cost: 780 },
+    { id: 'queen', label: 'Queen', cost: 920, widthFactor: 1.07 },
+    { id: 'king', label: 'King', cost: 1100, widthFactor: 1.15 },
+  ],
+  wardrobe: [
+    { id: 'hinged', label: 'Hinged 2-door', cost: 520 },
+    { id: 'sliding', label: 'Sliding mirrored', cost: 740, widthFactor: 1.12 },
+  ],
+  sofa: [
+    { id: 'two-seat', label: '2-seat', cost: 940 },
+    { id: 'three-seat', label: '3-seat', cost: 1280, widthFactor: 1.25 },
+  ],
+  shelf: [
+    { id: 'standard', label: 'Standard bay', cost: 310 },
+    { id: 'heavy', label: 'Heavy-duty bay', cost: 460 },
+  ],
+  counter: [
+    { id: 'laminate', label: 'Laminate', cost: 760 },
+    { id: 'stone', label: 'Stone-top premium', cost: 1600 },
+  ],
+  bench: [
+    { id: 'standard', label: 'Standard lab', cost: 680 },
+    { id: 'fume', label: 'Fume-cupboard ready', cost: 1400 },
+  ],
+  rack: [
+    { id: 'shelving', label: 'Boltless shelving', cost: 260 },
+    { id: 'pallet', label: 'Pallet racking', cost: 520, widthFactor: 1.2 },
+  ],
+  'plant-unit': [
+    { id: 'ahu', label: 'AHU skid', cost: 9400 },
+    { id: 'chiller', label: 'Chiller package', cost: 16800, widthFactor: 1.15 },
+  ],
+}
+export const ffeAlt = (kind: string, id?: string): FfeAlt => (FFE_ALTERNATES[kind] ?? []).find((a) => a.id === id) ?? (FFE_ALTERNATES[kind] ?? [{ id: 'standard', label: 'Standard', cost: FFE_CATALOG[kind]?.cost ?? 0 }])[0]
+
 // 3D floor tints per use (carpet / finish tone — lighter than the plan tints)
 export const FLOOR_TINT: Record<string, string> = {
   office: '#54719c', 'open-office': '#4d6890', meeting: '#73639f', lab: '#4f8f98',
@@ -52,9 +108,11 @@ export const FLOOR_TINT: Record<string, string> = {
 // part colours
 const C = { top: '#a07a4e', metal: '#3a4250', seat: '#41608a', timber: '#8a6f4a', bedding: '#a9b4d6', frame: '#5d6788', shelfc: '#5b6573', equip: '#7e8a74', counter: '#7a5d46' }
 
-/** One furniture engine pass over every room. `storeyHeight` (m) sets vertical scale. */
-export function furnitureFor(m: BuildingModel, opts: { storeyHeight?: number } = {}): FfeResult {
+/** One furniture engine pass over every room. `storeyHeight` (m) sets vertical
+ *  scale; `ffe` picks an alternate type per kind (cost + drawn footprint). */
+export function furnitureFor(m: BuildingModel, opts: { storeyHeight?: number; ffe?: Record<string, string> } = {}): FfeResult {
   const sh = opts.storeyHeight ?? 3.6
+  const altOf = (kind: string) => ffeAlt(kind, opts.ffe?.[kind])
   const storeys = m.counts.storeys
   const sceneSh = m.totalHeight / Math.max(1, storeys)
   const vFac = sceneSh / sh // scene per metre (vertical)
@@ -79,7 +137,10 @@ export function furnitureFor(m: BuildingModel, opts: { storeyHeight?: number } =
     let n = 0
     const part = (px: number, pz: number, wM: number, hM: number, dM: number, elevM: number, color: string): FurniturePart =>
       ({ x: px, z: pz, y: floorY + (elevM + hM / 2) * vFac, w: wM * M, h: hM * vFac, d: dM * M, color })
-    const add = (kind: string, parts: FurniturePart[]) => { items.push({ id: `fur-${room.id}-${n++}`, roomId: room.id, level: room.level, kind, parts }) }
+    const add = (kind: string, parts: FurniturePart[]) => {
+      const wf = altOf(kind).widthFactor ?? 1
+      items.push({ id: `fur-${room.id}-${n++}`, roomId: room.id, level: room.level, kind, parts: wf === 1 ? parts : parts.map((p) => ({ ...p, w: p.w * wf })) })
+    }
     const workstation = (px: number, pz: number) => {
       add('desk', [part(px, pz, 1.4, 0.04, 0.7, 0.72, C.top), part(px + 0.45 * M, pz, 0.4, 0.6, 0.5, 0.08, C.metal)])
       add('chair', [part(px, pz + 0.62 * M, 0.46, 0.06, 0.46, 0.44, C.seat), part(px, pz + 0.82 * M, 0.46, 0.5, 0.07, 0.5, C.seat)])
@@ -136,12 +197,13 @@ export function furnitureFor(m: BuildingModel, opts: { storeyHeight?: number } =
   for (const it of items) kindCount.set(it.kind, (kindCount.get(it.kind) ?? 0) + 1)
   const byKind: FfeLine[] = [...kindCount.entries()].map(([kind, count]) => {
     const cat = FFE_CATALOG[kind] ?? { label: kind, cost: 0 }
-    return { kind, label: cat.label, count, unitCost: cat.cost, cost: count * cat.cost }
+    const alt = altOf(kind)
+    return { kind, label: `${cat.label} — ${alt.label}`, count, unitCost: alt.cost, cost: count * alt.cost }
   }).sort((a, b) => b.cost - a.cost)
   const lvlMap = new Map<number, { items: number; cost: number }>()
   for (const it of items) {
     const cur = lvlMap.get(it.level) ?? { items: 0, cost: 0 }
-    lvlMap.set(it.level, { items: cur.items + 1, cost: cur.cost + (FFE_CATALOG[it.kind]?.cost ?? 0) })
+    lvlMap.set(it.level, { items: cur.items + 1, cost: cur.cost + altOf(it.kind).cost })
   }
   const byLevel = [...lvlMap.entries()].map(([level, v]) => ({ level, ...v })).sort((a, b) => a.level - b.level)
   return { items, patches, byKind, byLevel, total: { items: items.length, cost: byKind.reduce((s, k) => s + k.cost, 0) } }

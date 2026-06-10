@@ -31,8 +31,10 @@ import { toIfc } from './building-ifc.ts'
 import { handleMcpRpc, MCP_PROTOCOL, SERVER_INFO } from './mcp-rpc.ts'
 import { floorRooms, floorGrid } from './building-rooms.ts'
 import { spaceType, finishGrade, occupants, SPACE_TYPES, FINISHES } from './room-types.ts'
-import { roomReport, floorReport } from './room-studio.ts'
-import { furnitureFor, ffeCsv, FFE_CATALOG, FLOOR_TINT } from './building-furniture.ts'
+import { roomReport, floorReport, finishSchedule, finishCsv } from './room-studio.ts'
+import { furnitureFor, ffeCsv, FFE_CATALOG, FLOOR_TINT, FFE_ALTERNATES, ffeAlt } from './building-furniture.ts'
+import { FAMILIES, DEFAULT_TYPES, familyType, familyCount, engineeringFor, familiesCsv } from './families.ts'
+import { buildingServices, servicesCsv, SVC_TYPES, svcType } from './building-services.ts'
 import { fastenerTakeoff, fastenersCsv } from './fasteners.ts'
 import { parseDxf, summarize as dxfSummarize, entityLength, dxfCsv, SAMPLE_DXF } from './dxf.ts'
 import { floorPartitions } from './building-partitions.ts'
@@ -991,6 +993,62 @@ section('building-furniture')
   ok('floor tints follow the use (residential ≠ office tint)', (() => { const r0 = m.rooms.find((r) => r.level === 0)!; const mr = applyEdits(m, setRoomUse(emptyEdits(), r0.id, 'residential')); const fr = furnitureFor(mr); const pat = fr.patches.find((p) => p.roomId === r0.id)!; return pat.color === FLOOR_TINT.residential && pat.color !== FLOOR_TINT.office })())
   ok('deterministic: two passes produce identical output', JSON.stringify(furnitureFor(m)) === JSON.stringify(furnitureFor(m)))
   ok('FF&E CSV carries the kinds, totals and a per-level block', (() => { const c = ffeCsv(f); return c.includes('Workstation desk') && c.includes(`TOTAL,${f.total.items}`) && c.includes('LEVEL,Items') })())
+
+  // alternates: every kind has ≥2 types; defaults match the base catalog; swapping changes budget + footprint
+  ok('every FF&E kind carries alternates, default = base catalog rate', Object.keys(FFE_CATALOG).every((k) => (FFE_ALTERNATES[k]?.length ?? 0) >= 2 && FFE_ALTERNATES[k][0].cost === FFE_CATALOG[k].cost))
+  ok('ffeAlt looks up by id and falls back to the default', ffeAlt('desk', 'sit-stand').cost === 680 && ffeAlt('desk', 'nope').id === 'standard' && ffeAlt('chair').id === 'task')
+  ok('swapping desks to sit-stand raises the budget (same counts)', (() => { const f2 = furnitureFor(m, { ffe: { desk: 'sit-stand' } }); return f2.total.items === f.total.items && f2.total.cost > f.total.cost && f2.byKind.find((k) => k.kind === 'desk')!.unitCost === 680 })())
+  ok('a widthFactor alternate stretches the drawn footprint', (() => { const f2 = furnitureFor(m, { ffe: { desk: 'bench' } }); const w0 = f.items.find((i) => i.kind === 'desk')!.parts[0].w; const w2 = f2.items.find((i) => i.kind === 'desk')!.parts[0].w; return near(w2, w0 * 1.14, 1e-9) })())
+  ok('the alternate label lands in the takeoff line', furnitureFor(m, { ffe: { chair: 'ergonomic' } }).byKind.find((k) => k.kind === 'chair')!.label.includes('Ergonomic'))
+}
+
+// ── families (the element catalog: types/alternatives per category) ──────────────
+section('families')
+{
+  ok('the catalog covers the full element tree (12 categories, 40+ types)', FAMILIES.length === 12 && familyCount() >= 40 && FAMILIES.every((f) => f.types.length >= 3))
+  ok('every category carries real alternatives with material + rate + props', FAMILIES.every((f) => f.types.every((t) => t.label && t.material && t.cost > 0 && Object.keys(t.props).length > 0)))
+  ok('DEFAULT_TYPES selects the first type of every category', Object.keys(DEFAULT_TYPES).length === FAMILIES.length && FAMILIES.every((f) => DEFAULT_TYPES[f.key] === f.types[0].id))
+  ok('familyType looks up by id; unknown falls back to the default', familyType('column', 'steel-uc').material.includes('S355') && familyType('column', 'nope').id === 'rc-square' && familyType('nope').id === 'none')
+  ok('structural alternatives carry section shape for the viewer', familyType('column', 'rc-round').shape === 'cylinder' && familyType('column', 'rc-square').shape === 'box')
+  const eng0 = engineeringFor(DEFAULT_TYPES)
+  ok('engineeringFor derives envelope U-values + structural strengths', eng0.uWall === 0.3 && eng0.uWindow === 1.4 && eng0.uRoof === 0.18 && eng0.fcColumn === 32)
+  ok('triple glazing tightens the window U; steel column raises strength', (() => { const e = engineeringFor({ ...DEFAULT_TYPES, glazing: 'tgu', column: 'steel-uc' }); return e.uWindow === 0.9 && e.fcColumn === 88 })())
+  // the selections actually move the downstream engines
+  const m = buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0.16 })
+  ok('selecting TGU lowers the energy intensity (EUI)', (() => { const a = energyAnalysis(m, { storeyHeight: 3.6, uWindow: 1.4 }); const b = energyAnalysis(m, { storeyHeight: 3.6, uWindow: 0.9 }); return b.summary.eui < a.summary.eui })())
+  ok('selecting a stronger column section drops the max utilisation', (() => { const a = structuralCheck(m, { storeyHeight: 3.6, fc: 32 }); const b = structuralCheck(m, { storeyHeight: 3.6, fc: 88 }); return b.summary.maxColUtil < a.summary.maxColUtil })())
+  ok('the families CSV schedules every type and flags the active one', (() => { const c = familiesCsv({ ...DEFAULT_TYPES, glazing: 'tgu' }); return c.split('\n').length === familyCount() + 1 && c.includes('Triple glazed (TGU),6/12/6/12/6,760,m²,YES') && c.includes('Double glazed (DGU low-E),6/16Ar/6 low-E,540,m²,') })())
+}
+
+// ── building-services (MEP: lighting, air, fire, power, sanitary) ────────────────
+section('building-services')
+{
+  const m = buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0.16 })
+  const s = buildingServices(m, { storeyHeight: 3.6 })
+  ok('the services layer covers lighting, hvac, fire and sanitary', s.items.length > 0 && ['lighting', 'hvac', 'fire', 'sanitary'].every((sys) => s.items.some((it) => it.system === sys)))
+  ok('every habitable room gets luminaires + a sprinkler + a detector', m.rooms.filter((r) => r.level < m.counts.storeys).every((r) => s.items.some((it) => it.roomId === r.id && it.kind === 'luminaire') && s.items.some((it) => it.roomId === r.id && it.kind === 'sprinkler') && s.items.some((it) => it.roomId === r.id && it.kind === 'detector')))
+  ok('items hang at ceiling level with stable ids + real boxes', s.items.every((it) => it.id.startsWith('svc-') && it.parts.every((p) => p.w > 0 && p.h > 0 && p.d > 0)))
+  ok('spacing rules: ~1 luminaire / 12 m² (±1 per room)', (() => { const r0 = m.rooms.find((r) => r.level === 0)!; const n = s.items.filter((it) => it.roomId === r0.id && it.kind === 'luminaire').length; return Math.abs(n - Math.round(r0.area / 12)) <= 1 })())
+  ok('the per-level schedule sums match the drawn items', (() => { const lum = s.items.filter((i) => i.kind === 'luminaire').length; return s.schedule.reduce((a, r) => a + r.luminaires, 0) === lum && s.schedule.length >= m.counts.storeys })())
+  ok('a sanitary suite lands beside the core on every floor', s.schedule.every((r) => r.sanitary === 1) && s.items.some((it) => it.kind === 'wc') && s.items.some((it) => it.kind === 'basin'))
+  ok('sockets are counted per use (offices get 4 each)', s.totals.sockets >= m.rooms.filter((r) => r.level < m.counts.storeys).length * 2)
+  ok('lighting power density lands in a sane band (1–6 W/m²)', s.totals.lightingWm2 >= 1 && s.totals.lightingWm2 <= 6, s.totals.lightingWm2)
+  ok('type alternatives reprice the system (concealed heads cost more)', (() => { const s2 = buildingServices(m, { types: { sprinkler: 'concealed' } }); const a = s.byKind.find((k) => k.kind === 'sprinkler')!; const b = s2.byKind.find((k) => k.kind === 'sprinkler')!; return b.unitCost > a.unitCost && b.count === a.count && s2.totals.cost > s.totals.cost })())
+  ok('svcType falls back to the default; every system has ≥2 types', svcType('luminaire', 'nope').id === 'led-panel' && Object.values(SVC_TYPES).every((t) => t.length >= 2))
+  ok('deterministic output', JSON.stringify(buildingServices(m)) === JSON.stringify(buildingServices(m)))
+  ok('MEP CSV carries kinds + the per-level block', (() => { const c = servicesCsv(s); return c.includes('LED panel') && c.includes('LEVEL,Luminaires') && c.includes('Smoke detector') })())
+}
+
+// ── finishes schedule (room-by-room finishes takeoff) ────────────────────────────
+section('finish-schedule')
+{
+  const m = buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0.16 })
+  const fs = finishSchedule(m, { storeyHeight: 3.6 })
+  ok('every room is scheduled with floor/wall/ceiling areas + graded cost', fs.rows.length === m.rooms.filter((r) => r.level < m.counts.storeys).length && fs.rows.every((r) => r.floorArea > 0 && r.wallArea > 0 && r.ceilingArea === r.floorArea && r.cost > 0))
+  ok('totals roll up the rows', near(fs.totals.floorArea, fs.rows.reduce((s, r) => s + r.floorArea, 0), 0.5) && fs.totals.cost === fs.rows.reduce((s, r) => s + r.cost, 0))
+  ok('re-grading a room repriced its row (premium > standard)', (() => { const r0 = m.rooms.find((r) => r.level === 0)!; const m2 = applyEdits(m, setRoomFinish(emptyEdits(), r0.id, 'premium')); const a = fs.rows.find((r) => r.id === r0.id)!; const b = finishSchedule(m2).rows.find((r) => r.id === r0.id)!; return b.cost > a.cost && b.gradeLabel.includes('Premium') })())
+  ok('the schedule matches the Room Studio takeoff for the same room', (() => { const r0 = m.rooms.find((r) => r.level === 0)!; const rep = roomReport(m, r0.id, { storeyHeight: 3.6 })!; const row = fs.rows.find((r) => r.id === r0.id)!; return row.cost === rep.finishCost })())
+  ok('finishes CSV lists rooms + a grand total', (() => { const c = finishCsv(fs); return c.split('\n').length === fs.rows.length + 2 && c.includes('TOTAL') })())
 }
 
 // ── fasteners (hardware & fixings takeoff — down to the nails) ───────────────────
