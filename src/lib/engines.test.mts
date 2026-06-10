@@ -32,6 +32,9 @@ import { handleMcpRpc, MCP_PROTOCOL, SERVER_INFO } from './mcp-rpc.ts'
 import { floorRooms, floorGrid } from './building-rooms.ts'
 import { spaceType, finishGrade, occupants, SPACE_TYPES, FINISHES } from './room-types.ts'
 import { roomReport, floorReport } from './room-studio.ts'
+import { furnitureFor, ffeCsv, FFE_CATALOG, FLOOR_TINT } from './building-furniture.ts'
+import { fastenerTakeoff, fastenersCsv } from './fasteners.ts'
+import { parseDxf, summarize as dxfSummarize, entityLength, dxfCsv, SAMPLE_DXF } from './dxf.ts'
 import { floorPartitions } from './building-partitions.ts'
 import { coreStairs, stairCheck } from './building-stairs.ts'
 import { egressAnalysis, egressPathFor } from './egress.ts'
@@ -969,6 +972,59 @@ section('room-edits')
   ok('editCount tracks room edits alongside element edits', editCount(setRoomUse(setRoomName(emptyEdits(), r0.id, 'X'), 'room-0-1', 'meeting')) === 2)
   ok('a room edit survives applyEdits without touching element counts', (() => { const a = applyEdits(m, setRoomUse(emptyEdits(), r0.id, 'retail')); return a.columns.length === m.columns.length && a.counts.rooms === m.counts.rooms })())
   ok('loading an old edit-set with no rooms map does not break applyEdits', (() => { const legacy = { deleted: [], edits: {}, added: [], addedDoors: [], addedStairs: [] } as unknown as ReturnType<typeof emptyEdits>; return applyEdits(m, legacy).rooms.length === m.rooms.length })())
+}
+
+// ── building-furniture (FF&E: furnish every room from its use + price it) ────────
+section('building-furniture')
+{
+  const m = buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0.16 })
+  const f = furnitureFor(m, { storeyHeight: 3.6 })
+  ok('every habitable room gets furniture; every room gets a floor tint', f.items.length > 0 && f.patches.length === m.rooms.length)
+  ok('default offices get desks + chairs (the headline kinds)', f.byKind.some((k) => k.kind === 'desk') && f.byKind.some((k) => k.kind === 'chair'))
+  ok('items carry stable ids, a room + level, and real box parts', f.items.every((it) => it.id.startsWith('fur-') && it.level >= 0 && it.parts.length > 0 && it.parts.every((p) => p.w > 0 && p.h > 0 && p.d > 0)))
+  ok('furniture sits above its floor slab (y > slab top, below next storey)', (() => { const sceneSh = m.totalHeight / m.counts.storeys; return f.items.every((it) => { const slab = m.slabs.find((s) => s.level === it.level)!; return it.parts.every((p) => p.y > slab.y && p.y < slab.y + sceneSh) }) })())
+  ok('parts stay inside the room footprint (with a tolerance)', (() => { const byRoom = new Map(m.rooms.map((r) => [r.id, r])); return f.items.every((it) => { const r = byRoom.get(it.roomId)!; const xs = r.polygon.map((p) => p.x), zs = r.polygon.map((p) => p.z); const t = 0.15; return it.parts.every((p) => p.x >= Math.min(...xs) - t && p.x <= Math.max(...xs) + t && p.z >= Math.min(...zs) - t && p.z <= Math.max(...zs) + t) }) })())
+  ok('the takeoff prices by catalog (cost = Σ count × unit cost)', f.total.cost === f.byKind.reduce((s, k) => s + k.count * FFE_CATALOG[k.kind].cost, 0) && f.total.items === f.items.length)
+  ok('per-level roll-up covers every furnished level', f.byLevel.length > 0 && f.byLevel.reduce((s, l) => s + l.items, 0) === f.items.length)
+  ok('re-programming a room re-furnishes it (meeting → conference table appears)', (() => { const r0 = m.rooms.find((r) => r.level === 0)!; const m2 = applyEdits(m, setRoomUse(emptyEdits(), r0.id, 'meeting')); const f2 = furnitureFor(m2); return f2.items.some((it) => it.roomId === r0.id && it.kind === 'meeting-table') })())
+  ok('plant rooms get equipment, circulation stays clear', (() => { const r0 = m.rooms.find((r) => r.level === 0)!; const mp = applyEdits(m, setRoomUse(emptyEdits(), r0.id, 'plant')); const fp = furnitureFor(mp); const mc = applyEdits(m, setRoomUse(emptyEdits(), r0.id, 'circulation')); const fc = furnitureFor(mc); return fp.items.some((it) => it.roomId === r0.id && it.kind === 'plant-unit') && !fc.items.some((it) => it.roomId === r0.id) })())
+  ok('floor tints follow the use (residential ≠ office tint)', (() => { const r0 = m.rooms.find((r) => r.level === 0)!; const mr = applyEdits(m, setRoomUse(emptyEdits(), r0.id, 'residential')); const fr = furnitureFor(mr); const pat = fr.patches.find((p) => p.roomId === r0.id)!; return pat.color === FLOOR_TINT.residential && pat.color !== FLOOR_TINT.office })())
+  ok('deterministic: two passes produce identical output', JSON.stringify(furnitureFor(m)) === JSON.stringify(furnitureFor(m)))
+  ok('FF&E CSV carries the kinds, totals and a per-level block', (() => { const c = ffeCsv(f); return c.includes('Workstation desk') && c.includes(`TOTAL,${f.total.items}`) && c.includes('LEVEL,Items') })())
+}
+
+// ── fasteners (hardware & fixings takeoff — down to the nails) ───────────────────
+section('fasteners')
+{
+  const m = buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0.16 })
+  const fx = fastenerTakeoff(m, { storeyHeight: 3.6 })
+  ok('the takeoff covers structure, partitions, doors, façade, ceilings & stairs', fx.rows.length >= 12 && fx.totals.fixings > 0 && fx.totals.massKg > 0)
+  ok('anchor bolts = 4 × ground-floor columns', fx.rows.find((r) => r.item.includes('anchor'))!.qty === m.columns.filter((c) => (c.level ?? 0) === 0).length * 4)
+  ok('beam connection bolts = 8 × beams', fx.rows.find((r) => r.id === 'beam-bolt')!.qty === m.beams.length * 8)
+  ok('door ironmongery: 3 hinges + a lockset per leaf (incl. interior doors)', (() => { const doors = m.doors.length + m.interiorDoors.length; return fx.rows.find((r) => r.id === 'hinge')!.qty === doors * 3 && fx.rows.find((r) => r.id === 'lockset')!.qty === doors })())
+  ok('yes — the nails: skirting nails = 4 per lm of partition', (() => { const lm = m.partitions.reduce((s, p) => s + Math.hypot(p.b.x - p.a.x, p.b.z - p.a.z) * 6.25, 0); const row = fx.rows.find((r) => r.id === 'skirt-nail')!; return row.qty === Math.round(lm * 4) && fx.totals.nails === row.qty && /nails/.test(fx.headline) })())
+  ok('screw/bolt/nail families are totalled separately', fx.totals.screws > 0 && fx.totals.bolts > 0 && fx.totals.nails > 0 && fx.totals.fixings >= fx.totals.nails + fx.totals.bolts)
+  ok('ceiling grid is taken off in lineal metres', fx.rows.find((r) => r.id === 'ceil-tee')!.unit === 'm')
+  ok('every row carries a rule of thumb + mass', fx.rows.every((r) => r.rule.length > 4 && r.massKg >= 0))
+  ok('mullion brackets scale with mullions (2 each)', fx.rows.find((r) => r.id === 'mull-bkt')!.qty === m.mullions.length * 2)
+  ok('fixings CSV lists rows + a grand total', (() => { const c = fastenersCsv(fx); return c.includes('Skirting nails') && c.includes('TOTAL fixings') && c.split('\n').length === fx.rows.length + 2 })())
+}
+
+// ── dxf (drawing import: parse, take off, revise) ────────────────────────────────
+section('dxf')
+{
+  const d = parseDxf(SAMPLE_DXF)
+  ok('the sample plan parses (lines, polyline, circles, arcs, text, insert)', d.entities.length > 25 && d.counts.LINE > 5 && d.counts.POLYLINE === 1 && d.counts.CIRCLE === 12 && d.counts.ARC === 2 && d.counts.TEXT === 4 && d.counts.INSERT === 1)
+  ok('layers are extracted with counts (walls, doors, columns, grid, anno)', d.layers.length >= 5 && d.layers.some((l) => l.name === 'A-WALL') && d.layers.find((l) => l.name === 'S-COL')!.count === 12)
+  ok('the outer wall polyline is closed and measured around the perimeter', (() => { const p = d.entities.find((e) => e.type === 'POLYLINE')!; return p.type === 'POLYLINE' && p.closed && near(entityLength(p), 76, 0.01) })())
+  ok('drawn length sums per layer + overall', d.totalLength > 100 && near(d.layers.reduce((s, l) => s + l.length, 0), d.totalLength, 0.5))
+  ok('extents cover the plan (incl. grid overshoot)', d.bbox.minX <= 0 && d.bbox.maxX >= 24 && d.bbox.minY <= -1.5 && d.bbox.maxY >= 15.5)
+  ok('header units are read ($INSUNITS 6 → m)', d.units === 'm')
+  ok('text entities carry their strings (room labels)', d.entities.filter((e) => e.type === 'TEXT').map((e) => (e.type === 'TEXT' ? e.text : '')).join('|').includes('MEETING'))
+  ok('arc length follows the sweep (90° door swing = ¼ circle)', (() => { const a = d.entities.find((e) => e.type === 'ARC')!; return a.type === 'ARC' && near(entityLength(a), (Math.PI / 2) * 1.2, 0.01) })())
+  ok('revision: dropping a layer re-summarizes counts & length', (() => { const kept = d.entities.filter((e) => e.layer !== 'G-GRID'); const s = dxfSummarize(kept, d.units); return s.entities.length === d.entities.length - 4 && s.totalLength < d.totalLength && !s.layers.some((l) => l.name === 'G-GRID') })())
+  ok('a malformed file parses to an empty drawing (no throw)', (() => { const e = parseDxf('garbage\nnot-a-code\n0\nWHAT\n'); return e.entities.length === 0 && e.bbox.maxX === 1 })())
+  ok('CSV schedules every entity + the layer takeoff', (() => { const c = dxfCsv(d); return c.split('\n').length > d.entities.length && c.includes('A-WALL') && c.includes('LAYER,Entities') })())
 }
 
 // ── building-partitions + stairs (interior walls between rooms; core stairs) ─────

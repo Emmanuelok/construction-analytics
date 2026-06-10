@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame, Gauge, Sun, CalendarClock, Sparkles, Wand2, Camera, EyeOff, LayoutGrid, Ruler, Users, Maximize2, Minimize2, X } from 'lucide-react'
+import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame, Gauge, Sun, CalendarClock, Sparkles, Wand2, Camera, EyeOff, LayoutGrid, Ruler, Users, Maximize2, Minimize2, X, Footprints, Armchair, Hammer } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge, Tabs } from '@/components/ui'
 import { ScrollableTable } from '@/components/ScrollableTable'
 const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
 const IfcExplorer = lazy(() => import('@/components/IfcExplorer').then((m) => ({ default: m.IfcExplorer })))
+const DrawingExplorer = lazy(() => import('@/components/DrawingExplorer').then((m) => ({ default: m.DrawingExplorer })))
 import { FloorPlan } from '@/components/FloorPlan'
 import { buildMassing, deriveStoreys, SHAPE_KINDS, type ShapeKind } from '@/lib/massing'
 import { buildBuilding, type BuildingModel } from '@/lib/building'
@@ -11,6 +12,8 @@ import { explodeBuilding, planForLevel, type Schedule, type ScheduleCol, type Bu
 import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, addDoorAt, addStairAt, duplicateColumn, editCount, setRoomName, setRoomUse, setRoomFinish, scaleRoom, type BuildingEdits } from '@/lib/building-edits'
 import { roomReport, floorReport } from '@/lib/room-studio'
 import { SPACE_TYPES, FINISHES } from '@/lib/room-types'
+import { furnitureFor, ffeCsv, FFE_CATALOG } from '@/lib/building-furniture'
+import { fastenerTakeoff, fastenersCsv } from '@/lib/fasteners'
 import { toObj } from '@/lib/building-export'
 import { toIfc } from '@/lib/building-ifc'
 import { egressAnalysis, egressPathFor } from '@/lib/egress'
@@ -79,7 +82,7 @@ export default function BuildingExplorer() {
   const [projectId, setProjectId] = useState(initialId)
   const project = useMemo(() => PROJECTS.find((p) => p.id === projectId) ?? PROJECTS[0], [projectId])
 
-  const [source, setSource] = useState<'parametric' | 'ifc'>('parametric')
+  const [source, setSource] = useState<'parametric' | 'ifc' | 'dxf'>('parametric')
   const [storeys, setStoreys] = useState(() => init0?.storeys ?? deriveStoreys(proj0.gfa))
   const [shape, setShape] = useState<ShapeKind>(() => init0?.shape ?? 'rect')
   const [aspect, setAspect] = useState(() => init0?.aspect ?? 1)
@@ -106,6 +109,7 @@ export default function BuildingExplorer() {
   const [studioFloor, setStudioFloor] = useState<number | null>(null) // floor open in the Floor Studio
   const [studioStyle, setStudioStyle] = useState<ViewerStyle>('realistic') // render style for the studio preview
   const [nameDraft, setNameDraft] = useState('') // room-rename text buffer (committed on blur/Enter)
+  const [walk, setWalk] = useState<{ x: number; z: number; level: number } | null>(null) // first-person walkthrough spawn
   const [edits, setEdits] = useState<BuildingEdits>(() => init0?.edits ?? emptyEdits())
   const [past, setPast] = useState<BuildingEdits[]>([])
   const [future, setFuture] = useState<BuildingEdits[]>([])
@@ -173,6 +177,18 @@ export default function BuildingExplorer() {
   }
   const sun = useMemo(() => { if (!sunOn) return undefined; const p = sunPosition(momentOf(month, hour), 40.71, -74.0); return { azimuth: p.azimuth, altitude: p.altitude } }, [sunOn, month, hour])
   const clipY = section >= 100 ? null : (section / 100) * model.totalHeight
+  // FF&E: furnish every room from its programmed use; fixings: hardware down to the nails
+  const furniture = useMemo(() => furnitureFor(model, { storeyHeight }), [model, storeyHeight])
+  const fixings = useMemo(() => fastenerTakeoff(model, { storeyHeight }), [model, storeyHeight])
+  // first-person walkthrough: spawn inside a real room on a level (clear of the core)
+  const walkTo = (level: number, at?: { x: number; z: number }) => {
+    const lvl = Math.max(0, Math.min(model.counts.storeys - 1, level))
+    const room = model.rooms.find((r) => r.level === lvl)
+    const p = at ?? room?.center ?? { x: model.core ? model.core.x + model.core.w * 1.4 : 0, z: model.core ? model.core.z : 0 }
+    setIsolate(false)
+    setWalk({ x: p.x, z: p.z, level: lvl })
+    document.querySelector('[data-main-viewer]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
   const snapshotInto = (root: ParentNode | null, name: string) => {
     const el = (root ?? document).querySelector('[aria-label^="3D building model"]') as (HTMLElement & { __snapshot?: () => string }) | null
     const url = el?.__snapshot?.()
@@ -241,12 +257,12 @@ export default function BuildingExplorer() {
         icon={Boxes}
         eyebrow="BIM review"
         title="Building Explorer"
-        description="Review a building floor by floor and element by element — like a model browser. Isolate any level, click any element to inspect its data, and open the full schedules. Use a generated model, or upload your own IFC/Revit export."
+        description="Review a building floor by floor and element by element — then walk through it in first person, fully furnished. Isolate any level, click any element to inspect its data, open the full schedules, and extract everything down to the nails. Use a generated model, upload an IFC/Revit export, or load 2D DXF drawings."
         accent="blue"
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex overflow-hidden rounded-lg ring-1 ring-inset ring-edge/60">
-              {([['parametric', 'Generated'], ['ifc', 'IFC model']] as const).map(([id, label]) => (
+              {([['parametric', 'Generated'], ['ifc', 'IFC / Revit'], ['dxf', 'Drawings']] as const).map(([id, label]) => (
                 <button key={id} onClick={() => setSource(id)} className={cn('px-3 py-1.5 text-xs font-medium transition-colors', source === id ? 'bg-blue-500/20 text-blue-100' : 'text-slate-400 hover:bg-elevated/50 hover:text-slate-200')}>{label}</button>
               ))}
             </div>
@@ -288,6 +304,8 @@ export default function BuildingExplorer() {
 
       {source === 'ifc' ? (
         <Suspense fallback={<div className="grid h-64 place-items-center text-sm text-slate-500">Loading IFC explorer…</div>}><IfcExplorer onEditModel={importIfcModel} /></Suspense>
+      ) : source === 'dxf' ? (
+        <Suspense fallback={<div className="grid h-64 place-items-center text-sm text-slate-500">Loading drawing workbench…</div>}><DrawingExplorer /></Suspense>
       ) : (
       <>
       {/* summary */}
@@ -363,7 +381,7 @@ export default function BuildingExplorer() {
       <div className="grid gap-6 lg:grid-cols-[1.55fr_1fr]">
         <Card className="overflow-hidden">
           <CardHeader
-            icon={Eye} accent="blue" title="3D model & studio" subtitle="Model Studio lives here now: render styles, a sun study, a section box and PNG renders above the viewport; every building layer toggles in the Model browser alongside. Click any element to inspect; Edit to move / resize / delete and add columns, doors or stairs — schedules update live."
+            icon={Eye} accent="blue" title="3D model & studio" subtitle="Render styles, a sun study, a section box, PNG renders — and a first-person Walkthrough: WASD + mouse-look through every furnished room, Q/E between floors, like a Revit walkthrough with the building already decorated. Click any element to inspect; Edit to move / resize / delete — schedules update live."
             action={
               <div className="flex flex-wrap items-center gap-2">
                 {isolate && <Badge variant="cyan">Isolated · {activeLevelInfo?.name ?? `Level ${activeLevel}`}</Badge>}
@@ -394,11 +412,12 @@ export default function BuildingExplorer() {
               <label className="flex items-center gap-1.5 text-[11px] text-slate-400">Month <input type="range" min={1} max={12} value={month} onChange={(e) => setMonth(Number(e.target.value))} className="w-20 accent-amber-500" aria-label="Sun month" /><span className="data-mono w-6 text-slate-300">{month}</span></label>
               <label className="flex items-center gap-1.5 text-[11px] text-slate-400">Hour <input type="range" min={5} max={21} step={0.5} value={hour} onChange={(e) => setHour(Number(e.target.value))} className="w-20 accent-amber-500" aria-label="Sun hour" /><span className="data-mono w-8 text-slate-300">{hour}:00</span></label>
             </>}
+            <button onClick={() => (walk ? setWalk(null) : walkTo(activeLevel))} aria-pressed={!!walk} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', walk ? 'bg-amber-500/25 text-amber-100 ring-amber-500/50' : 'bg-amber-500/10 text-amber-200 ring-amber-500/30 hover:bg-amber-500/20')}><Footprints className="h-3.5 w-3.5" /> {walk ? 'Exit walkthrough' : 'Walkthrough'}</button>
             <button onClick={snapshot} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-200 ring-1 ring-inset ring-emerald-500/40 hover:bg-emerald-500/25"><Camera className="h-3.5 w-3.5" /> Render PNG</button>
           </div>
           <div className="border-t border-edge/50" data-main-viewer>
             <Suspense fallback={<div style={{ height: 560 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-              <ComponentBuildingViewer model={model} cats={cats} style={style} clipY={clipY} sun={sun} isolateLevel={isolate ? activeLevel : null} selected={selectedId} onSelect={selectEl} height={560} />
+              <ComponentBuildingViewer model={model} cats={cats} style={style} clipY={clipY} sun={sun} furniture={furniture} walk={walk} onWalkEnd={() => setWalk(null)} isolateLevel={isolate ? activeLevel : null} selected={selectedId} onSelect={selectEl} height={560} />
             </Suspense>
           </div>
         </Card>
@@ -407,7 +426,7 @@ export default function BuildingExplorer() {
         <Card className="flex flex-col">
           <CardHeader icon={Layers} accent="violet" title="Model browser" subtitle="Every layer, substructure to finishes — toggle visibility per category." />
           <ul className="max-h-[300px] divide-y divide-edge/40 overflow-y-auto border-t border-edge/50">
-            {CATS.map((c) => {
+            {[...CATS, { key: 'furniture', label: 'Furnishings (FF&E)', count: () => furniture.items.length }].map((c) => {
               const n = c.count(model)
               const hiddenCat = !!cats[c.key]
               return (
@@ -465,7 +484,12 @@ export default function BuildingExplorer() {
             subtitle={roomRep
               ? 'A focused, isolated preview of this space with its real enclosure — re-programme the use, set a finish, rename and resize it; occupancy, daylight, egress and fit-out cost all recompute live.'
               : 'The whole floor, isolated and framed — totals, the use mix, and floor-wide re-finish / re-programme in one step. Click any room in the plan below to drill into it.'}
-            action={<button onClick={closeStudio} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><X className="h-3.5 w-3.5" /> Close</button>}
+            action={
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={() => (roomRep ? walkTo(roomRep.level, { x: selectedRoom!.center.x, z: selectedRoom!.center.z }) : walkTo(floorRep!.level))} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-200 ring-1 ring-inset ring-amber-500/30 hover:bg-amber-500/20"><Footprints className="h-3.5 w-3.5" /> {roomRep ? 'Walk into this room' : 'Walk this floor'}</button>
+                <button onClick={closeStudio} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><X className="h-3.5 w-3.5" /> Close</button>
+              </div>
+            }
           />
           <div className="grid gap-0 border-t border-edge/50 lg:grid-cols-[1.35fr_1fr]">
             {/* focused preview + render toolbar */}
@@ -481,7 +505,7 @@ export default function BuildingExplorer() {
               </div>
               <div data-studio-preview className="border-t border-edge/50">
                 <Suspense fallback={<div style={{ height: 420 }} className="grid place-items-center text-sm text-slate-500">Loading preview…</div>}>
-                  <ComponentBuildingViewer model={model} cats={cats} style={studioStyle} focus={studioFocus} selected={selectedId} onSelect={selectEl} height={420} />
+                  <ComponentBuildingViewer model={model} cats={cats} style={studioStyle} focus={studioFocus} furniture={furniture} selected={selectedId} onSelect={selectEl} height={420} />
                 </Suspense>
               </div>
             </div>
@@ -679,6 +703,33 @@ export default function BuildingExplorer() {
                 )}
                 <button onClick={() => selectEl(null)} className="mt-3 text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline">Clear selection</button>
               </div>
+            ) : selectedId?.startsWith('fur-') || selectedId?.startsWith('pat-') ? (
+              (() => {
+                const item = furniture.items.find((it) => it.id === selectedId)
+                const roomId = item?.roomId ?? selectedId.replace(/^pat-/, '')
+                const room = model.rooms.find((r) => r.id === roomId)
+                const cat = item ? FFE_CATALOG[item.kind] : null
+                return (
+                  <div>
+                    <div className="mb-3 flex items-center gap-2">
+                      <span className={cn('inline-flex h-8 w-8 items-center justify-center rounded-lg', ACCENT.amber.bg)}><Armchair className={cn('h-4 w-4', ACCENT.amber.text)} /></span>
+                      <div>
+                        <div className="text-sm font-semibold text-slate-100">{cat?.label ?? 'Floor finish patch'}</div>
+                        <div className="data-mono text-[11px] text-slate-500">{selectedId} · {room ? room.name : ''}</div>
+                      </div>
+                      <Badge variant="warn" className="ml-auto">FF&E</Badge>
+                    </div>
+                    <dl className="divide-y divide-edge/40 rounded-lg ring-1 ring-edge/50">
+                      {item && <div className="flex items-center justify-between gap-4 px-3 py-2"><dt className="text-xs text-slate-400">Catalog cost</dt><dd className="data-mono text-sm font-medium text-slate-200">${formatNumber(cat?.cost ?? 0)}</dd></div>}
+                      {item && <div className="flex items-center justify-between gap-4 px-3 py-2"><dt className="text-xs text-slate-400">Parts</dt><dd className="data-mono text-sm font-medium text-slate-200">{item.parts.length} solids</dd></div>}
+                      {room && <div className="flex items-center justify-between gap-4 px-3 py-2"><dt className="text-xs text-slate-400">Room</dt><dd className="data-mono text-sm font-medium text-slate-200">{room.name} · L{room.level}</dd></div>}
+                      {room && <div className="flex items-center justify-between gap-4 px-3 py-2"><dt className="text-xs text-slate-400">Room use</dt><dd className="data-mono text-sm font-medium text-slate-200">{room.use ?? 'office'}</dd></div>}
+                    </dl>
+                    {room && <button onClick={() => selectEl(room.id)} className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-violet-500/15 px-2.5 py-1 text-xs font-medium text-violet-200 ring-1 ring-inset ring-violet-500/40 hover:bg-violet-500/25"><LayoutGrid className="h-3.5 w-3.5" /> Open this room in the studio</button>}
+                    <p className="mt-2 text-[11px] text-slate-500">Furniture follows the room's programmed use — change the use in the Room Studio and the FF&E re-derives. Full takeoff in the Furnishings card below.</p>
+                  </div>
+                )
+              })()
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-2 py-8 text-center">
                 <MousePointerClick className="h-7 w-7 text-slate-600" />
@@ -724,6 +775,76 @@ export default function BuildingExplorer() {
               </tfoot>
             </table>
           </ScrollableTable>
+        </div>
+      </Card>
+
+      {/* furnishings (FF&E) — derived from each room's programmed use */}
+      <Card data-ffe>
+        <CardHeader
+          icon={Armchair} accent="amber" title="Furnishings (FF&E) — every room, decorated & priced"
+          subtitle="Workstations, conference tables, classroom ranks, beds & wardrobes, lab benches, shelving, racking and plant skids — derived from each room's programmed use, drawn in the 3D model (toggle in the Model browser, or walk through them) and priced from the catalog. Re-programme a room in the Room Studio and its furniture re-derives."
+          action={<button onClick={() => downloadText(`${slug(project.name)}-ffe.csv`, ffeCsv(furniture), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-4">
+          <StatTile label="FF&E items" value={formatNumber(furniture.total.items)} accent="amber" />
+          <StatTile label="FF&E budget" value={`$${formatNumber(furniture.total.cost)}`} accent="emerald" />
+          <StatTile label="Workstations" value={formatNumber(furniture.byKind.find((k) => k.kind === 'desk')?.count ?? 0)} accent="cyan" />
+          <StatTile label="Furnished levels" value={String(furniture.byLevel.length)} accent="violet" />
+        </div>
+        <div className="border-t border-edge/50 p-4">
+          <ScrollableTable label="FF&E by kind">
+            <table className="w-full min-w-[560px] text-left text-sm">
+              <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Item', 'Count', 'Unit cost ($)', 'Cost ($)'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && 'text-right')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {furniture.byKind.map((k) => (
+                  <tr key={k.kind} className="border-b border-edge/30">
+                    <td className="px-3 py-1.5 font-medium text-slate-200">{k.label}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(k.count)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(k.unitCost)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(k.cost)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot><tr className="border-t border-edge/60 text-sm font-semibold text-slate-200"><td className="px-3 py-2">Total</td><td className="data-mono px-3 py-2 text-right">{formatNumber(furniture.total.items)}</td><td /><td className="data-mono px-3 py-2 text-right">{formatNumber(furniture.total.cost)}</td></tr></tfoot>
+            </table>
+          </ScrollableTable>
+          <p className="mt-3 text-[11px] text-slate-500">Click any piece of furniture in the 3D model to inspect it. Catalog rates are indicative procurement figures; the CSV adds a per-level roll-up.</p>
+        </div>
+      </Card>
+
+      {/* hardware & fixings — the takeoff down to the nails */}
+      <Card data-fixings>
+        <CardHeader
+          icon={Hammer} accent="rose" title="Hardware & fixings — down to the nails"
+          subtitle={`Every secondary component the model implies, quantified: anchor bolts, beam connection bolts, partition tracks + studs, drywall screws, skirting nails, door hinges + locksets, curtain-wall clips, mullion brackets, ceiling hangers + grid, stair and railing fixings. ${fixings.headline}.`}
+          action={<button onClick={() => downloadText(`${slug(project.name)}-fixings.csv`, fastenersCsv(fixings), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-5">
+          <StatTile label="Total fixings" value={formatNumber(fixings.totals.fixings)} accent="rose" />
+          <StatTile label="Nails" value={formatNumber(fixings.totals.nails)} accent="amber" />
+          <StatTile label="Screws" value={formatNumber(fixings.totals.screws)} accent="cyan" />
+          <StatTile label="Bolts" value={formatNumber(fixings.totals.bolts)} accent="violet" />
+          <StatTile label="Hardware mass" value={`${formatNumber(Math.round(fixings.totals.massKg))} kg`} accent="emerald" />
+        </div>
+        <div className="border-t border-edge/50 p-4">
+          <ScrollableTable label="Fixings takeoff">
+            <table className="w-full min-w-[680px] text-left text-sm">
+              <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Item', 'Host', 'Qty', 'Unit', 'Mass (kg)', 'Rule of thumb'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', (i === 2 || i === 4) && 'text-right')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {fixings.rows.map((r) => (
+                  <tr key={r.id} className="border-b border-edge/30">
+                    <td className="px-3 py-1.5 font-medium text-slate-200">{r.item}</td>
+                    <td className="px-3 py-1.5 text-slate-400">{r.host}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(r.qty)}</td>
+                    <td className="px-3 py-1.5 text-slate-400">{r.unit}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(r.massKg)}</td>
+                    <td className="px-3 py-1.5 text-[11px] text-slate-500">{r.rule}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollableTable>
+          <p className="mt-3 text-[11px] text-slate-500">Quantities re-derive live as you edit the model — add a partition and the studs, screws and skirting nails follow. Rules of thumb are indicative procurement rates, not a connection design.</p>
         </div>
       </Card>
 
