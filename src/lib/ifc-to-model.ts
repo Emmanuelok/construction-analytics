@@ -115,9 +115,9 @@ export function ifcToModel(res: IfcGeometryResult, opts: { storeyHeight?: number
   const totalHeight = Math.max(0.6, SV(oMax[1] - y0))
   const footprint = r1(Math.max((oMax[0] - oMin[0]) * PLATE_SCALE, (oMax[2] - oMin[2]) * PLATE_SCALE))
   const model: BuildingModel = {
-    slabs, columns, beams, walls, glazing, doors, mullions: [], partitions: [], interiorDoors: [], stairs: [], core: null, roof: null, rooms,
+    slabs, columns, beams, walls, glazing, doors, mullions: [], partitions: [], interiorDoors: [], stairs: [], foundations: [], groundBeams: [], ceilings: [], floorFinishes: [], parapets: [], core: null, roof: null, rooms,
     totalHeight, footprint,
-    counts: { storeys: S, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: 0, partitions: 0, interiorDoors: 0, stairs: 0, slabs: slabs.length, rooms: rooms.length },
+    counts: { storeys: S, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: 0, partitions: 0, interiorDoors: 0, stairs: 0, foundations: 0, groundBeams: 0, ceilings: 0, finishes: 0, parapets: 0, slabs: slabs.length, rooms: rooms.length },
   }
   const labels: IfcLabels = {}
   for (const e of els) labels[`ifc-${e.expressID}`] = { name: e.name?.trim() || undefined, ifcType: e.type, props: res.props?.[e.expressID] }
@@ -131,5 +131,5 @@ function unionXZ(els: ElBox[]) {
   return { x0, x1, z0, z1 }
 }
 function emptyModel(): BuildingModel {
-  return { slabs: [], columns: [], beams: [], walls: [], glazing: [], doors: [], mullions: [], partitions: [], interiorDoors: [], stairs: [], core: null, roof: null, rooms: [], totalHeight: 1, footprint: 1, counts: { storeys: 1, columns: 0, beams: 0, windows: 0, doors: 0, walls: 0, mullions: 0, partitions: 0, interiorDoors: 0, stairs: 0, slabs: 0, rooms: 0 } }
+  return { slabs: [], columns: [], beams: [], walls: [], glazing: [], doors: [], mullions: [], partitions: [], interiorDoors: [], stairs: [], foundations: [], groundBeams: [], ceilings: [], floorFinishes: [], parapets: [], core: null, roof: null, rooms: [], totalHeight: 1, footprint: 1, counts: { storeys: 1, columns: 0, beams: 0, windows: 0, doors: 0, walls: 0, mullions: 0, partitions: 0, interiorDoors: 0, stairs: 0, foundations: 0, groundBeams: 0, ceilings: 0, finishes: 0, parapets: 0, slabs: 0, rooms: 0 } }
 }

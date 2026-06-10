@@ -18,9 +18,14 @@ const DEF_AZ = Math.PI * 0.26, DEF_POLAR = Math.PI * 0.36
  * an instanced perimeter column grid, an instanced glass curtain-wall façade and a
  * core — so it reads as an actual building. Trades toggle on/off; orbit/zoom/
  * keyboard; graceful WebGL fallback. */
+export type ViewerStyle = 'realistic' | 'shaded' | 'mono' | 'wire' | 'xray'
+
 export function ComponentBuildingViewer({
   model,
   hidden = {},
+  cats,
+  style = 'realistic',
+  clipY = null,
   sun,
   shadows = true,
   isolateLevel = null,
@@ -30,6 +35,9 @@ export function ComponentBuildingViewer({
 }: {
   model: BuildingModel
   hidden?: { glazing?: boolean; structure?: boolean; slabs?: boolean; facade?: boolean; interior?: boolean }
+  cats?: Record<string, boolean> // granular per-category hidden map (overrides `hidden` groups)
+  style?: ViewerStyle // Revit-style visual style
+  clipY?: number | null // horizontal section box: clip everything above this scene height
   sun?: { azimuth: number; altitude: number }
   shadows?: boolean
   isolateLevel?: number | null
@@ -39,14 +47,18 @@ export function ComponentBuildingViewer({
 }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
-  const propsRef = useRef({ model, hidden, sun, shadows, isolateLevel, selected, onSelect })
-  propsRef.current = { model, hidden, sun, shadows, isolateLevel, selected, onSelect }
+  const propsRef = useRef({ model, hidden, cats, style, clipY, sun, shadows, isolateLevel, selected, onSelect })
+  propsRef.current = { model, hidden, cats, style, clipY, sun, shadows, isolateLevel, selected, onSelect }
 
   const rebuildRef = useRef<(() => void) | null>(null)
   const sunFnRef = useRef<(() => void) | null>(null)
   const highlightRef = useRef<(() => void) | null>(null)
   const frameRef = useRef<(() => void) | null>(null)
-  useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs, hidden.facade, hidden.interior, isolateLevel])
+  const styleRef = useRef<(() => void) | null>(null)
+  const clipRef = useRef<(() => void) | null>(null)
+  useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs, hidden.facade, hidden.interior, cats, isolateLevel])
+  useEffect(() => { styleRef.current?.() }, [style])
+  useEffect(() => { clipRef.current?.() }, [clipY])
   useEffect(() => { sunFnRef.current?.() }, [sun?.azimuth, sun?.altitude, shadows])
   useEffect(() => { highlightRef.current?.() }, [selected, model])
   // re-fit only when the envelope or isolated level changes (not on every element edit)
@@ -59,8 +71,9 @@ export function ComponentBuildingViewer({
     const width = mount.clientWidth || 600
 
     let renderer: THREE.WebGLRenderer
-    try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }) }
+    try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true }) }
     catch { setFailed(true); return }
+    renderer.localClippingEnabled = true
 
     const scene = new THREE.Scene()
     scene.background = new THREE.Color('#0a0f1c')
@@ -98,6 +111,11 @@ export function ComponentBuildingViewer({
     const glassMat = new THREE.MeshStandardMaterial({ color: '#7dd3fc', transparent: true, opacity: 0.32, roughness: 0.06, metalness: 0.5, side: THREE.DoubleSide, depthWrite: false })
     const doorMat = new THREE.MeshStandardMaterial({ color: '#1f2a3a', transparent: true, opacity: 0.78, roughness: 0.2, metalness: 0.4, side: THREE.DoubleSide })
     const mullionMat = new THREE.MeshStandardMaterial({ color: '#2b3647', roughness: 0.4, metalness: 0.5 })
+    const fdnMat = new THREE.MeshStandardMaterial({ color: '#3f4a5c', roughness: 0.95, metalness: 0.02 })
+    const gbMat = new THREE.MeshStandardMaterial({ color: '#46536a', roughness: 0.85, metalness: 0.05 })
+    const ceilMat = new THREE.MeshStandardMaterial({ color: '#cfd6e2', roughness: 0.95, metalness: 0, side: THREE.DoubleSide })
+    const finMat = new THREE.MeshStandardMaterial({ color: '#cab27e', roughness: 0.8, metalness: 0.02 })
+    const allMats: THREE.MeshStandardMaterial[] = []
     const unitBox = new THREE.BoxGeometry(1, 1, 1)
     const unitPlane = new THREE.PlaneGeometry(1, 1)
 
@@ -240,42 +258,77 @@ export function ComponentBuildingViewer({
 
     const build = () => {
       clear()
-      const { model: m, hidden: h, isolateLevel: iso } = propsRef.current
+      const { model: m, hidden: h, cats, isolateLevel: iso } = propsRef.current
       const storeys = m.counts.storeys
       const isolating = iso != null
       const show = (lvl?: number) => !isolating || lvl === iso
+      // visibility: granular per-category map when given, else the grouped toggles
+      const vis = (cat: string, grp: 'slabs' | 'structure' | 'facade' | 'glazing' | 'interior') => (cats ? !cats[cat] : !h[grp])
       const colIds = idsFor(m.columns, 'col'), panIds = idsFor(m.glazing, 'pan'), wallIds = idsFor(m.walls, 'wall'), doorIds = idsFor(m.doors, 'door'), beamIds = idsFor(m.beams, 'beam'), partIds = idsFor(m.partitions, 'part'), idoorIds = idsFor(m.interiorDoors, 'idoor')
 
-      if (!h.slabs) {
-        for (const s of m.slabs) if (show(s.level)) plate(s, slabMat, s.id ?? `floor-${s.level ?? 0}`)
-        if (m.roof && (!isolating || iso >= storeys)) plate(m.roof, slabMat, m.roof.id ?? 'roof')
+      if (vis('slabs', 'slabs')) for (const s of m.slabs) if (show(s.level)) plate(s, slabMat, s.id ?? `floor-${s.level ?? 0}`)
+      if (vis('roof', 'slabs') && m.roof && (!isolating || iso >= storeys)) plate(m.roof, slabMat, m.roof.id ?? 'roof')
+      if (vis('columns', 'structure')) boxInst(m.columns.map((c, i) => ({ c, id: c.id ?? colIds[i] })).filter(({ c }) => show(c.level)), colMat)
+      if (vis('beams', 'structure')) beamInst(m.beams.map((b, i) => ({ b, id: b.id ?? beamIds[i] })).filter(({ b }) => show(b.level)), beamMat)
+      if (vis('core', 'structure') && m.core && !(isolating && iso >= storeys)) {
+        let cy = m.core.y, ch = m.core.h
+        if (isolating) { const sceneSh = m.totalHeight / Math.max(1, storeys); cy = iso * sceneSh + sceneSh / 2; ch = sceneSh * 0.92 }
+        const cm = new THREE.Mesh(unitBox, coreMat); cm.scale.set(m.core.w, ch, m.core.d); cm.position.set(m.core.x, cy, m.core.z); cm.castShadow = true; cm.receiveShadow = true; cm.userData.id = m.core.id ?? 'core'; group.add(cm); objects.push(cm)
       }
-      if (!h.structure) {
-        boxInst(m.columns.map((c, i) => ({ c, id: c.id ?? colIds[i] })).filter(({ c }) => show(c.level)), colMat)
-        beamInst(m.beams.map((b, i) => ({ b, id: b.id ?? beamIds[i] })).filter(({ b }) => show(b.level)), beamMat)
-        if (m.core && !(isolating && iso >= storeys)) {
-          let cy = m.core.y, ch = m.core.h
-          if (isolating) { const sceneSh = m.totalHeight / Math.max(1, storeys); cy = iso * sceneSh + sceneSh / 2; ch = sceneSh * 0.92 }
-          const cm = new THREE.Mesh(unitBox, coreMat); cm.scale.set(m.core.w, ch, m.core.d); cm.position.set(m.core.x, cy, m.core.z); cm.castShadow = true; cm.receiveShadow = true; cm.userData.id = m.core.id ?? 'core'; group.add(cm); objects.push(cm)
-        }
+      // substructure (footings + ground beams) — drop the ground plane to reveal it
+      const showFdn = vis('foundations', 'structure') && m.foundations.length > 0 && !isolating
+      if (showFdn) {
+        boxInst(m.foundations.map((c) => ({ c, id: c.id })), fdnMat)
+        beamInst(m.groundBeams.map((b, i) => ({ b, id: b.id ?? `gb-${i}` })), gbMat)
       }
-      if (!h.facade) {
-        planeInst(m.walls.map((g, i) => ({ g, id: g.id ?? wallIds[i] })).filter(({ g }) => show(g.level)), wallMat)
-        boxInst(m.mullions.filter((c) => show(c.level)).map((c) => ({ c })), mullionMat) // framing — visual only
-      }
-      if (!h.glazing) {
-        planeInst(m.glazing.map((g, i) => ({ g, id: g.id ?? panIds[i] })).filter(({ g }) => show(g.level)), glassMat, { shadow: false, outset: 0.02 })
-        planeInst(m.doors.map((g, i) => ({ g, id: g.id ?? doorIds[i] })).filter(({ g }) => show(g.level)), doorMat, { outset: 0.02 })
-      }
-      if (!h.interior) {
-        planeInst(m.partitions.map((g, i) => ({ g, id: g.id ?? partIds[i] })).filter(({ g }) => show(g.level)), partMat)
-        planeInst(m.interiorDoors.map((g, i) => ({ g, id: g.id ?? idoorIds[i] })).filter(({ g }) => show(g.level)), idoorMat, { outset: 0.02 })
-        boxInst(m.stairs.flatMap((s) => [...s.treads, ...s.landings, ...s.rails].map((t) => ({ c: t, id: s.id }))).filter(({ c }) => show(c.level)), stairMat)
-      }
-      applySun(); applyHighlight()
-      ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, windows: m.counts.windows, glazing: m.counts.windows, beams: m.counts.beams, doors: m.counts.doors, slabs: m.counts.slabs, partitions: m.counts.partitions, interiorDoors: m.counts.interiorDoors, stairs: m.counts.stairs }
+      const fdnBottom = m.foundations.length ? Math.min(...m.foundations.map((c) => c.y - c.h / 2)) : 0
+      ground.position.y = showFdn ? fdnBottom - 0.06 : -0.02
+      grid.position.y = ground.position.y + 0.01
+      if (vis('walls', 'facade')) planeInst(m.walls.map((g, i) => ({ g, id: g.id ?? wallIds[i] })).filter(({ g }) => show(g.level)), wallMat)
+      if (vis('mullions', 'facade')) boxInst(m.mullions.filter((c) => show(c.level)).map((c) => ({ c })), mullionMat) // framing — visual only
+      if (vis('parapets', 'facade')) planeInst(m.parapets.map((g, i) => ({ g, id: g.id ?? `par-${i}` })).filter(() => !isolating || iso >= storeys - 1), wallMat)
+      if (vis('windows', 'glazing')) planeInst(m.glazing.map((g, i) => ({ g, id: g.id ?? panIds[i] })).filter(({ g }) => show(g.level)), glassMat, { shadow: false, outset: 0.02 })
+      if (vis('doors', 'glazing')) planeInst(m.doors.map((g, i) => ({ g, id: g.id ?? doorIds[i] })).filter(({ g }) => show(g.level)), doorMat, { outset: 0.02 })
+      if (vis('partitions', 'interior')) planeInst(m.partitions.map((g, i) => ({ g, id: g.id ?? partIds[i] })).filter(({ g }) => show(g.level)), partMat)
+      if (vis('interiorDoors', 'interior')) planeInst(m.interiorDoors.map((g, i) => ({ g, id: g.id ?? idoorIds[i] })).filter(({ g }) => show(g.level)), idoorMat, { outset: 0.02 })
+      if (vis('stairs', 'interior')) boxInst(m.stairs.flatMap((s) => [...s.treads, ...s.landings, ...s.rails].map((t) => ({ c: t, id: s.id }))).filter(({ c }) => show(c.level)), stairMat)
+      if (vis('ceilings', 'interior')) for (const p of m.ceilings) if (show(p.level)) plate(p, ceilMat, p.id ?? `ceil-${p.level ?? 0}`)
+      if (vis('finishes', 'interior')) for (const p of m.floorFinishes) if (show(p.level)) plate(p, finMat, p.id ?? `fin-${p.level ?? 0}`)
+      applySun(); applyHighlight(); applyStyle(); applyClip()
+      ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, windows: m.counts.windows, glazing: m.counts.windows, beams: m.counts.beams, doors: m.counts.doors, slabs: m.counts.slabs, partitions: m.counts.partitions, interiorDoors: m.counts.interiorDoors, stairs: m.counts.stairs, foundations: m.counts.foundations, ceilings: m.counts.ceilings, finishes: m.counts.finishes, parapets: m.counts.parapets }
+      ;(mount as HTMLElement & { __studio?: object }).__studio = { style: propsRef.current.style, clipY: propsRef.current.clipY ?? null, cats: propsRef.current.cats ?? null }
     }
     rebuildRef.current = build
+
+    // ---- Revit-style visual styles + section box (shared by every material) ----
+    allMats.push(slabMat, colMat, beamMat, coreMat, wallMat, partMat, idoorMat, stairMat, glassMat, doorMat, mullionMat, fdnMat, gbMat, ceilMat, finMat)
+    for (const mt of allMats) mt.userData.base = { color: mt.color.getHex(), transparent: mt.transparent, opacity: mt.opacity, depthWrite: mt.depthWrite }
+    const clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0)
+    const applyStyle = () => {
+      const st = propsRef.current.style ?? 'realistic'
+      for (const mt of allMats) {
+        const base = mt.userData.base as { color: number; transparent: boolean; opacity: number; depthWrite: boolean }
+        mt.wireframe = st === 'wire'
+        if (st === 'xray') { mt.transparent = true; mt.opacity = 0.18; mt.depthWrite = false }
+        else { mt.transparent = base.transparent; mt.opacity = base.opacity; mt.depthWrite = base.depthWrite }
+        mt.color.setHex(st === 'mono' ? 0xe8edf4 : base.color)
+        mt.needsUpdate = true
+      }
+      applySun() // restore the sun for the style, then drop shadows on the flat styles
+      if (st !== 'realistic' && st !== 'shaded') sunLight.castShadow = false
+      ;(mount as HTMLElement & { __studio?: { style?: string } }).__studio = { ...((mount as HTMLElement & { __studio?: object }).__studio ?? {}), style: st }
+    }
+    styleRef.current = applyStyle
+    const applyClip = () => {
+      const v = propsRef.current.clipY
+      if (v == null) { for (const mt of allMats) mt.clippingPlanes = null }
+      else { clipPlane.constant = v; for (const mt of allMats) mt.clippingPlanes = [clipPlane] }
+      for (const mt of allMats) mt.needsUpdate = true
+      ;(mount as HTMLElement & { __studio?: { clipY?: number | null } }).__studio = { ...((mount as HTMLElement & { __studio?: object }).__studio ?? {}), clipY: v ?? null }
+    }
+    clipRef.current = applyClip
+    // a render snapshot (PNG data URL) — the studio's "render image" tool
+    ;(mount as HTMLElement & { __snapshot?: () => string }).__snapshot = () => { renderer.render(scene, camera); return renderer.domElement.toDataURL('image/png') }
 
     // selection highlight — a wireframe box sized/oriented to the picked element
     const applyHighlight = () => {
@@ -363,7 +416,7 @@ export function ComponentBuildingViewer({
     return () => {
       cancelAnimationFrame(raf); ro.disconnect()
       el.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); el.removeEventListener('contextmenu', onCtx); mount.removeEventListener('keydown', onKey)
-      clear(); unitBox.dispose(); unitPlane.dispose(); [slabMat, colMat, beamMat, coreMat, wallMat, partMat, idoorMat, stairMat, glassMat, doorMat, mullionMat].forEach((m) => m.dispose())
+      clear(); unitBox.dispose(); unitPlane.dispose(); [slabMat, colMat, beamMat, coreMat, wallMat, partMat, idoorMat, stairMat, glassMat, doorMat, mullionMat, fdnMat, gbMat, ceilMat, finMat].forEach((m) => m.dispose())
       hlBox.dispose(); hlEdgesGeo.dispose(); hlFillMat.dispose(); hlLineMat.dispose()
       ground.geometry.dispose(); (ground.material as THREE.Material).dispose()
       renderer.dispose(); if (el.parentNode === mount) mount.removeChild(el)

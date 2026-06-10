@@ -151,6 +151,21 @@ export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: n
   m.doors.forEach((q, i) => panel(q, 'DOOR', q.id ?? `D-${pad(i)}`, q.level ?? 0, 0.1))
   m.interiorDoors.forEach((q, i) => panel(q, 'DOOR', q.id ?? `ID-${pad(i)}`, q.level ?? 0, 0.05))
   m.stairs.forEach((s) => stair(s, s.id))
+  // substructure
+  m.foundations.forEach((c, i) => {
+    const e = add(`IFCFOOTING('${guid()}',#${OWNER},'${esc(c.id ?? `FDN-${pad(i)}`)}',$,$,#${idP},#${shapeOf(boxSolid(c))},'${esc(c.id ?? `FDN-${pad(i)}`)}',.${c.id === 'fdn-core' ? 'FOOTING_BEAM' : 'PAD_FOOTING'}.)`)
+    inStorey(e, 0); pset(e, c.id ?? `FDN-${pad(i)}`, 'Substructure', [['Width', c.w * LEN], ['Depth', c.h * sh]])
+  })
+  m.groundBeams.forEach((b, i) => beam(b, b.id ?? `GB-${pad(i)}`, 0))
+  // finishes (coverings) + the parapet
+  const covering = (p: Plate, mark: string, pred: 'FLOORING' | 'CEILING', lvl: number) => {
+    const solid = extrude(arbProfile(p.polygon), place(ifc(0, p.y, 0), null, null), Math.max(0.012, p.thickness * sh))
+    const e = add(`IFCCOVERING('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shapeOf(solid)},'${esc(mark)}',.${pred}.)`)
+    inStorey(e, lvl); pset(e, mark, lvlName(lvl), [['Thickness', p.thickness * sh]])
+  }
+  m.floorFinishes.forEach((p) => covering(p, p.id ?? `FF-${p.level}`, 'FLOORING', p.level ?? 0))
+  m.ceilings.forEach((p) => covering(p, p.id ?? `CLG-${p.level}`, 'CEILING', p.level ?? 0))
+  m.parapets.forEach((q, i) => panel(q, 'WALL', q.id ?? `PAR-${pad(i)}`, Math.max(0, storeys - 1), 0.18, 'PARAPET'))
   if (m.core) { const c = m.core; const solid = vSolid(rect(c.w * LEN, c.d * LEN), ifc(c.x, c.y - c.h / 2, c.z), [1, 0, 0], c.h * sh); const e = add(`IFCBUILDINGELEMENTPROXY('${guid()}',#${OWNER},'Core',$,$,#${idP},#${shapeOf(solid)},'CORE',$)`); inStorey(e, 0); pset(e, 'CORE', 'All levels', [['Width', c.w * LEN]]) }
   // interior spaces (IfcSpace) — extrude each room up to a clear height
   for (const r of m.rooms) {

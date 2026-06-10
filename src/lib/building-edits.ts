@@ -60,12 +60,18 @@ export function applyEdits(m: BuildingModel, ed: BuildingEdits): BuildingModel {
   const interiorDoors = keep(m.interiorDoors).map((g) => editQuad(g, ed.edits[g.id ?? ''])).concat(addedDoors)
   const stairs = keep(m.stairs).concat((ed.addedStairs ?? []).filter((s) => !del.has(s.id ?? ''))) // stairs can be added (a shaft) or deleted
   const slabs = keep(m.slabs).map((s) => editPlate(s, ed.edits[s.id ?? '']))
+  const foundations = keep(m.foundations).map((c) => editBox(c, ed.edits[c.id ?? '']))
+  const groundBeams = keep(m.groundBeams).map((b) => editBeam(b, ed.edits[b.id ?? '']))
+  const ceilings = keep(m.ceilings).map((s) => editPlate(s, ed.edits[s.id ?? '']))
+  const floorFinishes = keep(m.floorFinishes).map((s) => editPlate(s, ed.edits[s.id ?? '']))
+  const parapets = keep(m.parapets).map((g) => editQuad(g, ed.edits[g.id ?? '']))
   const core = m.core && !del.has('core') ? editBox(m.core, ed.edits['core']) : null
   const roof = m.roof && !del.has('roof') ? editPlate(m.roof, ed.edits['roof']) : null
   return {
-    slabs, columns, beams, walls, glazing, doors, mullions, partitions, interiorDoors, stairs, core, roof, rooms: m.rooms,
+    slabs, columns, beams, walls, glazing, doors, mullions, partitions, interiorDoors, stairs,
+    foundations, groundBeams, ceilings, floorFinishes, parapets, core, roof, rooms: m.rooms,
     totalHeight: m.totalHeight, footprint: m.footprint,
-    counts: { storeys: m.counts.storeys, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: mullions.length, partitions: partitions.length, interiorDoors: interiorDoors.length, stairs: stairs.length, slabs: slabs.length, rooms: m.counts.rooms },
+    counts: { storeys: m.counts.storeys, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: mullions.length, partitions: partitions.length, interiorDoors: interiorDoors.length, stairs: stairs.length, foundations: foundations.length, groundBeams: groundBeams.length, ceilings: ceilings.length, finishes: floorFinishes.length, parapets: parapets.length, slabs: slabs.length, rooms: m.counts.rooms },
   }
 }
 

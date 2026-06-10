@@ -18,7 +18,7 @@ const AREA = LEN * LEN
 const r1 = (n: number) => Math.round(n * 10) / 10
 const r2 = (n: number) => Math.round(n * 100) / 100
 
-export type ElementCategory = 'Floor' | 'Column' | 'Beam' | 'Wall' | 'Partition' | 'Window' | 'Door' | 'Interior Door' | 'Room' | 'Stair' | 'Core' | 'Roof'
+export type ElementCategory = 'Floor' | 'Column' | 'Beam' | 'Wall' | 'Partition' | 'Window' | 'Door' | 'Interior Door' | 'Room' | 'Stair' | 'Foundation' | 'Ground Beam' | 'Ceiling' | 'Finish' | 'Parapet' | 'Core' | 'Roof'
 export type ScheduleCol = { key: string; label: string; unit?: string; numeric?: boolean; total?: boolean }
 
 export type BuildingElement = {
@@ -56,7 +56,7 @@ export type BuildingExplosion = {
   schedules: Schedule[]
   summary: {
     elements: number; storeys: number; columns: number; panels: number
-    beams: number; windows: number; doors: number; walls: number; partitions: number; interiorDoors: number; stairs: number; rooms: number; netArea: number
+    beams: number; windows: number; doors: number; walls: number; partitions: number; interiorDoors: number; stairs: number; foundations: number; ceilings: number; finishes: number; rooms: number; netArea: number
     gfa: number; grossVolume: number; facadeArea: number; height: number
     concreteVolume: number; coreVolume: number
   }
@@ -144,6 +144,19 @@ const INT_DOOR_COLS: ScheduleCol[] = [
   { key: 'area', label: 'Leaf area', unit: 'm²', numeric: true, total: true },
 ]
 
+const FOUNDATION_COLS: ScheduleCol[] = [
+  { key: 'mark', label: 'Mark' },
+  { key: 'type', label: 'Type' },
+  { key: 'plan', label: 'Plan', unit: 'm', numeric: true },
+  { key: 'depth', label: 'Depth', unit: 'm', numeric: true },
+  { key: 'volume', label: 'Concrete', unit: 'm³', numeric: true, total: true },
+]
+const COVERING_COLS: ScheduleCol[] = [
+  { key: 'mark', label: 'Mark' },
+  { key: 'level', label: 'Level' },
+  { key: 'area', label: 'Area', unit: 'm²', numeric: true, total: true },
+  { key: 'thickness', label: 'Thickness', unit: 'mm', numeric: true },
+]
 const ROOM_COLS: ScheduleCol[] = [
   { key: 'mark', label: 'Room' },
   { key: 'level', label: 'Level' },
@@ -165,6 +178,8 @@ export const levelDoors = (m: BuildingModel, level: number): Quad[] => m.doors.f
 export const levelPartitions = (m: BuildingModel, level: number): Quad[] => m.partitions.filter((x) => x.level === level)
 export const levelInteriorDoors = (m: BuildingModel, level: number): Quad[] => m.interiorDoors.filter((x) => x.level === level)
 export const levelStairs = (m: BuildingModel, level: number): Stair[] => m.stairs.filter((x) => x.level === level)
+export const levelCeilings = (m: BuildingModel, level: number): Plate[] => m.ceilings.filter((x) => x.level === level)
+export const levelFinishes = (m: BuildingModel, level: number): Plate[] => m.floorFinishes.filter((x) => x.level === level)
 
 const plateBBox = (poly: Pt[]) => {
   const xs = poly.map((p) => p.x), zs = poly.map((p) => p.z)
@@ -283,6 +298,41 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
       data: { mark, level: lvl, flights: s.flights.length, risers: s.risers, rise: r2(chk.riseM), going: r2(chk.goingM), width: r2(chk.widthM), pitch: r1(chk.pitch), rise_total: r2((s.top - s.base) * sh), code: chk.ok ? 'Pass' : chk.issues.join('; ') } })
   }
 
+  // substructure: footings + ground beams
+  m.foundations.forEach((c, i) => {
+    const mark = c.id === 'fdn-core' ? 'FDN-CORE' : `FDN-${pad(i + 1)}`
+    const plan = r2(Math.max(c.w, c.d) * LEN), depth = r2(c.h * sh)
+    elements.push({ id: c.id ?? `fdn-${i}`, category: 'Foundation', level: 0, levelName: 'Substructure', mark, title: c.id === 'fdn-core' ? 'Core raft foundation' : `Pad footing ${mark}`, cols: FOUNDATION_COLS,
+      data: { mark, type: c.id === 'fdn-core' ? 'Raft' : 'Pad', plan, depth, volume: r2(c.w * LEN * (c.d * LEN) * depth) } })
+  })
+  m.groundBeams.forEach((bm, i) => {
+    const length = dist(bm.a, bm.b) * LEN, depth = r2(bm.depth * sh)
+    const mark = `GB-${pad(i + 1)}`
+    elements.push({ id: bm.id ?? `gb-${i}`, category: 'Ground Beam', level: 0, levelName: 'Substructure', mark, title: `Ground beam ${mark}`, cols: BEAM_COLS,
+      data: { mark, level: 'Substructure', length: r2(length), depth, width: 0.35, volume: r2(length * depth * 0.35), bearing: bearing(bm.a, bm.b) } })
+  })
+  // finishes: floor build-ups, suspended ceilings, the roof parapet
+  for (const p of m.floorFinishes) {
+    const lvl = levelName(p.level ?? 0, storeys)
+    const area = (polygonArea(p.polygon) - (p.hole ? polygonArea(p.hole) : 0)) * AREA
+    const mark = `FF-${(p.level ?? 0) === 0 ? 'G' : pad(p.level ?? 0)}`
+    elements.push({ id: p.id ?? `fin-${p.level}`, category: 'Finish', level: p.level ?? 0, levelName: lvl, mark, title: `Floor finish ${mark}`, cols: COVERING_COLS,
+      data: { mark, level: lvl, area: r1(area), thickness: Math.round(p.thickness * sh * 1000) } })
+  }
+  for (const p of m.ceilings) {
+    const lvl = levelName(p.level ?? 0, storeys)
+    const area = (polygonArea(p.polygon) - (p.hole ? polygonArea(p.hole) : 0)) * AREA
+    const mark = `CLG-${(p.level ?? 0) === 0 ? 'G' : pad(p.level ?? 0)}`
+    elements.push({ id: p.id ?? `ceil-${p.level}`, category: 'Ceiling', level: p.level ?? 0, levelName: lvl, mark, title: `Suspended ceiling ${mark}`, cols: COVERING_COLS,
+      data: { mark, level: lvl, area: r1(area), thickness: Math.round(p.thickness * sh * 1000) } })
+  }
+  m.parapets.forEach((g, i) => {
+    const length = dist(g.a, g.b) * LEN, height = g.h * sh
+    const mark = `PAR-${pad(i + 1)}`
+    elements.push({ id: g.id ?? `par-${i}`, category: 'Parapet', level: storeys, levelName: 'Roof', mark, title: `Parapet ${mark}`, cols: PARTITION_COLS,
+      data: { mark, level: 'Roof', length: r2(length), height: r2(height), area: r2(length * height) } })
+  })
+
   // core
   if (m.core) {
     const footprint = m.core.w * m.core.d * AREA
@@ -322,6 +372,7 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
   const ofCat = (cat: ElementCategory) => elements.filter((e) => e.category === cat)
   const floorEls = elements.filter((e) => e.category === 'Floor' || e.category === 'Roof')
   const colEls = ofCat('Column'), beamEls = ofCat('Beam'), winEls = ofCat('Window'), doorEls = ofCat('Door'), wallEls = ofCat('Wall'), partEls = ofCat('Partition'), idoorEls = ofCat('Interior Door'), roomEls = ofCat('Room'), stairEls = ofCat('Stair'), coreEls = ofCat('Core')
+  const fdnEls = ofCat('Foundation'), gbEls = ofCat('Ground Beam'), finEls = ofCat('Finish'), ceilEls = ofCat('Ceiling'), parEls = ofCat('Parapet')
   const schedules: Schedule[] = [
     sched('Floors & Roof', 'Floor', FLOOR_COLS, floorEls),
     sched('Rooms', 'Room', ROOM_COLS, roomEls),
@@ -333,6 +384,11 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
     sched('Partitions', 'Partition', PARTITION_COLS, partEls),
     sched('Interior doors', 'Interior Door', INT_DOOR_COLS, idoorEls),
     sched('Stairs', 'Stair', STAIR_COLS, stairEls),
+    sched('Foundations', 'Foundation', FOUNDATION_COLS, fdnEls),
+    sched('Ground beams', 'Ground Beam', BEAM_COLS, gbEls),
+    sched('Floor finishes', 'Finish', COVERING_COLS, finEls),
+    sched('Ceilings', 'Ceiling', COVERING_COLS, ceilEls),
+    sched('Parapets', 'Parapet', PARTITION_COLS, parEls),
   ].filter((s) => s.rows.length)
   if (coreEls.length) schedules.push(sched('Core', 'Core', CORE_COLS, coreEls))
 
@@ -347,6 +403,7 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
       elements: elements.length, storeys, columns: colEls.length, panels: winEls.length,
       beams: beamEls.length, windows: winEls.length, doors: doorEls.length, walls: wallEls.length,
       partitions: partEls.length, interiorDoors: idoorEls.length, stairs: stairEls.length,
+      foundations: fdnEls.length + gbEls.length, ceilings: ceilEls.length, finishes: finEls.length,
       rooms: roomEls.length, netArea: r1(roomEls.reduce((s, e) => s + Number(e.data.area), 0)),
       gfa: r1(gfa), grossVolume: r1(grossVolume), facadeArea: r1(facadeArea), height: r1(storeys * sh),
       concreteVolume: r1(concreteVolume), coreVolume: coreEls.length ? Number(coreEls[0].data.volume) : 0,
@@ -427,6 +484,11 @@ export function findElementGeom(m: BuildingModel, id: string): ElementGeom | nul
   for (const g of m.partitions) if (g.id === id) return quadGeom(g, 0.1)
   for (const g of m.interiorDoors) if (g.id === id) return quadGeom(g, 0.12)
   for (const s of m.stairs) if (s.id === id) return { center: { x: s.x, y: (s.base + s.top) / 2, z: s.z }, size: { x: s.w, y: s.top - s.base, z: s.d } }
+  for (const c of m.foundations) if (c.id === id) return boxGeom(c)
+  for (const s2 of m.ceilings) if (s2.id === id) return plateGeom(s2)
+  for (const s2 of m.floorFinishes) if (s2.id === id) return plateGeom(s2)
+  for (const g of m.parapets) if (g.id === id) return quadGeom(g, 0.1)
+  for (const b of m.groundBeams) if (b.id === id) return { center: { x: (b.a.x + b.b.x) / 2, y: b.y, z: (b.a.z + b.b.z) / 2 }, size: { x: dist(b.a, b.b), y: b.depth, z: b.width }, dir: { x: b.b.x - b.a.x, z: b.b.z - b.a.z } }
   for (const b of m.beams) if (b.id === id) return { center: { x: (b.a.x + b.b.x) / 2, y: b.y, z: (b.a.z + b.b.z) / 2 }, size: { x: dist(b.a, b.b), y: b.depth, z: b.width }, dir: { x: b.b.x - b.a.x, z: b.b.z - b.a.z } }
   return null
 }
