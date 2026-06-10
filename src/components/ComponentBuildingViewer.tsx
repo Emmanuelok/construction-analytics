@@ -26,6 +26,7 @@ export function ComponentBuildingViewer({
   cats,
   style = 'realistic',
   clipY = null,
+  focus = null,
   sun,
   shadows = true,
   isolateLevel = null,
@@ -38,6 +39,7 @@ export function ComponentBuildingViewer({
   cats?: Record<string, boolean> // granular per-category hidden map (overrides `hidden` groups)
   style?: ViewerStyle // Revit-style visual style
   clipY?: number | null // horizontal section box: clip everything above this scene height
+  focus?: { level: number; minX: number; maxX: number; minZ: number; maxZ: number } | null // isolate + frame one room/floor region
   sun?: { azimuth: number; altitude: number }
   shadows?: boolean
   isolateLevel?: number | null
@@ -47,8 +49,8 @@ export function ComponentBuildingViewer({
 }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
-  const propsRef = useRef({ model, hidden, cats, style, clipY, sun, shadows, isolateLevel, selected, onSelect })
-  propsRef.current = { model, hidden, cats, style, clipY, sun, shadows, isolateLevel, selected, onSelect }
+  const propsRef = useRef({ model, hidden, cats, style, clipY, focus, sun, shadows, isolateLevel, selected, onSelect })
+  propsRef.current = { model, hidden, cats, style, clipY, focus, sun, shadows, isolateLevel, selected, onSelect }
 
   const rebuildRef = useRef<(() => void) | null>(null)
   const sunFnRef = useRef<(() => void) | null>(null)
@@ -59,6 +61,7 @@ export function ComponentBuildingViewer({
   useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs, hidden.facade, hidden.interior, cats, isolateLevel])
   useEffect(() => { styleRef.current?.() }, [style])
   useEffect(() => { clipRef.current?.() }, [clipY])
+  useEffect(() => { rebuildRef.current?.(); frameRef.current?.() }, [focus])
   useEffect(() => { sunFnRef.current?.() }, [sun?.azimuth, sun?.altitude, shadows])
   useEffect(() => { highlightRef.current?.() }, [selected, model])
   // re-fit only when the envelope or isolated level changes (not on every element edit)
@@ -146,9 +149,18 @@ export function ComponentBuildingViewer({
     }
     // Fit the building (or the isolated floor) to the viewport from the current angle.
     const frameView = () => {
-      const { model: m, isolateLevel: iso } = propsRef.current
+      const { model: m, isolateLevel: iso, focus } = propsRef.current
       const storeys = m.counts.storeys
+      const sceneSh0 = m.totalHeight / Math.max(1, storeys)
       const tanH = Math.tan((camera.fov * Math.PI) / 180 / 2) || 0.4
+      if (focus) {
+        const cx = (focus.minX + focus.maxX) / 2, cz = (focus.minZ + focus.maxZ) / 2
+        orbit.target.set(cx, focus.level * sceneSh0 + sceneSh0 / 2, cz)
+        const half = Math.max((focus.maxX - focus.minX) / 2, (focus.maxZ - focus.minZ) / 2, sceneSh0 * 0.6)
+        orbit.radius = Math.max(half / (tanH * Math.min(camera.aspect, 1.4)), 2.2) * 2.0
+        scene.fog = new THREE.Fog('#0a0f1c', orbit.radius * 0.9, orbit.radius * 3.6)
+        applyCamera(); return
+      }
       if (iso != null && iso < storeys) {
         const sceneSh = m.totalHeight / Math.max(1, storeys)
         orbit.target.set(0, iso * sceneSh + sceneSh / 2, 0)
@@ -260,19 +272,25 @@ export function ComponentBuildingViewer({
       clear()
       const { model: m, hidden: h, cats, isolateLevel: iso } = propsRef.current
       const storeys = m.counts.storeys
-      const isolating = iso != null
-      const show = (lvl?: number) => !isolating || lvl === iso
+      const focus = propsRef.current.focus
+      const isolating = iso != null || focus != null
+      const fLvl = focus ? focus.level : iso
+      const show = (lvl?: number) => !isolating || lvl === fLvl
+      // focus region (room/floor) — keep vertical elements within the bbox (padded)
+      const PAD = 0.4
+      const inFocus = (x: number, z: number) => !focus || (x >= focus.minX - PAD && x <= focus.maxX + PAD && z >= focus.minZ - PAD && z <= focus.maxZ + PAD)
+      const inFocusQ = (g: { a: { x: number; z: number }; b: { x: number; z: number } }) => inFocus((g.a.x + g.b.x) / 2, (g.a.z + g.b.z) / 2)
       // visibility: granular per-category map when given, else the grouped toggles
       const vis = (cat: string, grp: 'slabs' | 'structure' | 'facade' | 'glazing' | 'interior') => (cats ? !cats[cat] : !h[grp])
       const colIds = idsFor(m.columns, 'col'), panIds = idsFor(m.glazing, 'pan'), wallIds = idsFor(m.walls, 'wall'), doorIds = idsFor(m.doors, 'door'), beamIds = idsFor(m.beams, 'beam'), partIds = idsFor(m.partitions, 'part'), idoorIds = idsFor(m.interiorDoors, 'idoor')
 
       if (vis('slabs', 'slabs')) for (const s of m.slabs) if (show(s.level)) plate(s, slabMat, s.id ?? `floor-${s.level ?? 0}`)
-      if (vis('roof', 'slabs') && m.roof && (!isolating || iso >= storeys)) plate(m.roof, slabMat, m.roof.id ?? 'roof')
-      if (vis('columns', 'structure')) boxInst(m.columns.map((c, i) => ({ c, id: c.id ?? colIds[i] })).filter(({ c }) => show(c.level)), colMat)
-      if (vis('beams', 'structure')) beamInst(m.beams.map((b, i) => ({ b, id: b.id ?? beamIds[i] })).filter(({ b }) => show(b.level)), beamMat)
-      if (vis('core', 'structure') && m.core && !(isolating && iso >= storeys)) {
+      if (vis('roof', 'slabs') && m.roof && (!isolating || (fLvl ?? -1) >= storeys)) plate(m.roof, slabMat, m.roof.id ?? 'roof')
+      if (vis('columns', 'structure')) boxInst(m.columns.map((c, i) => ({ c, id: c.id ?? colIds[i] })).filter(({ c }) => show(c.level) && inFocus(c.x, c.z)), colMat)
+      if (vis('beams', 'structure')) beamInst(m.beams.map((b, i) => ({ b, id: b.id ?? beamIds[i] })).filter(({ b }) => show(b.level) && inFocusQ(b)), beamMat)
+      if (vis('core', 'structure') && m.core && inFocus(m.core.x, m.core.z) && !(isolating && (fLvl ?? -1) >= storeys)) {
         let cy = m.core.y, ch = m.core.h
-        if (isolating) { const sceneSh = m.totalHeight / Math.max(1, storeys); cy = iso * sceneSh + sceneSh / 2; ch = sceneSh * 0.92 }
+        if (isolating) { const sceneSh = m.totalHeight / Math.max(1, storeys); cy = (fLvl ?? 0) * sceneSh + sceneSh / 2; ch = sceneSh * 0.92 }
         const cm = new THREE.Mesh(unitBox, coreMat); cm.scale.set(m.core.w, ch, m.core.d); cm.position.set(m.core.x, cy, m.core.z); cm.castShadow = true; cm.receiveShadow = true; cm.userData.id = m.core.id ?? 'core'; group.add(cm); objects.push(cm)
       }
       // substructure (footings + ground beams) — drop the ground plane to reveal it
@@ -284,19 +302,19 @@ export function ComponentBuildingViewer({
       const fdnBottom = m.foundations.length ? Math.min(...m.foundations.map((c) => c.y - c.h / 2)) : 0
       ground.position.y = showFdn ? fdnBottom - 0.06 : -0.02
       grid.position.y = ground.position.y + 0.01
-      if (vis('walls', 'facade')) planeInst(m.walls.map((g, i) => ({ g, id: g.id ?? wallIds[i] })).filter(({ g }) => show(g.level)), wallMat)
-      if (vis('mullions', 'facade')) boxInst(m.mullions.filter((c) => show(c.level)).map((c) => ({ c })), mullionMat) // framing — visual only
-      if (vis('parapets', 'facade')) planeInst(m.parapets.map((g, i) => ({ g, id: g.id ?? `par-${i}` })).filter(() => !isolating || iso >= storeys - 1), wallMat)
-      if (vis('windows', 'glazing')) planeInst(m.glazing.map((g, i) => ({ g, id: g.id ?? panIds[i] })).filter(({ g }) => show(g.level)), glassMat, { shadow: false, outset: 0.02 })
-      if (vis('doors', 'glazing')) planeInst(m.doors.map((g, i) => ({ g, id: g.id ?? doorIds[i] })).filter(({ g }) => show(g.level)), doorMat, { outset: 0.02 })
-      if (vis('partitions', 'interior')) planeInst(m.partitions.map((g, i) => ({ g, id: g.id ?? partIds[i] })).filter(({ g }) => show(g.level)), partMat)
-      if (vis('interiorDoors', 'interior')) planeInst(m.interiorDoors.map((g, i) => ({ g, id: g.id ?? idoorIds[i] })).filter(({ g }) => show(g.level)), idoorMat, { outset: 0.02 })
-      if (vis('stairs', 'interior')) boxInst(m.stairs.flatMap((s) => [...s.treads, ...s.landings, ...s.rails].map((t) => ({ c: t, id: s.id }))).filter(({ c }) => show(c.level)), stairMat)
+      if (vis('walls', 'facade')) planeInst(m.walls.map((g, i) => ({ g, id: g.id ?? wallIds[i] })).filter(({ g }) => show(g.level) && inFocusQ(g)), wallMat)
+      if (vis('mullions', 'facade')) boxInst(m.mullions.filter((c) => show(c.level) && inFocus(c.x, c.z)).map((c) => ({ c })), mullionMat) // framing — visual only
+      if (vis('parapets', 'facade')) planeInst(m.parapets.map((g, i) => ({ g, id: g.id ?? `par-${i}` })).filter(({ g }) => (!isolating || (fLvl ?? -1) >= storeys - 1) && inFocusQ(g)), wallMat)
+      if (vis('windows', 'glazing')) planeInst(m.glazing.map((g, i) => ({ g, id: g.id ?? panIds[i] })).filter(({ g }) => show(g.level) && inFocusQ(g)), glassMat, { shadow: false, outset: 0.02 })
+      if (vis('doors', 'glazing')) planeInst(m.doors.map((g, i) => ({ g, id: g.id ?? doorIds[i] })).filter(({ g }) => show(g.level) && inFocusQ(g)), doorMat, { outset: 0.02 })
+      if (vis('partitions', 'interior')) planeInst(m.partitions.map((g, i) => ({ g, id: g.id ?? partIds[i] })).filter(({ g }) => show(g.level) && inFocusQ(g)), partMat)
+      if (vis('interiorDoors', 'interior')) planeInst(m.interiorDoors.map((g, i) => ({ g, id: g.id ?? idoorIds[i] })).filter(({ g }) => show(g.level) && inFocusQ(g)), idoorMat, { outset: 0.02 })
+      if (vis('stairs', 'interior')) boxInst(m.stairs.flatMap((s) => [...s.treads, ...s.landings, ...s.rails].map((t) => ({ c: t, id: s.id }))).filter(({ c }) => show(c.level) && inFocus(c.x, c.z)), stairMat)
       if (vis('ceilings', 'interior')) for (const p of m.ceilings) if (show(p.level)) plate(p, ceilMat, p.id ?? `ceil-${p.level ?? 0}`)
       if (vis('finishes', 'interior')) for (const p of m.floorFinishes) if (show(p.level)) plate(p, finMat, p.id ?? `fin-${p.level ?? 0}`)
       applySun(); applyHighlight(); applyStyle(); applyClip()
       ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, windows: m.counts.windows, glazing: m.counts.windows, beams: m.counts.beams, doors: m.counts.doors, slabs: m.counts.slabs, partitions: m.counts.partitions, interiorDoors: m.counts.interiorDoors, stairs: m.counts.stairs, foundations: m.counts.foundations, ceilings: m.counts.ceilings, finishes: m.counts.finishes, parapets: m.counts.parapets }
-      ;(mount as HTMLElement & { __studio?: object }).__studio = { style: propsRef.current.style, clipY: propsRef.current.clipY ?? null, cats: propsRef.current.cats ?? null }
+      ;(mount as HTMLElement & { __studio?: object }).__studio = { style: propsRef.current.style, clipY: propsRef.current.clipY ?? null, cats: propsRef.current.cats ?? null, focus: propsRef.current.focus ?? null }
     }
     rebuildRef.current = build
 

@@ -13,7 +13,7 @@ const LEN = SCENE_LEN_TO_M
 const AREA = LEN * LEN
 const r1 = (n: number) => Math.round(n * 10) / 10
 
-export type Room = { id: string; level: number; name: string; polygon: Pt[]; center: Pt; area: number; perimeter: number }
+export type Room = { id: string; level: number; name: string; polygon: Pt[]; center: Pt; area: number; perimeter: number; use?: string; finish?: string }
 export type GridOpts = { level?: number; roomSize?: number; core?: { x: number; z: number; w: number; d: number } | null; minArea?: number }
 
 /** Clip a polygon by one half-plane: keep points where inside(p), inserting the

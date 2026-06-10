@@ -4,8 +4,8 @@
  * a new model so the 3D view, plan and schedules all reflect the edits live. No
  * Three.js, no DOM. */
 
-import type { BuildingModel, Box, Quad, Beam, Plate, Stair } from './building'
-import type { Pt } from './zoning'
+import type { BuildingModel, Box, Quad, Beam, Plate, Stair, Room } from './building'
+import { type Pt, polygonArea, polygonPerimeter, polygonCentroid } from './zoning'
 import { SCENE_LEN_TO_M } from './massing'
 import { buildStair } from './building-stairs'
 
@@ -13,10 +13,11 @@ export type Vec3 = { x: number; y: number; z: number }
 export type ElementEdit = { move?: Vec3; scale?: number; height?: number } // scale = section/size factor; height overrides h (or beam depth)
 export type AddedColumn = { id: string; level: number; x: number; y: number; z: number; w: number; h: number; d: number }
 export type AddedDoor = { id: string; level: number; a: Pt; b: Pt; y: number; h: number }
-export type BuildingEdits = { deleted: string[]; edits: Record<string, ElementEdit>; added: AddedColumn[]; addedDoors: AddedDoor[]; addedStairs: Stair[] }
+export type RoomEdit = { name?: string; use?: string; finish?: string; scale?: number }
+export type BuildingEdits = { deleted: string[]; edits: Record<string, ElementEdit>; added: AddedColumn[]; addedDoors: AddedDoor[]; addedStairs: Stair[]; rooms: Record<string, RoomEdit> }
 
-export const emptyEdits = (): BuildingEdits => ({ deleted: [], edits: {}, added: [], addedDoors: [], addedStairs: [] })
-export const editCount = (e: BuildingEdits): number => e.deleted.length + Object.keys(e.edits).length + e.added.length + (e.addedDoors?.length ?? 0) + (e.addedStairs?.length ?? 0)
+export const emptyEdits = (): BuildingEdits => ({ deleted: [], edits: {}, added: [], addedDoors: [], addedStairs: [], rooms: {} })
+export const editCount = (e: BuildingEdits): number => e.deleted.length + Object.keys(e.edits).length + e.added.length + (e.addedDoors?.length ?? 0) + (e.addedStairs?.length ?? 0) + Object.keys(e.rooms ?? {}).length
 
 const mvPt = (p: Pt, mv?: Vec3): Pt => (mv ? { x: p.x + mv.x, z: p.z + mv.z } : p)
 
@@ -69,7 +70,7 @@ export function applyEdits(m: BuildingModel, ed: BuildingEdits): BuildingModel {
   const roof = m.roof && !del.has('roof') ? editPlate(m.roof, ed.edits['roof']) : null
   return {
     slabs, columns, beams, walls, glazing, doors, mullions, partitions, interiorDoors, stairs,
-    foundations, groundBeams, ceilings, floorFinishes, parapets, core, roof, rooms: m.rooms,
+    foundations, groundBeams, ceilings, floorFinishes, parapets, core, roof, rooms: editRooms(m.rooms, ed.rooms),
     totalHeight: m.totalHeight, footprint: m.footprint,
     counts: { storeys: m.counts.storeys, columns: columns.length, beams: beams.length, windows: glazing.length, doors: doors.length, walls: walls.length, mullions: mullions.length, partitions: partitions.length, interiorDoors: interiorDoors.length, stairs: stairs.length, foundations: foundations.length, groundBeams: groundBeams.length, ceilings: ceilings.length, finishes: floorFinishes.length, parapets: parapets.length, slabs: slabs.length, rooms: m.counts.rooms },
   }
@@ -146,3 +147,43 @@ export function duplicateColumn(ed: BuildingEdits, m: BuildingModel, id: string)
 }
 
 function omit<T extends Record<string, unknown>>(o: T, k: string): T { const n = { ...o }; delete n[k]; return n }
+
+/* ---- room edits (the Room Studio: rename / re-use / re-finish / resize) ---- */
+const LEN = SCENE_LEN_TO_M
+
+/** Fold the room edit-set into the rooms list — rename, re-programme the use/finish,
+ *  and resize the polygon about its centre (recomputing area + perimeter). Pure. */
+export function editRooms(rooms: Room[], edits: Record<string, RoomEdit> = {}): Room[] {
+  if (!edits || !Object.keys(edits).length) return rooms
+  return rooms.map((r) => {
+    const e = edits[r.id]
+    if (!e) return r
+    const s = e.scale ?? 1
+    const c = r.center
+    const polygon = s === 1 ? r.polygon : r.polygon.map((p) => ({ x: c.x + (p.x - c.x) * s, z: c.z + (p.z - c.z) * s }))
+    const center = polygonCentroid(polygon)
+    return {
+      ...r,
+      name: e.name ?? r.name,
+      use: e.use ?? r.use,
+      finish: e.finish ?? r.finish,
+      polygon,
+      center,
+      area: Math.round(polygonArea(polygon) * LEN * LEN * 10) / 10,
+      perimeter: Math.round(polygonPerimeter(polygon) * LEN * 10) / 10,
+    }
+  })
+}
+
+const setRoom = (ed: BuildingEdits, id: string, patch: RoomEdit): BuildingEdits => ({ ...ed, rooms: { ...(ed.rooms ?? {}), [id]: { ...(ed.rooms?.[id] ?? {}), ...patch } } })
+/** Rename a room. */
+export const setRoomName = (ed: BuildingEdits, id: string, name: string): BuildingEdits => setRoom(ed, id, { name })
+/** Re-programme a room's use (drives occupancy + finish + colour). */
+export const setRoomUse = (ed: BuildingEdits, id: string, use: string): BuildingEdits => setRoom(ed, id, { use })
+/** Set a room's finish grade. */
+export const setRoomFinish = (ed: BuildingEdits, id: string, finish: string): BuildingEdits => setRoom(ed, id, { finish })
+/** Multiply a room's size about its centre (clamped). */
+export function scaleRoom(ed: BuildingEdits, id: string, factor: number): BuildingEdits {
+  const cur = ed.rooms?.[id]?.scale ?? 1
+  return setRoom(ed, id, { scale: Math.max(0.4, Math.min(2.5, cur * factor)) })
+}
