@@ -37,6 +37,9 @@ import { floorCompartments, buildingFire } from './fire.ts'
 import { structuralCheck } from './structure.ts'
 import { energyAnalysis } from './energy.ts'
 import { schedule4d } from './schedule4d.ts'
+import { adviseBuilding, nextBestAction } from './advisor.ts'
+import { liveFrame, liveHistory } from './live.ts'
+import { rankTools, pushRecent, timeAgoShort, roleAccent, personalLede } from './personalize.ts'
 import { CODE_PRESETS, CODE_KEYS } from './building-code.ts'
 import { explodeIfc, meshGeom, friendlyType, sliceMeshes, cutHeightFor } from './ifc-explorer.ts'
 import { ifcToModel } from './ifc-to-model.ts'
@@ -1011,6 +1014,81 @@ section('schedule-4d')
   ok('total duration + completion date computed', s.totalDays > 0 && s.weeks > 0 && /^\d{4}-\d\d-\d\d$/.test(s.finishDate) && s.finishDate > s.startDate)
   ok('floors carry calendar start/finish dates', s.floors.every((f) => /^\d{4}-\d\d-\d\d$/.test(f.startDate) && f.endDate >= f.startDate))
   ok('more storeys → longer programme', schedule4d(buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 20, shape: 'rect' }), { coreRatio: 0.16 })).totalDays > s.totalDays)
+}
+
+// ── advisor (cross-phase intelligence + one-click fixes) ────────────────────────
+section('advisor')
+{
+  const m = buildBuilding(buildMassing({ gfa: 120_000, progress: 100, storeys: 12, shape: 'rect' }), { coreRatio: 0.16, wwr: 0.55 })
+  const rep = adviseBuilding({ model: m, code: 'IBC', wwr: 0.55 })
+  ok('advisor runs every phase (findings across ≥5 phases)', new Set(rep.findings.map((x) => x.phase)).size >= 5 && rep.findings.length >= 6)
+  ok('score + grade are coherent', rep.score >= 0 && rep.score <= 100 && /^[A-E]$/.test(rep.grade) && rep.counts.critical + rep.counts.warning + rep.counts.good <= rep.findings.length)
+  ok('phase journey reports a status per phase', rep.phases.length === 6 && rep.phases.every((p) => p.headline.length > 0))
+
+  // stripping the stairs+core → a critical egress finding with a one-click fix
+  const mSmall = buildBuilding(buildMassing({ gfa: 18_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0.16 })
+  const noEgress = { ...mSmall, stairs: [], core: null }
+  const rep2 = adviseBuilding({ model: noEgress, code: 'IBC' })
+  const egFail = rep2.findings.find((x) => x.id === 'egress-fail')
+  ok('losing the stairs raises a critical egress finding + add-stair fix', !!egFail && egFail.severity === 'critical' && egFail.action?.kind === 'add-stair')
+  // applying the fix (add a stair shaft) reduces criticals
+  const fixed = applyEdits(noEgress, addStairAt(addStairAt(emptyEdits(), noEgress, -2, 0), noEgress, 2, 0))
+  ok('applying the add-stair fix reduces critical findings', adviseBuilding({ model: fixed, code: 'IBC' }).counts.critical < rep2.counts.critical)
+
+  // an over-glazed envelope → a set-wwr fix that targets less glass
+  const glassy = buildBuilding(buildMassing({ gfa: 120_000, progress: 100, storeys: 12, shape: 'rect' }), { coreRatio: 0.16, wwr: 0.85 })
+  const rep3 = adviseBuilding({ model: glassy, code: 'IBC', wwr: 0.85 })
+  const eui = rep3.findings.find((x) => x.id === 'energy-eui')
+  ok('an over-glazed envelope gets a set-wwr action below current', !eui || eui.severity === 'good' || (eui.action?.kind === 'set-wwr' && eui.action.value < 0.85))
+  // a 40-storey tower stresses columns → strengthen action on a real column id
+  const tall = buildBuilding(buildMassing({ gfa: 100_000, progress: 100, storeys: 40, shape: 'rect' }), { coreRatio: 0.16 })
+  const rep4 = adviseBuilding({ model: tall })
+  const sc = rep4.findings.find((x) => x.id === 'struct-col')
+  ok('a tall tower yields a strengthen-column fix on a real column', !!sc && sc.severity !== 'good' && sc.action?.kind === 'strengthen-column' && tall.columns.some((c) => c.id === (sc.action as { id: string }).id))
+  ok('nextBestAction surfaces an actionable finding', (() => { const nba = nextBestAction(rep4); return !!nba && (!!nba.action || nba.severity !== 'good') })())
+  // personalization: same findings, different order per role
+  const archOrder = adviseBuilding({ model: m }, { role: 'Architect' }).findings.map((x) => x.id)
+  const seOrder = adviseBuilding({ model: m }, { role: 'Structural Engineer' }).findings.map((x) => x.id)
+  ok('findings re-rank for the person’s role', archOrder.join() !== seOrder.join() && archOrder.indexOf('struct-col') > seOrder.indexOf('struct-col'))
+}
+
+// ── live (deterministic site telemetry) ─────────────────────────────────────────
+section('live')
+{
+  const t0 = Date.UTC(2026, 5, 10, 12, 0, 0)
+  const a = liveFrame(7, t0), b = liveFrame(7, t0)
+  ok('deterministic: same seed + moment → identical frame', JSON.stringify(a) === JSON.stringify(b))
+  ok('different seeds → different telemetry', JSON.stringify(liveFrame(8, t0)) !== JSON.stringify(a))
+  ok('vitals stay in believable bounds', a.crew >= 4 && a.crew <= 70 && a.temp >= -5 && a.temp <= 41 && a.co2 >= 400 && a.co2 <= 1400 && a.progress > 0 && a.progress < 100)
+  ok('a working site at noon out-crews 3am', liveFrame(7, Date.UTC(2026, 5, 10, 12, 0)).crew > liveFrame(7, Date.UTC(2026, 5, 10, 3, 0)).crew)
+  const hist = liveHistory(7, 24, 60, t0)
+  ok('history is 24 ordered frames ending now', hist.length === 24 && hist.every((f2, i) => i === 0 || f2.t >= hist[i - 1].t) && hist[23].t === Math.floor(t0 / 1000))
+}
+
+// ── personalize (the workspace molds to the person) ─────────────────────────────
+section('personalize')
+{
+  const TOOLS = [
+    { path: '/model-studio', label: 'Model Studio' }, { path: '/building-explorer', label: 'Building Explorer' },
+    { path: '/site-zoning', label: 'Site & Zoning' }, { path: '/sustainability', label: 'Sustainability' },
+    { path: '/cost-schedule', label: 'Cost & Schedule' }, { path: '/analyze', label: 'Analysis Studio' }, { path: '/digital-twin', label: 'Digital Twin' },
+  ]
+  const arch = { name: 'Ada', role: 'Architect', disciplines: [] as string[], sectors: [] as string[], goals: [] as string[], experience: 'Expert' as const, onboarded: true }
+  const r1 = rankTools({ ...arch }, {}, TOOLS, 4)
+  ok('an architect’s home turf leads the ranking', r1[0].path === '/model-studio' && r1[1].path === '/building-explorer' && /Architect/.test(r1[0].reason))
+  const sus = rankTools({ ...arch, role: '', goals: ['Cut embodied carbon'] }, {}, TOOLS, 3)
+  ok('stated goals pull their tools up for any role', sus.some((t) => t.path === '/sustainability' && /goals/.test(t.reason)))
+  const used = rankTools({ ...arch, role: '' }, { '/digital-twin': 9 }, TOOLS, 3)
+  ok('heavy use lifts a tool into the picks', used.some((t) => t.path === '/digital-twin' && /use/.test(t.reason)))
+  // recents trail
+  let rec = pushRecent([], '/bim', 1000)
+  rec = pushRecent(rec, '/analyze', 2000)
+  rec = pushRecent(rec, '/bim', 3000)
+  ok('recents dedupe to newest-first', rec.length === 2 && rec[0].path === '/bim' && rec[0].at === 3000)
+  ok('the root path never enters recents', pushRecent(rec, '/', 4000).length === 2)
+  ok('time-ago renders human buckets', timeAgoShort(0, 30_000) === 'just now' && timeAgoShort(0, 5 * 60_000) === '5m ago' && /h ago$/.test(timeAgoShort(0, 3 * 3600_000)) && /d ago$/.test(timeAgoShort(0, 50 * 3600_000)))
+  ok('each role gets its own accent (with a default)', roleAccent('Architect') === 'violet' && roleAccent('Structural Engineer') === 'cyan' && roleAccent('???') === 'blue')
+  ok('the lede speaks to the person (role + goal)', /architect/.test(personalLede({ ...arch, goals: ['Win more bids'] })) && /win more bids/.test(personalLede({ ...arch, goals: ['Win more bids'] })))
 }
 
 // ── building-export (OBJ round-trip) ────────────────────────────────────────────
