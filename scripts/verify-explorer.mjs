@@ -101,7 +101,7 @@ try {
   ok('the life-safety table reports fire compartments per floor', await page.evaluate(() => /Compartments/i.test((document.querySelector('[aria-label^="Egress by floor"]') || document.body).textContent || '')))
 
   // switching the code jurisdiction re-runs the analysis (UK denser than IBC)
-  const occOf = () => page.evaluate(() => { const m = document.body.innerText.match(/([\d,]+)\s*ppl/); return m ? Number(m[1].replace(/,/g, '')) : -1 })
+  const occOf = () => page.evaluate(() => { const t = document.querySelector('[data-egress]')?.innerText || ''; const m = t.match(/([\d,]+)\s*ppl/); return m ? Number(m[1].replace(/,/g, '')) : -1 })
   const occIBC = await occOf()
   await page.select('#egress-code', 'UK')
   await new Promise((r) => setTimeout(r, 450))

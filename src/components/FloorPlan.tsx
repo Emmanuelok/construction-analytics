@@ -93,7 +93,7 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
             const on = selected === r.id
             const cx = r.polygon.reduce((s, p) => s + p.x, 0) / r.polygon.length, cz = r.polygon.reduce((s, p) => s + p.z, 0) / r.polygon.length
             return (
-              <g key={r.id} className="cursor-pointer" onClick={() => !addMode && onSelect(r.id)}>
+              <g key={r.id} data-room={r.id} className="cursor-pointer" onClick={() => !addMode && onSelect(r.id)}>
                 <polygon points={r.polygon.map((p) => `${toX(p.x)},${toY(p.z)}`).join(' ')} fill={on ? '#fbbf2422' : '#16243c80'} stroke={on ? '#fbbf24' : '#2c4a6e'} strokeWidth={on ? 1.6 : 0.8} vectorEffect="non-scaling-stroke" />
                 <text x={toX(cx)} y={toY(cz)} fontSize={ext * 0.026} fill={on ? '#fbbf24' : '#7c93b2'} textAnchor="middle" className="pointer-events-none select-none">{r.area} m²</text>
               </g>

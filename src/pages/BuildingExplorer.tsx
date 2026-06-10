@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame, Gauge, Sun, CalendarClock, Sparkles, Wand2, Camera, EyeOff } from 'lucide-react'
+import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame, Gauge, Sun, CalendarClock, Sparkles, Wand2, Camera, EyeOff, LayoutGrid, Ruler, Users, Maximize2, Minimize2, X } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge, Tabs } from '@/components/ui'
 import { ScrollableTable } from '@/components/ScrollableTable'
 const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
@@ -8,7 +8,9 @@ import { FloorPlan } from '@/components/FloorPlan'
 import { buildMassing, deriveStoreys, SHAPE_KINDS, type ShapeKind } from '@/lib/massing'
 import { buildBuilding, type BuildingModel } from '@/lib/building'
 import { explodeBuilding, planForLevel, type Schedule, type ScheduleCol, type BuildingElement } from '@/lib/building-explorer'
-import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, addDoorAt, addStairAt, duplicateColumn, editCount, type BuildingEdits } from '@/lib/building-edits'
+import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, addDoorAt, addStairAt, duplicateColumn, editCount, setRoomName, setRoomUse, setRoomFinish, scaleRoom, type BuildingEdits } from '@/lib/building-edits'
+import { roomReport, floorReport } from '@/lib/room-studio'
+import { SPACE_TYPES, FINISHES } from '@/lib/room-types'
 import { toObj } from '@/lib/building-export'
 import { toIfc } from '@/lib/building-ifc'
 import { egressAnalysis, egressPathFor } from '@/lib/egress'
@@ -101,6 +103,9 @@ export default function BuildingExplorer() {
   const [editMode, setEditMode] = useState(false)
   const [showFire, setShowFire] = useState(false)
   const [addKind, setAddKind] = useState<'column' | 'door' | 'stair' | null>(null)
+  const [studioFloor, setStudioFloor] = useState<number | null>(null) // floor open in the Floor Studio
+  const [studioStyle, setStudioStyle] = useState<ViewerStyle>('realistic') // render style for the studio preview
+  const [nameDraft, setNameDraft] = useState('') // room-rename text buffer (committed on blur/Enter)
   const [edits, setEdits] = useState<BuildingEdits>(() => init0?.edits ?? emptyEdits())
   const [past, setPast] = useState<BuildingEdits[]>([])
   const [future, setFuture] = useState<BuildingEdits[]>([])
@@ -168,16 +173,28 @@ export default function BuildingExplorer() {
   }
   const sun = useMemo(() => { if (!sunOn) return undefined; const p = sunPosition(momentOf(month, hour), 40.71, -74.0); return { azimuth: p.azimuth, altitude: p.altitude } }, [sunOn, month, hour])
   const clipY = section >= 100 ? null : (section / 100) * model.totalHeight
-  const snapshot = () => {
-    const el = document.querySelector('[aria-label^="3D building model"]') as (HTMLElement & { __snapshot?: () => string }) | null
+  const snapshotInto = (root: ParentNode | null, name: string) => {
+    const el = (root ?? document).querySelector('[aria-label^="3D building model"]') as (HTMLElement & { __snapshot?: () => string }) | null
     const url = el?.__snapshot?.()
     if (!url) return
-    const a = document.createElement('a'); a.href = url; a.download = `${slug(project.name)}-render.png`; document.body.appendChild(a); a.click(); a.remove()
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove()
   }
+  const snapshot = () => snapshotInto(document.querySelector('[data-main-viewer]'), `${slug(project.name)}-render.png`)
+  const snapshotStudio = () => snapshotInto(document.querySelector('[data-studio-preview]'), `${slug(project.name)}-${roomRep ? slug(roomRep.name) : `floor-${studioFloor ?? 0}`}-render.png`)
   const topColumns = useMemo(() => [...struct.columns].sort((a, b) => b.utilization - a.utilization).slice(0, ROW_CAP), [struct])
   const darkFirst = useMemo(() => [...energy.rooms].sort((a, b) => a.daylight - b.daylight).slice(0, ROW_CAP), [energy])
   const plan = useMemo(() => planForLevel(model, activeLevel), [model, activeLevel])
   const egressPath = useMemo(() => (selectedId && selectedId.startsWith('room-') ? egressPathFor(model, selectedId) : null), [model, selectedId])
+
+  // ---- Room / Floor Studio: a focused preview + deep modifications on the selected space ----
+  const selectedRoom = useMemo(() => (selectedId ? model.rooms.find((r) => r.id === selectedId) ?? null : null), [model, selectedId])
+  const roomRep = useMemo(() => (selectedRoom ? roomReport(model, selectedRoom.id, { storeyHeight, code }) : null), [model, selectedRoom, storeyHeight, code])
+  const floorRep = useMemo(() => (studioFloor != null && !selectedRoom ? floorReport(model, studioFloor, { storeyHeight, code }) : null), [model, studioFloor, selectedRoom, storeyHeight, code])
+  const studioFocus = roomRep?.focus ?? floorRep?.focus ?? null
+  const studioOpen = !!(roomRep || floorRep)
+  const curRoomScale = selectedRoom ? edits.rooms?.[selectedRoom.id]?.scale ?? 1 : 1
+  useEffect(() => { setNameDraft(selectedRoom?.name ?? '') }, [selectedRoom?.id, selectedRoom?.name])
+
   const nEdits = editCount(edits)
   // nudge steps: 1 m in plan → scene via PLATE_SCALE; 0.5 m vertical → scene via storey height
   const stepXZ = 1 * PLATE_SCALE, stepY = 0.5 / storeyHeight
@@ -185,6 +202,16 @@ export default function BuildingExplorer() {
   const edit = (fn: (e: BuildingEdits) => BuildingEdits) => commit(fn(edits))
   const del = (id: string) => { commit(removeElement(edits, id)); setSelectedId(null) }
   const resetEdits = () => { commit(emptyEdits()); setAddKind(null); setSelectedId(null) }
+  // ---- studio actions (room re-programme/finish/resize + floor-wide re-finish/re-programme) ----
+  const openFloorStudio = (lvl: number) => { setSelectedId(null); setStudioFloor(lvl); setActiveLevel(lvl) }
+  const closeStudio = () => { setStudioFloor(null); setSelectedId(null) }
+  const commitRoomName = () => { const n = nameDraft.trim(); if (selectedRoom && n && n !== selectedRoom.name) edit((e) => setRoomName(e, selectedRoom.id, n)) }
+  const roomUse = (use: string) => { if (selectedRoom) edit((e) => setRoomUse(e, selectedRoom.id, use)) }
+  const roomFinish = (fin: string) => { if (selectedRoom) edit((e) => setRoomFinish(e, selectedRoom.id, fin)) }
+  const roomScale = (factor: number) => { if (selectedRoom) edit((e) => scaleRoom(e, selectedRoom.id, factor)) }
+  const resetRoomSize = () => { if (selectedRoom && curRoomScale !== 1) edit((e) => scaleRoom(e, selectedRoom.id, 1 / curRoomScale)) }
+  const floorRefinish = (fin: string) => { if (studioFloor == null) return; const ids = model.rooms.filter((r) => r.level === studioFloor).map((r) => r.id); if (!ids.length) return; commit(ids.reduce((e, id) => setRoomFinish(e, id, fin), edits)) }
+  const floorReprogram = (use: string) => { if (studioFloor == null) return; const ids = model.rooms.filter((r) => r.level === studioFloor).map((r) => r.id); if (!ids.length) return; commit(ids.reduce((e, id) => setRoomUse(e, id, use), edits)) }
   const exportCfg = () => downloadText(`${slug(project.name)}-building-design.json`, JSON.stringify({ project: project.name, storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, code, edits }, null, 2), 'JSON')
   const importCfg = async (e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; if (!f) return; try { applyCfg(JSON.parse(await f.text()), project.gfa) } catch { /* ignore */ } e.target.value = '' }
   const selectedEl: BuildingElement | null = selectedId ? ex.byId[selectedId] ?? null : null
@@ -193,6 +220,8 @@ export default function BuildingExplorer() {
   const selectEl = (id: string | null) => {
     setSelectedId(id)
     if (!id) return
+    const m = /^floor-(\d+)$/.exec(id) // clicking a floor slab opens the Floor Studio
+    if (m) setStudioFloor(Number(m[1]))
     const el = ex.byId[id]
     if (el && el.level >= 0 && el.level <= storeys) { setActiveLevel(el.level); setSchedTab(el.category === 'Roof' ? 'Floor' : el.category) }
   }
@@ -367,7 +396,7 @@ export default function BuildingExplorer() {
             </>}
             <button onClick={snapshot} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-200 ring-1 ring-inset ring-emerald-500/40 hover:bg-emerald-500/25"><Camera className="h-3.5 w-3.5" /> Render PNG</button>
           </div>
-          <div className="border-t border-edge/50">
+          <div className="border-t border-edge/50" data-main-viewer>
             <Suspense fallback={<div style={{ height: 560 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
               <ComponentBuildingViewer model={model} cats={cats} style={style} clipY={clipY} sun={sun} isolateLevel={isolate ? activeLevel : null} selected={selectedId} onSelect={selectEl} height={560} />
             </Suspense>
@@ -401,9 +430,10 @@ export default function BuildingExplorer() {
             <ul className="divide-y divide-edge/40">
               {[...ex.levels].reverse().map((l) => {
                 const on = l.index === activeLevel
+                const inStudio = studioFloor === l.index && !selectedRoom
                 return (
-                  <li key={l.index}>
-                    <button onClick={() => gotoLevel(l.index)} aria-pressed={on} className={cn('flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left transition-colors', on ? 'bg-blue-500/10' : 'hover:bg-elevated/40')}>
+                  <li key={l.index} className={cn('flex items-stretch transition-colors', on ? 'bg-blue-500/10' : 'hover:bg-elevated/40')}>
+                    <button onClick={() => gotoLevel(l.index)} aria-pressed={on} className="flex min-w-0 flex-1 items-center justify-between gap-3 px-4 py-2.5 text-left">
                       <div className="min-w-0">
                         <div className={cn('truncate text-sm font-medium', on ? 'text-blue-100' : 'text-slate-200')}>{l.name}</div>
                         <div className="data-mono text-[11px] text-slate-500">+{l.elevation.toFixed(1)} m · {formatNumber(l.area)} m²</div>
@@ -412,6 +442,11 @@ export default function BuildingExplorer() {
                         {l.isRoof ? <span className="text-slate-500">roof</span> : <>{l.columns} col · {l.panels} pan</>}
                       </div>
                     </button>
+                    {!l.isRoof && (
+                      <button onClick={() => openFloorStudio(l.index)} aria-pressed={inStudio} title={`Open ${l.name} in Floor Studio`} aria-label={`Open ${l.name} in Floor Studio`} className={cn('flex shrink-0 items-center border-l border-edge/40 px-2.5 transition-colors', inStudio ? 'bg-violet-500/20 text-violet-200' : 'text-slate-400 hover:bg-violet-500/10 hover:text-violet-200')}>
+                        <LayoutGrid className="h-4 w-4" />
+                      </button>
+                    )}
                   </li>
                 )
               })}
@@ -420,6 +455,144 @@ export default function BuildingExplorer() {
         </Card>
         </div>
       </div>
+
+      {/* Room / Floor Studio — a focused, isolated preview + deep modifications on the selected space/floor */}
+      {studioOpen && (
+        <Card data-studio className="overflow-hidden ring-1 ring-inset ring-violet-500/25">
+          <CardHeader
+            icon={roomRep ? LayoutGrid : Layers} accent="violet"
+            title={roomRep ? `Room Studio — ${roomRep.name}` : `Floor Studio — ${floorRep!.name}`}
+            subtitle={roomRep
+              ? 'A focused, isolated preview of this space with its real enclosure — re-programme the use, set a finish, rename and resize it; occupancy, daylight, egress and fit-out cost all recompute live.'
+              : 'The whole floor, isolated and framed — totals, the use mix, and floor-wide re-finish / re-programme in one step. Click any room in the plan below to drill into it.'}
+            action={<button onClick={closeStudio} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><X className="h-3.5 w-3.5" /> Close</button>}
+          />
+          <div className="grid gap-0 border-t border-edge/50 lg:grid-cols-[1.35fr_1fr]">
+            {/* focused preview + render toolbar */}
+            <div className="border-b border-edge/50 lg:border-b-0 lg:border-r">
+              <div className="flex flex-wrap items-center gap-2 px-4 py-2.5">
+                <div className="flex overflow-hidden rounded-lg ring-1 ring-inset ring-edge/60">
+                  {STYLES.map((st) => (
+                    <button key={st.id} onClick={() => setStudioStyle(st.id)} aria-pressed={studioStyle === st.id} className={cn('px-2.5 py-1 text-xs font-medium transition-colors', studioStyle === st.id ? 'bg-violet-500/20 text-violet-100' : 'text-slate-400 hover:bg-elevated/50 hover:text-slate-200')}>{st.label}</button>
+                  ))}
+                </div>
+                <span className="data-mono text-[11px] text-slate-500">{roomRep ? `${roomRep.widthM}×${roomRep.depthM} m · ${formatNumber(roomRep.area)} m²` : `${formatNumber(floorRep!.area)} m² · ${floorRep!.rooms} rooms`}</span>
+                <button onClick={snapshotStudio} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-200 ring-1 ring-inset ring-emerald-500/40 hover:bg-emerald-500/25"><Camera className="h-3.5 w-3.5" /> Render PNG</button>
+              </div>
+              <div data-studio-preview className="border-t border-edge/50">
+                <Suspense fallback={<div style={{ height: 420 }} className="grid place-items-center text-sm text-slate-500">Loading preview…</div>}>
+                  <ComponentBuildingViewer model={model} cats={cats} style={studioStyle} focus={studioFocus} selected={selectedId} onSelect={selectEl} height={420} />
+                </Suspense>
+              </div>
+            </div>
+
+            {/* modifications + takeoff */}
+            <div className="space-y-4 p-5">
+              {roomRep ? (
+                <>
+                  <div className="rounded-lg border border-violet-500/25 bg-violet-500/[0.06] p-3">
+                    <div className="mb-2.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-violet-300/90"><Pencil className="h-3.5 w-3.5" /> Modify space</div>
+                    <label className="mb-2.5 block">
+                      <span className="mb-1 block text-[11px] text-slate-400">Name</span>
+                      <input value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={commitRoomName} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} className="w-full rounded-lg border border-edge/60 bg-base/60 px-2.5 py-1.5 text-sm text-slate-100 focus:border-violet-500/50 focus:outline-none" aria-label="Room name" />
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="block">
+                        <span className="mb-1 block text-[11px] text-slate-400">Use</span>
+                        <select value={roomRep.use} onChange={(e) => roomUse(e.target.value)} className="w-full rounded-lg border border-edge/60 bg-base/60 px-2 py-1.5 text-sm text-slate-100 focus:border-violet-500/50 focus:outline-none" aria-label="Room use">
+                          {SPACE_TYPES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                        </select>
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-[11px] text-slate-400">Finish</span>
+                        <select value={roomRep.finish} onChange={(e) => roomFinish(e.target.value)} className="w-full rounded-lg border border-edge/60 bg-base/60 px-2 py-1.5 text-sm text-slate-100 focus:border-violet-500/50 focus:outline-none" aria-label="Room finish">
+                          {FINISHES.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="mt-2.5 flex items-center gap-1.5">
+                      <span className="mr-auto text-[11px] text-slate-400">Size <span className="data-mono text-slate-300">{Math.round(curRoomScale * 100)}%</span></span>
+                      <NudgeBtn label="Smaller" icon={Minimize2} onClick={() => roomScale(1 / 1.1)} />
+                      <NudgeBtn label="Bigger" icon={Maximize2} onClick={() => roomScale(1.1)} />
+                      <NudgeBtn label="Reset" icon={RotateCcw} onClick={resetRoomSize} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500"><Ruler className="h-3.5 w-3.5" /> Space takeoff</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <StudioStat label="Floor area" value={`${formatNumber(roomRep.area)} m²`} />
+                      <StudioStat label="Footprint" value={`${roomRep.widthM} × ${roomRep.depthM} m`} />
+                      <StudioStat label="Clear height" value={`${roomRep.heightM} m`} />
+                      <StudioStat label="Volume" value={`${formatNumber(roomRep.volume)} m³`} />
+                      <StudioStat label="Occupancy" value={`${roomRep.occupancy} ppl`} icon={Users} />
+                      <StudioStat label="Windows" value={`${roomRep.windows} · ${roomRep.glazedLength} m`} />
+                      <StudioStat label="Daylight" value={`${roomRep.daylight}%`} tone={roomRep.daylit ? 'ok' : 'warn'} />
+                      <StudioStat label="Doors" value={String(roomRep.doors)} />
+                      <StudioStat label="Egress travel" value={`${roomRep.egressTravel} m`} tone={roomRep.egressOk ? 'ok' : 'warn'} />
+                      <StudioStat label="Finish area" value={`${formatNumber(roomRep.finishArea)} m²`} />
+                    </div>
+                    <div className="mt-2 flex items-center justify-between rounded-lg bg-violet-500/[0.08] px-3 py-2 ring-1 ring-inset ring-violet-500/25">
+                      <span className="text-xs text-violet-200/90">Indicative fit-out</span>
+                      <span className="data-mono text-sm font-semibold text-violet-100">${formatNumber(roomRep.finishCost)}</span>
+                    </div>
+                    {!roomRep.egressOk && roomRep.egressReason && <p className="mt-2 text-[11px] text-amber-300">Egress: {roomRep.egressReason}.</p>}
+                  </div>
+                </>
+              ) : floorRep ? (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <StudioStat label="Floor area" value={`${formatNumber(floorRep.area)} m²`} />
+                    <StudioStat label="Rooms" value={String(floorRep.rooms)} />
+                    <StudioStat label="Occupancy" value={`${formatNumber(floorRep.occupancy)} ppl`} icon={Users} />
+                    <StudioStat label="Daylit rooms" value={`${floorRep.daylitRooms}/${floorRep.rooms}`} tone={floorRep.rooms > 0 && floorRep.daylitRooms >= floorRep.rooms ? 'ok' : 'warn'} />
+                    <StudioStat label="Windows · doors" value={`${floorRep.windows} · ${floorRep.doors}`} />
+                    <StudioStat label="Columns" value={String(floorRep.columns)} />
+                    <StudioStat label="Egress" value={floorRep.egressOk ? 'Pass' : 'Review'} tone={floorRep.egressOk ? 'ok' : 'warn'} />
+                    <StudioStat label="Fit-out" value={`$${formatNumber(floorRep.finishCost)}`} />
+                  </div>
+                  {floorRep.uses.length > 0 && (
+                    <div>
+                      <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Use mix</div>
+                      <div className="space-y-1.5">
+                        {floorRep.uses.map((u) => {
+                          const pct = floorRep.area > 0 ? Math.round((u.area / floorRep.area) * 100) : 0
+                          return (
+                            <div key={u.use} className="flex items-center gap-2 text-xs">
+                              <span className="w-24 shrink-0 truncate text-slate-300">{u.label}</span>
+                              <div className="relative h-2.5 flex-1 overflow-hidden rounded bg-base/60 ring-1 ring-inset ring-edge/40"><div className="h-2.5 rounded bg-violet-500/60" style={{ width: `${Math.max(2, pct)}%` }} /></div>
+                              <span className="data-mono w-24 shrink-0 text-right text-slate-500">{u.count} · {formatNumber(u.area)} m²</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  <div className="rounded-lg border border-violet-500/25 bg-violet-500/[0.06] p-3">
+                    <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-violet-300/90"><Wand2 className="h-3.5 w-3.5" /> Floor-wide</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="block">
+                        <span className="mb-1 block text-[11px] text-slate-400">Re-programme all</span>
+                        <select value="" onChange={(e) => { if (e.target.value) floorReprogram(e.target.value) }} className="w-full rounded-lg border border-edge/60 bg-base/60 px-2 py-1.5 text-sm text-slate-100 focus:border-violet-500/50 focus:outline-none" aria-label="Re-programme all rooms on this floor">
+                          <option value="">Choose use…</option>
+                          {SPACE_TYPES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                        </select>
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-[11px] text-slate-400">Re-finish all</span>
+                        <select value="" onChange={(e) => { if (e.target.value) floorRefinish(e.target.value) }} className="w-full rounded-lg border border-edge/60 bg-base/60 px-2 py-1.5 text-sm text-slate-100 focus:border-violet-500/50 focus:outline-none" aria-label="Re-finish all rooms on this floor">
+                          <option value="">Choose finish…</option>
+                          {FINISHES.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                    <p className="mt-2 text-[11px] text-slate-500">Applies to all {floorRep.rooms} rooms on {floorRep.name} in one step — undoable.</p>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* floor plan + element inspector */}
       <div className="grid gap-6 lg:grid-cols-[1.25fr_1fr]">
@@ -555,7 +728,7 @@ export default function BuildingExplorer() {
       </Card>
 
       {/* life safety / egress */}
-      <Card>
+      <Card data-egress>
         <CardHeader
           icon={ShieldCheck} accent={egress.summary.ok ? 'emerald' : 'amber'} title="Life safety — egress & occupancy"
           subtitle={`Occupant load, travel distance to the nearest protected stair and exit-width capacity per floor, checked against the selected code. ${CODE_PRESETS[code].note} Indicative design-stage check, not certification.`}
@@ -749,6 +922,15 @@ function egressCsv(e: ReturnType<typeof egressAnalysis>): string {
   const head = ['Level', 'Rooms', 'Occupants', 'Exits', 'Max travel (m)', 'Required width (m)', 'Provided width (m)', 'Dead-ends', 'Floor area (m²)', 'Fire compartments', 'Status', 'Issues'].join(',')
   const rows = e.floors.map((f) => [f.name, f.rooms, f.occupancy, f.exits, f.maxTravel, f.requiredWidth, f.providedWidth, f.deadEnds, f.area, f.compartments, f.ok ? 'Pass' : 'Fail', `"${f.issues.join('; ')}"`].join(','))
   return [head, ...rows].join('\n')
+}
+
+function StudioStat({ label, value, icon: Icon, tone }: { label: string; value: string; icon?: typeof Users; tone?: 'ok' | 'warn' }) {
+  return (
+    <div data-stat={label} data-stat-value={value} className="rounded-lg bg-base/50 px-3 py-2 ring-1 ring-inset ring-edge/50">
+      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-slate-500">{Icon && <Icon className="h-3 w-3" />}{label}</div>
+      <div className={cn('data-mono mt-0.5 text-sm font-semibold', tone === 'ok' ? 'text-emerald-300' : tone === 'warn' ? 'text-amber-300' : 'text-slate-100')}>{value}</div>
+    </div>
+  )
 }
 
 function NudgeBtn({ label, icon: Icon, onClick }: { label: string; icon?: typeof Copy; onClick: () => void }) {

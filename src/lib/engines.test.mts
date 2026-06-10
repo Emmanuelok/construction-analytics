@@ -25,11 +25,13 @@ import { mentionNotifications, shareNotifications, alertNotifications, buildFeed
 import { buildMassing, massingSchedule, deriveStoreys, floorColor, type FloorSpec } from './massing.ts'
 import { buildBuilding } from './building.ts'
 import { explodeBuilding, planForLevel, findElementGeom, levelColumns, levelPanels } from './building-explorer.ts'
-import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, addDoorAt, addStairAt, duplicateColumn, editCount } from './building-edits.ts'
+import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, addDoorAt, addStairAt, duplicateColumn, editCount, setRoomName, setRoomUse, setRoomFinish, scaleRoom, editRooms } from './building-edits.ts'
 import { toObj, objStats } from './building-export.ts'
 import { toIfc } from './building-ifc.ts'
 import { handleMcpRpc, MCP_PROTOCOL, SERVER_INFO } from './mcp-rpc.ts'
 import { floorRooms, floorGrid } from './building-rooms.ts'
+import { spaceType, finishGrade, occupants, SPACE_TYPES, FINISHES } from './room-types.ts'
+import { roomReport, floorReport } from './room-studio.ts'
 import { floorPartitions } from './building-partitions.ts'
 import { coreStairs, stairCheck } from './building-stairs.ts'
 import { egressAnalysis, egressPathFor } from './egress.ts'
@@ -916,6 +918,57 @@ section('building-rooms')
   ok('a larger room size → fewer, bigger rooms', floorRooms(fp, { roomSize: 16 }).length < rooms.length)
   // the shared grid: rooms are exactly the cells flagged as rooms (single source of truth)
   ok('floorGrid flags room cells = floorRooms count', (() => { const g = floorGrid(fp, { roomSize: 8 })!; return g.cells.filter((c) => c.room).length === rooms.length })())
+}
+
+// ── room-types (space-type + finish catalog used by the Room Studio) ─────────────
+section('room-types')
+{
+  ok('the catalog has the headline space-types + finish grades', SPACE_TYPES.length >= 8 && FINISHES.length >= 4 && SPACE_TYPES.some((s) => s.id === 'office') && FINISHES.some((f) => f.id === 'premium'))
+  ok('spaceType looks up by id; unknown falls back to the first (office)', spaceType('meeting').label === 'Meeting room' && spaceType('nope').id === SPACE_TYPES[0].id && spaceType(undefined).id === SPACE_TYPES[0].id)
+  ok('finishGrade looks up by id; unknown falls back to standard', finishGrade('premium').cost === 2900 && finishGrade('nope').id === 'standard' && finishGrade(undefined).id === 'standard')
+  ok('occupants = ceil(area ÷ load factor), min 1 for an occupiable space', occupants(100, 'office') === Math.ceil(100 / 9.3) && occupants(1, 'office') === 1)
+  ok('denser use → more occupants for the same area', occupants(100, 'meeting') > occupants(100, 'office'))
+  ok('non-occupiable uses (plant / circulation) carry zero occupant load', occupants(100, 'plant') === 0 && occupants(500, 'circulation') === 0)
+}
+
+// ── room-studio (per-space + per-floor report engine) ────────────────────────────
+section('room-studio')
+{
+  const m = buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0.16 })
+  const r0 = m.rooms.find((r) => r.level === 0)!
+  const rep = roomReport(m, r0.id, { storeyHeight: 3.6, code: 'IBC' })!
+  ok('roomReport returns a full takeoff for a real room', !!rep && rep.id === r0.id && rep.level === 0 && rep.area === r0.area)
+  ok('report carries dimensions, height, volume (volume ≈ area × clear height)', rep.widthM > 0 && rep.depthM > 0 && rep.heightM > 0 && near(rep.volume, rep.area * rep.heightM, rep.area * 0.05))
+  ok('report defaults the use to office + names the use & finish', rep.use === 'office' && rep.useLabel === 'Office' && !!rep.finishLabel)
+  ok('occupancy matches the occupants() factor for the use', rep.occupancy === occupants(r0.area, 'office'))
+  ok('finish cost = finish area × the grade rate (standard 1100)', rep.finishCost === Math.round(rep.finishArea * finishGrade('standard').cost))
+  ok('report exposes a focus region on the room’s level (for the 3D preview)', rep.focus.level === 0 && rep.focus.maxX > rep.focus.minX && rep.focus.maxZ > rep.focus.minZ)
+  ok('a perimeter room is daylit (has façade glazing); egress is evaluated', typeof rep.daylit === 'boolean' && rep.windows >= 0 && typeof rep.egressOk === 'boolean')
+  ok('re-programming the use changes occupancy + finish cost in the report', (() => { const m2 = applyEdits(m, setRoomUse(setRoomFinish(emptyEdits(), r0.id, 'premium'), r0.id, 'meeting')); const r2 = roomReport(m2, r0.id)!; return r2.use === 'meeting' && r2.occupancy > rep.occupancy && r2.finishCost > rep.finishCost })())
+  ok('roomReport on an unknown id is null', roomReport(m, 'nope-room') === null)
+
+  const fr = floorReport(m, 0, { storeyHeight: 3.6, code: 'IBC' })!
+  ok('floorReport rolls up every room on the floor', !!fr && fr.level === 0 && fr.rooms === m.rooms.filter((r) => r.level === 0).length)
+  ok('floor occupancy = Σ room occupancy; cost = Σ room finish cost', (() => { const rs = m.rooms.filter((r) => r.level === 0); const occ = rs.reduce((s, r) => s + occupants(r.area, r.use), 0); return fr.occupancy === occ && fr.finishCost > 0 })())
+  ok('floor report carries a use mix sorted by area (office dominates a plain plan)', fr.uses.length > 0 && fr.uses[0].area >= fr.uses[fr.uses.length - 1].area && fr.uses[0].use === 'office')
+  ok('floor counts windows / doors / columns on the level', fr.windows === m.glazing.filter((g) => g.level === 0).length && fr.columns === m.columns.filter((c) => c.level === 0).length)
+  ok('floorReport on a level with no slab is null', floorReport(m, 99) === null)
+}
+
+// ── room-edits (the Room Studio modification layer) ──────────────────────────────
+section('room-edits')
+{
+  const m = buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0.16 })
+  const r0 = m.rooms.find((r) => r.level === 0)!
+  ok('editRooms with no edits returns the same rooms (no-op)', editRooms(m.rooms, {}) === m.rooms && editRooms(m.rooms) === m.rooms)
+  ok('setRoomName renames a room through applyEdits', applyEdits(m, setRoomName(emptyEdits(), r0.id, 'Boardroom')).rooms.find((r) => r.id === r0.id)!.name === 'Boardroom')
+  ok('setRoomUse / setRoomFinish re-programme a room', (() => { const e = setRoomFinish(setRoomUse(emptyEdits(), r0.id, 'lab'), r0.id, 'technical'); const r = applyEdits(m, e).rooms.find((x) => x.id === r0.id)!; return r.use === 'lab' && r.finish === 'technical' })())
+  ok('scaleRoom grows a room about its centre (area ↑, centre stable)', (() => { const r = applyEdits(m, scaleRoom(emptyEdits(), r0.id, 1.2)).rooms.find((x) => x.id === r0.id)!; return r.area > r0.area && near(r.center.x, r0.center.x, 0.2) && near(r.center.z, r0.center.z, 0.2) })())
+  ok('successive scaleRoom calls accumulate in the edit set; area scales by s²', (() => { const e = scaleRoom(scaleRoom(emptyEdits(), r0.id, 1.2), r0.id, 1.2); const s = e.rooms[r0.id].scale!; const r = applyEdits(m, e).rooms.find((x) => x.id === r0.id)!; return near(s, 1.44, 1e-6) && near(r.area, r0.area * s * s, r0.area * 0.05) })())
+  ok('scaleRoom clamps the factor to 0.4–2.5×', scaleRoom(emptyEdits(), r0.id, 99).rooms[r0.id].scale === 2.5 && scaleRoom(emptyEdits(), r0.id, 0.001).rooms[r0.id].scale === 0.4)
+  ok('editCount tracks room edits alongside element edits', editCount(setRoomUse(setRoomName(emptyEdits(), r0.id, 'X'), 'room-0-1', 'meeting')) === 2)
+  ok('a room edit survives applyEdits without touching element counts', (() => { const a = applyEdits(m, setRoomUse(emptyEdits(), r0.id, 'retail')); return a.columns.length === m.columns.length && a.counts.rooms === m.counts.rooms })())
+  ok('loading an old edit-set with no rooms map does not break applyEdits', (() => { const legacy = { deleted: [], edits: {}, added: [], addedDoors: [], addedStairs: [] } as unknown as ReturnType<typeof emptyEdits>; return applyEdits(m, legacy).rooms.length === m.rooms.length })())
 }
 
 // ── building-partitions + stairs (interior walls between rooms; core stairs) ─────
