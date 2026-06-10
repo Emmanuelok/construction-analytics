@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Sparkles,
@@ -28,6 +28,12 @@ import { useAuth } from '@/store/auth'
 import { useWorkspaces, workspaceProgress, STAGES } from '@/store/workspaces'
 import { ACCENT, NAV } from '@/lib/nav'
 import { recommend, insightsFor, greeting, type Recommendation } from '@/lib/intelligence'
+import { personalLede, roleAccent, timeAgoShort, type Recent } from '@/lib/personalize'
+import { adviseBuilding, nextBestAction } from '@/lib/advisor'
+import { liveFrame } from '@/lib/live'
+import { buildBuilding } from '@/lib/building'
+import { buildMassing, deriveStoreys } from '@/lib/massing'
+import { PROJECTS } from '@/data/platform'
 import type { CatalogDataset } from '@/data/catalog'
 import { cn } from '@/lib/cn'
 import { formatCurrency, formatNumber } from '@/lib/format'
@@ -118,6 +124,17 @@ export default function ForYou() {
   )
 
   const displayName = profile.name || user?.name || (user?.email ? user.email.split('@')[0] : '') || 'there'
+
+  // ---- personal command center: live pulse, phase journey & recents ----
+  const activeProject = PROJECTS[0]
+  const advisorModel = useMemo(() => buildBuilding(buildMassing({ gfa: activeProject.gfa, progress: 100, storeys: deriveStoreys(activeProject.gfa), shape: 'rect' }), { coreRatio: 0.16 }), [activeProject.gfa])
+  const advice = useMemo(() => adviseBuilding({ model: advisorModel }, { role: profile.role }), [advisorModel, profile.role])
+  const nba = useMemo(() => nextBestAction(advice), [advice])
+  const [liveAt, setLiveAt] = useState(() => Date.now())
+  useEffect(() => { const id = setInterval(() => setLiveAt(Date.now()), 3000); return () => clearInterval(id) }, [])
+  const pulse = useMemo(() => liveFrame(7, liveAt), [liveAt])
+  const recents = useMemo<Recent[]>(() => { try { return (JSON.parse(localStorage.getItem('aec-recents') || '[]') as Recent[]).filter((r) => r.path !== '/').slice(0, 4) } catch { return [] } }, [])
+  const accent = roleAccent(profile.role)
   const interestsLearned = Object.keys(signals.tagAffinity).length
 
   const focusLine = useMemo(() => {
@@ -187,6 +204,62 @@ export default function ForYou() {
           </div>
         </div>
       </Card>
+
+      {/* ------------------------------------------ personal command center */}
+      <div data-command-center className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+        <Card className="relative overflow-hidden p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-slate-100">Your project, phase by phase</h2>
+              <Badge variant={advice.counts.critical ? 'danger' : advice.counts.warning ? 'warn' : 'success'} dot>Design health {advice.grade} · {advice.score}</Badge>
+            </div>
+            <span className="text-[11px] text-slate-500">{activeProject.name} · advisor ran every engine for your role{profile.role ? ` (${profile.role})` : ''}</span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {advice.phases.map((p) => (
+              <span key={p.phase} data-phase={p.phase} title={p.headline} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium ring-1 ring-inset',
+                p.status === 'critical' ? 'bg-rose-500/10 text-rose-200 ring-rose-500/30' : p.status === 'warning' ? 'bg-amber-500/10 text-amber-200 ring-amber-500/30' : p.status === 'good' ? 'bg-emerald-500/10 text-emerald-200 ring-emerald-500/25' : 'bg-elevated/40 text-slate-300 ring-edge/50')}>
+                <span className={cn('h-1.5 w-1.5 rounded-full', p.status === 'critical' ? 'bg-rose-400' : p.status === 'warning' ? 'bg-amber-400' : p.status === 'good' ? 'bg-emerald-400' : 'bg-slate-500')} />
+                {p.phase}
+              </span>
+            ))}
+          </div>
+          {nba && (
+            <Link to="/building-explorer" className="lift mt-4 flex items-start justify-between gap-3 rounded-xl border border-edge/60 bg-elevated/40 p-3.5 hover:border-edge">
+              <div>
+                <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Next best action for you</div>
+                <div className="mt-0.5 text-sm font-medium text-slate-100">{nba.title}</div>
+                <div className="mt-0.5 line-clamp-2 text-xs text-slate-400">{nba.detail}</div>
+              </div>
+              <span className="btn-primary mt-1 shrink-0 !px-3 !py-1.5 text-xs">{nba.action ? nba.action.label : 'Open'} <ArrowRight className="h-3.5 w-3.5" /></span>
+            </Link>
+          )}
+          {recents.length > 0 && (
+            <div className="mt-4 flex flex-wrap items-center gap-2" data-recents>
+              <span className="text-[11px] uppercase tracking-wide text-slate-500">Continue</span>
+              {recents.map((r) => { const item = NAV.find((n) => n.path === r.path); if (!item) return null; return (
+                <Link key={r.path} to={r.path} className="inline-flex items-center gap-1.5 rounded-full border border-edge/70 bg-elevated/40 px-3 py-1.5 text-xs text-slate-300 transition-colors hover:border-brand-500/40 hover:text-white">
+                  {item.label} <span className="text-slate-600">{timeAgoShort(r.at, Date.now())}</span>
+                </Link>
+              ) })}
+            </div>
+          )}
+        </Card>
+
+        <Card className="relative overflow-hidden p-5" data-live-pulse>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-slate-100">Site pulse — {activeProject.name}</h2>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-300 ring-1 ring-inset ring-emerald-500/25"><span className="live-dot h-1.5 w-1.5 rounded-full bg-emerald-400" /> Live · simulated feed</span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2.5">
+            <div className="rounded-xl bg-elevated/40 p-3 ring-1 ring-inset ring-edge/50"><div className="text-[11px] text-slate-500">Crew on site</div><div className="data-mono mt-0.5 text-xl font-semibold text-slate-100" data-live="crew">{pulse.crew}</div></div>
+            <div className="rounded-xl bg-elevated/40 p-3 ring-1 ring-inset ring-edge/50"><div className="text-[11px] text-slate-500">Progress</div><div className="data-mono mt-0.5 text-xl font-semibold text-slate-100">{pulse.progress}%</div></div>
+            <div className="rounded-xl bg-elevated/40 p-3 ring-1 ring-inset ring-edge/50"><div className="text-[11px] text-slate-500">Committed today</div><div className="data-mono mt-0.5 text-xl font-semibold text-slate-100">{'$' + formatNumber(pulse.spend)}</div></div>
+            <div className="rounded-xl bg-elevated/40 p-3 ring-1 ring-inset ring-edge/50"><div className="text-[11px] text-slate-500">Concrete today</div><div className="data-mono mt-0.5 text-xl font-semibold text-slate-100">{pulse.pours} m³</div></div>
+          </div>
+          <p className="mt-3 text-[11px] leading-relaxed text-slate-500">{personalLede(profile)} Your accent <span className="inline-block h-2 w-2 rounded-full align-middle" style={{ background: 'rgb(var(--accent))' }} aria-hidden /> ({accent}) follows your role.</p>
+        </Card>
+      </div>
 
       {/* ----------------------------------------------------- spotlight: model review */}
       <Card className="relative overflow-hidden p-5 sm:p-6">

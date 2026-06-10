@@ -82,28 +82,22 @@ export function floorPartitions(poly: Pt[], opts: GridOpts & { base?: number; he
       } else wall(s, e)
     }
   }
+  // one wall segment per adjacent cell pair, so every room pair sharing a wall gets
+  // its own doorway — the egress door-graph stays fully connected, like a real plan
   // vertical interior grid lines (constant x) between columns i and i+1
   for (let i = 0; i < g.cols - 1; i++) {
     const x = g.minX + (i + 1) * g.cw
-    let j = 0
-    while (j < g.rows) {
-      if (!(occ(i, j) || occ(i + 1, j))) { j++; continue }
-      let k = j
-      while (k < g.rows && (occ(i, k) || occ(i + 1, k))) k++
-      push({ x, z: g.minZ + j * g.cd }, { x, z: g.minZ + k * g.cd })
-      j = k
+    for (let j = 0; j < g.rows; j++) {
+      if (!(occ(i, j) || occ(i + 1, j))) continue
+      push({ x, z: g.minZ + j * g.cd }, { x, z: g.minZ + (j + 1) * g.cd })
     }
   }
   // horizontal interior grid lines (constant z) between rows j and j+1
   for (let j = 0; j < g.rows - 1; j++) {
     const z = g.minZ + (j + 1) * g.cd
-    let i = 0
-    while (i < g.cols) {
-      if (!(occ(i, j) || occ(i, j + 1))) { i++; continue }
-      let k = i
-      while (k < g.cols && (occ(k, j) || occ(k, j + 1))) k++
-      push({ x: g.minX + i * g.cw, z }, { x: g.minX + k * g.cw, z })
-      i = k
+    for (let i = 0; i < g.cols; i++) {
+      if (!(occ(i, j) || occ(i, j + 1))) continue
+      push({ x: g.minX + i * g.cw, z }, { x: g.minX + (i + 1) * g.cw, z })
     }
   }
   return { partitions, doors }

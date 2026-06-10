@@ -5,7 +5,9 @@ import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import { CommandPalette } from '@/components/CommandPalette'
 import { Onboarding } from '@/components/Onboarding'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useProfile } from '@/store/profile'
+import { pushRecent, roleAccent, type Recent } from '@/lib/personalize'
 
 function PageFallback() {
   return (
@@ -46,6 +48,17 @@ export function AppShell() {
     return () => window.removeEventListener('aec:onboarding', onOnb)
   }, [])
 
+  // the chrome takes the person's accent, and every visit feeds the recents trail
+  useEffect(() => {
+    document.documentElement.dataset.accent = roleAccent(profile.role)
+  }, [profile.role])
+  useEffect(() => {
+    try {
+      const prev = JSON.parse(localStorage.getItem('aec-recents') || '[]') as Recent[]
+      localStorage.setItem('aec-recents', JSON.stringify(pushRecent(prev, pathname, Date.now())))
+    } catch { /* ignore */ }
+  }, [pathname])
+
   return (
     <div className="min-h-screen">
       {/* Skip to content — first focusable element, visible only on keyboard focus. */}
@@ -69,17 +82,21 @@ export function AppShell() {
           /* Full-bleed routes (e.g. Flow Studio) own the whole viewport below the
              topbar — no max-width, padding or footer, so the canvas is the studio. */
           <main id="main-content" tabIndex={-1} key={pathname} className="h-[calc(100vh-4rem)] animate-fadeup overflow-hidden focus:outline-none">
-            <Suspense fallback={<PageFallback />}>
-              <Outlet />
-            </Suspense>
+            <ErrorBoundary>
+              <Suspense fallback={<PageFallback />}>
+                <Outlet />
+              </Suspense>
+            </ErrorBoundary>
           </main>
         ) : (
           <>
             <main id="main-content" tabIndex={-1} className="mx-auto max-w-[1400px] px-4 py-7 focus:outline-none sm:px-6 lg:px-8">
               <div key={pathname} className="animate-fadeup">
-                <Suspense fallback={<PageFallback />}>
-                  <Outlet />
-                </Suspense>
+                <ErrorBoundary>
+                  <Suspense fallback={<PageFallback />}>
+                    <Outlet />
+                  </Suspense>
+                </ErrorBoundary>
               </div>
             </main>
             <footer className="mx-auto max-w-[1400px] px-4 pb-10 pt-4 sm:px-6 lg:px-8">

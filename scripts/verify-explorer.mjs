@@ -127,6 +127,22 @@ try {
   })
   ok('structural / energy / 4D-schedule cards render with their data', adv.structure && adv.energy && adv.sched, adv)
 
+  // AI advisor card: grade, phase chips, findings + a one-click fix that recomputes
+  const adv2 = await page.evaluate(() => {
+    const card = document.querySelector('[data-advisor]')
+    return { card: !!card, grade: /design health [A-E]/i.test(card?.textContent || ''), phases: card ? card.querySelectorAll('[data-phase]').length : 0, applies: card ? card.querySelectorAll('[data-advisor-apply]').length : 0 }
+  })
+  ok('AI advisor card renders grade + 6 phase chips', adv2.card && adv2.grade && adv2.phases === 6, adv2)
+  if (adv2.applies > 0) {
+    const before = await page.evaluate(() => document.querySelector('[data-advisor]')?.textContent || '')
+    await page.evaluate(() => document.querySelector('[data-advisor-apply]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    await new Promise((r) => setTimeout(r, 900))
+    const after = await page.evaluate(() => document.querySelector('[data-advisor]')?.textContent || '')
+    ok('clicking a one-click fix recomputes the advisor', after.length > 0 && after !== before)
+  } else {
+    ok('advisor has no pending fixes (all clear) — acceptable', true)
+  }
+
   const realErrors = errors.filter((e) => !/404|favicon|tile|Failed to load resource/i.test(e))
   ok('no console errors', realErrors.length === 0, realErrors.slice(0, 4))
 } catch (e) {

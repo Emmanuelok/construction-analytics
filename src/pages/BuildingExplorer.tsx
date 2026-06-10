@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame, Gauge, Sun, CalendarClock } from 'lucide-react'
+import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame, Gauge, Sun, CalendarClock, Sparkles, Wand2 } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge, Tabs } from '@/components/ui'
 import { ScrollableTable } from '@/components/ScrollableTable'
 const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
@@ -16,6 +16,8 @@ import { buildingFire, floorCompartments } from '@/lib/fire'
 import { structuralCheck } from '@/lib/structure'
 import { energyAnalysis } from '@/lib/energy'
 import { schedule4d } from '@/lib/schedule4d'
+import { adviseBuilding, type AdvisorAction } from '@/lib/advisor'
+import { useProfile } from '@/store/profile'
 import { CODE_PRESETS, CODE_KEYS, type CodeKey } from '@/lib/building-code'
 import type { IfcLabels } from '@/lib/ifc-to-model'
 import { idbGet, idbSet, idbDel } from '@/lib/idb'
@@ -125,6 +127,16 @@ export default function BuildingExplorer() {
   const struct = useMemo(() => structuralCheck(model, { storeyHeight }), [model, storeyHeight])
   const energy = useMemo(() => energyAnalysis(model, { storeyHeight }), [model, storeyHeight])
   const sched = useMemo(() => schedule4d(model, {}), [model])
+  const { profile } = useProfile()
+  const advice = useMemo(() => adviseBuilding({ model, storeyHeight, code, wwr }, { role: profile.role }), [model, storeyHeight, code, wwr, profile.role])
+  const applyAdvice = (a: AdvisorAction) => {
+    if (a.kind === 'set-wwr') setWwr(a.value)
+    else if (a.kind === 'set-shape') setShape(a.value as ShapeKind)
+    else if (a.kind === 'set-code') setCode(a.value)
+    else if (a.kind === 'add-stair') { const cx = model.core ? model.core.x + model.core.w * 1.6 : 2; const cz = model.core ? model.core.z : 0; edit((e) => addStairAt(e, model, cx, cz)) }
+    else if (a.kind === 'strengthen-column') edit((e) => rescale(e, a.id, a.factor))
+    else if (a.kind === 'deepen-beam') { const b = model.beams.find((x) => x.id === a.id); if (b) commit({ ...edits, edits: { ...edits.edits, [a.id]: { ...(edits.edits[a.id] ?? {}), height: b.depth * a.factor } } }) }
+  }
   const topColumns = useMemo(() => [...struct.columns].sort((a, b) => b.utilization - a.utilization).slice(0, ROW_CAP), [struct])
   const darkFirst = useMemo(() => [...energy.rooms].sort((a, b) => a.daylight - b.daylight).slice(0, ROW_CAP), [energy])
   const plan = useMemo(() => planForLevel(model, activeLevel), [model, activeLevel])
@@ -223,6 +235,33 @@ export default function BuildingExplorer() {
         <StatTile label="Gross floor area" value={`${formatNumber(ex.summary.gfa)} m²`} accent="emerald" />
         <StatTile label="Concrete" value={`${formatNumber(ex.summary.concreteVolume)} m³`} accent="amber" />
       </div>
+
+      {/* AI advisor — every engine, one prioritized list, one-click fixes */}
+      <Card data-advisor className="relative overflow-hidden">
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-violet-500/[0.07] via-transparent to-transparent" />
+        <CardHeader icon={Sparkles} accent="violet" title={`AI advisor — design health ${advice.grade} (${advice.score}/100)`}
+          subtitle={`Every engine ran on this exact model under ${CODE_PRESETS[code].label}: egress, structure, energy & daylight, fire, programme, plan efficiency. Findings are ordered for your role${profile.role ? ` (${profile.role})` : ''}; fixes apply in one click and everything recomputes.`}
+          action={<div className="flex flex-wrap gap-1.5">{advice.phases.map((p) => (
+            <span key={p.phase} data-phase={p.phase} title={p.headline} className={cn('inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium ring-1 ring-inset', p.status === 'critical' ? 'bg-rose-500/10 text-rose-200 ring-rose-500/30' : p.status === 'warning' ? 'bg-amber-500/10 text-amber-200 ring-amber-500/30' : p.status === 'good' ? 'bg-emerald-500/10 text-emerald-200 ring-emerald-500/25' : 'bg-elevated/40 text-slate-400 ring-edge/50')}>{p.phase}</span>
+          ))}</div>}
+        />
+        <ul className="divide-y divide-edge/40 border-t border-edge/50">
+          {advice.findings.filter((x) => x.severity !== 'good').slice(0, 6).map((x) => (
+            <li key={x.id} className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-5 py-2.5">
+              <span className={cn('h-2 w-2 shrink-0 rounded-full', x.severity === 'critical' ? 'bg-rose-400' : x.severity === 'warning' ? 'bg-amber-400' : 'bg-sky-400')} aria-hidden />
+              <div className="min-w-0 flex-1">
+                <span className="text-sm font-medium text-slate-100">{x.title}</span>
+                <span className="ml-2 hidden text-xs text-slate-400 lg:inline">{x.detail}</span>
+              </div>
+              {x.metric && <span className="data-mono shrink-0 text-[11px] text-slate-500">{x.metric}</span>}
+              {x.action && <button data-advisor-apply onClick={() => applyAdvice(x.action!)} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-violet-500/15 px-2.5 py-1 text-xs font-medium text-violet-200 ring-1 ring-inset ring-violet-500/40 transition-colors hover:bg-violet-500/25"><Wand2 className="h-3 w-3" /> {x.action.label}</button>}
+            </li>
+          ))}
+          {advice.findings.filter((x) => x.severity !== 'good').length === 0 && (
+            <li className="px-5 py-3 text-sm text-emerald-300">All clear — every engine passes for this design under {CODE_PRESETS[code].label}.</li>
+          )}
+        </ul>
+      </Card>
 
       {/* model parameters (generated model) — or an import banner */}
       {imported ? (
