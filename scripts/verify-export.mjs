@@ -40,7 +40,7 @@ try {
   await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === 'OBJ')?.click())
   const objPath = await waitFile('.obj')
   ok('OBJ file downloads', !!objPath, objPath)
-  if (objPath) { const obj = readFileSync(objPath, 'utf8'); ok('OBJ is a valid grouped mesh (v/f + trades incl. Partitions + InteriorDoors + Stairs)', /\nv /.test(obj) && /\nf /.test(obj) && /\ng Columns/.test(obj) && /\ng Windows/.test(obj) && /\ng Partitions/.test(obj) && /\ng InteriorDoors/.test(obj) && /\ng Stairs/.test(obj)) }
+  if (objPath) { const obj = readFileSync(objPath, 'utf8'); ok('OBJ is a valid grouped mesh (v/f + trades incl. Partitions + InteriorDoors + Stairs)', /\nv /.test(obj) && /\nf /.test(obj) && /\ng Columns/.test(obj) && /\ng Windows/.test(obj) && /\ng Partitions/.test(obj) && /\ng InteriorDoors/.test(obj) && /\ng Stairs/.test(obj) && /\ng Foundations/.test(obj) && /\ng Ceilings/.test(obj) && /\ng Finishes/.test(obj)) }
 
   // glTF (async — GLTFExporter)
   await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === 'glTF')?.click())
