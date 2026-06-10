@@ -6,6 +6,7 @@ const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildin
 const IfcExplorer = lazy(() => import('@/components/IfcExplorer').then((m) => ({ default: m.IfcExplorer })))
 const DrawingExplorer = lazy(() => import('@/components/DrawingExplorer').then((m) => ({ default: m.DrawingExplorer })))
 import { FloorPlan } from '@/components/FloorPlan'
+import { TypeSwatch } from '@/components/TypeSwatch'
 import { buildMassing, deriveStoreys, SHAPE_KINDS, type ShapeKind } from '@/lib/massing'
 import { buildBuilding, type BuildingModel } from '@/lib/building'
 import { explodeBuilding, planForLevel, type Schedule, type ScheduleCol, type BuildingElement } from '@/lib/building-explorer'
@@ -61,6 +62,14 @@ const CATS: { key: string; label: string; count: (m: BuildingModel) => number }[
   { key: 'roof', label: 'Roof', count: (m) => (m.roof ? 1 : 0) },
 ]
 const ROW_CAP = 300 // cap rendered schedule rows (export covers all)
+// family key → viewer category keys, for "Preview in 3D" (isolate that family)
+const FAMILY_TO_CATS: Record<string, string[]> = {
+  column: ['columns'], beam: ['beams'], facade: ['walls'], glazing: ['windows'], door: ['doors'],
+  interiorDoor: ['interiorDoors'], partition: ['partitions'], floorFinish: ['finishes'], ceiling: ['ceilings'],
+  roof: ['roof'], foundation: ['foundations'], stair: ['stairs'], slab: ['slabs'], core: ['core'],
+  mullion: ['mullions'], balustrade: ['parapets'],
+}
+const ALL_CAT_KEYS = [...CATS.map((c) => c.key), 'furniture', 'lighting', 'hvac', 'fire', 'sanitary']
 const CAT_ICON: Record<string, typeof Columns3> = { Floor: SquareStack, Column: Columns3, Beam: Rows3, Window: Frame, Door: DoorOpen, 'Interior Door': DoorOpen, Wall: Square, Partition: Square, Room: Square, Stair: Rows3, Core: BoxIcon, Roof: SquareStack }
 
 const fmtCell = (v: number | string) => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v)
@@ -116,6 +125,9 @@ export default function BuildingExplorer() {
   const [types, setTypes] = useState<TypeSelections>(() => ({ ...DEFAULT_TYPES, ...(init0?.types ?? {}) }))
   const [ffeSel, setFfeSel] = useState<Record<string, string>>(() => init0?.ffe ?? {})
   const [svcSel, setSvcSel] = useState<SvcSelections>(() => init0?.svc ?? {})
+  // "Preview in 3D": isolate one family's elements in the viewer to see its render
+  const [famPreview, setFamPreview] = useState<string | null>(null)
+  const prevCatsRef = useRef<Record<string, boolean> | null>(null)
   const [edits, setEdits] = useState<BuildingEdits>(() => init0?.edits ?? emptyEdits())
   const [past, setPast] = useState<BuildingEdits[]>([])
   const [future, setFuture] = useState<BuildingEdits[]>([])
@@ -198,6 +210,15 @@ export default function BuildingExplorer() {
     const p = at ?? room?.center ?? { x: model.core ? model.core.x + model.core.w * 1.4 : 0, z: model.core ? model.core.z : 0 }
     setIsolate(false)
     setWalk({ x: p.x, z: p.z, level: lvl })
+    document.querySelector('[data-main-viewer]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+  // isolate one family's elements in the 3D model (and restore the prior layer set)
+  const toggleFamPreview = (key: string) => {
+    if (famPreview === key) { setCats(prevCatsRef.current ?? {}); prevCatsRef.current = null; setFamPreview(null); return }
+    if (!famPreview) prevCatsRef.current = cats
+    const keep = new Set(FAMILY_TO_CATS[key] ?? [])
+    setCats(Object.fromEntries(ALL_CAT_KEYS.filter((k) => !keep.has(k)).map((k) => [k, true])))
+    setFamPreview(key)
     document.querySelector('[data-main-viewer]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
   const snapshotInto = (root: ParentNode | null, name: string) => {
@@ -392,21 +413,44 @@ export default function BuildingExplorer() {
       <Card data-families>
         <CardHeader
           icon={Library} accent="sky" title={`Families & types — ${familyCount()} types across ${FAMILIES.length} families`}
-          subtitle="Every critical element carries real alternatives, like swapping a family type in CAD: structural sections (RC / steel / PT / timber), façade systems, glazing builds, door sets, partitions, floor finishes, ceilings, roof build-ups, foundations and stairs. Selecting a type recolours the model and re-runs the engines — U-values into energy, section strength into structure, rates into cost."
-          action={<button onClick={() => downloadText(`${slug(project.name)}-families.csv`, familiesCsv(types), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+          subtitle="Every critical element carries real alternatives, like swapping a family type in CAD: structural sections (RC / steel / PT / timber), façade systems, glazing builds, door sets, partitions, floor finishes, ceilings, roofs, foundations, stairs, slabs, cores, mullions and balustrades. Each type has a render preview — click a swatch to apply it; the 3D model recolours and the engines re-run (U-values → energy, section strength → structure, rates → cost)."
+          action={
+            <div className="flex flex-wrap items-center gap-2">
+              {famPreview && <button onClick={() => toggleFamPreview(famPreview)} className="inline-flex items-center gap-1.5 rounded-lg bg-sky-500/20 px-2.5 py-1 text-xs font-medium text-sky-100 ring-1 ring-inset ring-sky-500/40 hover:bg-sky-500/30"><Eye className="h-3.5 w-3.5" /> Previewing {FAMILIES.find((f) => f.key === famPreview)?.label} — Show all</button>}
+              <button onClick={() => downloadText(`${slug(project.name)}-families.csv`, familiesCsv(types), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>
+            </div>
+          }
         />
         <div className="grid gap-x-4 gap-y-3 border-t border-edge/50 p-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {FAMILIES.map((f) => {
             const active = familyType(f.key, types[f.key])
             const props = Object.entries(active.props).slice(0, 2).map(([k, v]) => `${k} ${v}`).join(' · ')
             return (
-              <label key={f.key} className="block rounded-lg bg-base/40 p-2.5 ring-1 ring-inset ring-edge/50">
-                <span className="mb-1 flex items-center justify-between text-[11px] uppercase tracking-wide text-slate-500"><span>{f.label}</span><span className="data-mono normal-case text-slate-400">${formatNumber(active.cost)}/{active.unit}</span></span>
+              <div key={f.key} className={cn('rounded-lg bg-base/40 p-2.5 ring-1 ring-inset', famPreview === f.key ? 'ring-sky-500/50' : 'ring-edge/50')}>
+                <span className="mb-1 flex items-center justify-between gap-2 text-[11px] uppercase tracking-wide text-slate-500">
+                  <span className="truncate">{f.label}</span>
+                  <span className="flex shrink-0 items-center gap-1.5">
+                    <span className="data-mono normal-case text-slate-400">${formatNumber(active.cost)}/{active.unit}</span>
+                    <button onClick={() => toggleFamPreview(f.key)} aria-pressed={famPreview === f.key} aria-label={`Preview ${f.label} in 3D`} title="Isolate this family in the 3D model" className={cn('rounded p-0.5 transition-colors', famPreview === f.key ? 'text-sky-300' : 'text-slate-500 hover:text-sky-300')}><Eye className="h-3.5 w-3.5" /></button>
+                  </span>
+                </span>
+                {/* render previews — click a swatch to apply that type */}
+                <div className="mb-1.5 flex flex-wrap gap-1" role="group" aria-label={`${f.label} type previews`}>
+                  {f.types.map((t) => {
+                    const on = (types[f.key] ?? f.types[0].id) === t.id
+                    return (
+                      <button key={t.id} onClick={() => setTypes((s) => ({ ...s, [f.key]: t.id }))} aria-pressed={on} aria-label={`${f.label}: ${t.label}`} title={`${t.label} — ${t.material} · $${formatNumber(t.cost)}/${t.unit}`}
+                        className={cn('rounded p-0.5 ring-2 transition-all', on ? 'ring-sky-400/80' : 'ring-transparent opacity-75 hover:opacity-100 hover:ring-edge/80')}>
+                        <TypeSwatch family={f.key} type={t} />
+                      </button>
+                    )
+                  })}
+                </div>
                 <select value={types[f.key] ?? f.types[0].id} onChange={(e) => setTypes((t) => ({ ...t, [f.key]: e.target.value }))} aria-label={`${f.label} type`} className="w-full rounded-lg border border-edge/60 bg-elevated/50 px-2 py-1.5 text-sm text-slate-100 focus:border-sky-500/50 focus:outline-none">
                   {f.types.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
                 </select>
                 <span className="mt-1 block truncate text-[11px] text-slate-500" title={`${active.material}${props ? ` · ${props}` : ''}`}>{active.material}{props ? ` · ${props}` : ''}</span>
-              </label>
+              </div>
             )
           })}
         </div>

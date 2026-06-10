@@ -1005,7 +1005,9 @@ section('building-furniture')
 // ── families (the element catalog: types/alternatives per category) ──────────────
 section('families')
 {
-  ok('the catalog covers the full element tree (12 categories, 40+ types)', FAMILIES.length === 12 && familyCount() >= 40 && FAMILIES.every((f) => f.types.length >= 3))
+  ok('the catalog covers the full element tree (16 categories, 65+ types)', FAMILIES.length === 16 && familyCount() >= 65 && FAMILIES.every((f) => f.types.length >= 3))
+  ok('slabs, core walls, mullions and balustrades are catalogued too', ['slab', 'core', 'mullion', 'balustrade'].every((k) => (FAMILIES.find((f) => f.key === k)?.types.length ?? 0) >= 3))
+  ok('timber alternatives run across the tree (column, slab, core, ceiling)', familyType('column', 'glulam-col').material.includes('GL28') && familyType('slab', 'clt').material.includes('spruce') && familyType('core', 'clt-core').props.system === 'timber shear' && familyType('ceiling', 'baffle').label.includes('Timber'))
   ok('every category carries real alternatives with material + rate + props', FAMILIES.every((f) => f.types.every((t) => t.label && t.material && t.cost > 0 && Object.keys(t.props).length > 0)))
   ok('DEFAULT_TYPES selects the first type of every category', Object.keys(DEFAULT_TYPES).length === FAMILIES.length && FAMILIES.every((f) => DEFAULT_TYPES[f.key] === f.types[0].id))
   ok('familyType looks up by id; unknown falls back to the default', familyType('column', 'steel-uc').material.includes('S355') && familyType('column', 'nope').id === 'rc-square' && familyType('nope').id === 'none')
