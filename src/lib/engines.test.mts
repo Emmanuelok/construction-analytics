@@ -1069,13 +1069,13 @@ section('live')
 section('personalize')
 {
   const TOOLS = [
-    { path: '/model-studio', label: 'Model Studio' }, { path: '/building-explorer', label: 'Building Explorer' },
+    { path: '/building-explorer', label: 'Building Explorer' },
     { path: '/site-zoning', label: 'Site & Zoning' }, { path: '/sustainability', label: 'Sustainability' },
     { path: '/cost-schedule', label: 'Cost & Schedule' }, { path: '/analyze', label: 'Analysis Studio' }, { path: '/digital-twin', label: 'Digital Twin' },
   ]
   const arch = { name: 'Ada', role: 'Architect', disciplines: [] as string[], sectors: [] as string[], goals: [] as string[], experience: 'Expert' as const, onboarded: true }
   const r1 = rankTools({ ...arch }, {}, TOOLS, 4)
-  ok('an architect’s home turf leads the ranking', r1[0].path === '/model-studio' && r1[1].path === '/building-explorer' && /Architect/.test(r1[0].reason))
+  ok('an architect’s home turf leads the ranking', r1[0].path === '/building-explorer' && r1[1].path === '/site-zoning' && /Architect/.test(r1[0].reason))
   const sus = rankTools({ ...arch, role: '', goals: ['Cut embodied carbon'] }, {}, TOOLS, 3)
   ok('stated goals pull their tools up for any role', sus.some((t) => t.path === '/sustainability' && /goals/.test(t.reason)))
   const used = rankTools({ ...arch, role: '' }, { '/digital-twin': 9 }, TOOLS, 3)

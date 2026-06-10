@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame, Gauge, Sun, CalendarClock, Sparkles, Wand2 } from 'lucide-react'
+import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame, Gauge, Sun, CalendarClock, Sparkles, Wand2, Camera, EyeOff } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge, Tabs } from '@/components/ui'
 import { ScrollableTable } from '@/components/ScrollableTable'
 const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
@@ -17,6 +17,8 @@ import { structuralCheck } from '@/lib/structure'
 import { energyAnalysis } from '@/lib/energy'
 import { schedule4d } from '@/lib/schedule4d'
 import { adviseBuilding, type AdvisorAction } from '@/lib/advisor'
+import { sunPosition, momentOf } from '@/lib/sun'
+import type { ViewerStyle } from '@/components/ComponentBuildingViewer'
 import { useProfile } from '@/store/profile'
 import { CODE_PRESETS, CODE_KEYS, type CodeKey } from '@/lib/building-code'
 import type { IfcLabels } from '@/lib/ifc-to-model'
@@ -29,6 +31,28 @@ import { formatNumber } from '@/lib/format'
 import { downloadText, slug } from '@/lib/download'
 
 const SEL_KEY = 'aec-active-project'
+const STYLES: { id: ViewerStyle; label: string }[] = [
+  { id: 'wire', label: 'Wireframe' }, { id: 'mono', label: 'Hidden line' }, { id: 'shaded', label: 'Shaded' }, { id: 'realistic', label: 'Realistic' }, { id: 'xray', label: 'X-ray' },
+]
+// the model browser — every layer of the building, like Revit's category tree
+const CATS: { key: string; label: string; count: (m: BuildingModel) => number }[] = [
+  { key: 'foundations', label: 'Substructure (footings + ground beams)', count: (m) => m.counts.foundations + m.counts.groundBeams },
+  { key: 'slabs', label: 'Floor slabs', count: (m) => m.counts.slabs },
+  { key: 'columns', label: 'Columns', count: (m) => m.counts.columns },
+  { key: 'beams', label: 'Beams', count: (m) => m.counts.beams },
+  { key: 'core', label: 'Core', count: (m) => (m.core ? 1 : 0) },
+  { key: 'stairs', label: 'Stairs', count: (m) => m.counts.stairs },
+  { key: 'walls', label: 'Façade walls', count: (m) => m.counts.walls },
+  { key: 'mullions', label: 'Mullions', count: (m) => m.counts.mullions },
+  { key: 'windows', label: 'Windows', count: (m) => m.counts.windows },
+  { key: 'doors', label: 'Entrance doors', count: (m) => m.counts.doors },
+  { key: 'partitions', label: 'Partitions', count: (m) => m.counts.partitions },
+  { key: 'interiorDoors', label: 'Interior doors', count: (m) => m.counts.interiorDoors },
+  { key: 'finishes', label: 'Floor finishes', count: (m) => m.counts.finishes },
+  { key: 'ceilings', label: 'Ceilings', count: (m) => m.counts.ceilings },
+  { key: 'parapets', label: 'Parapets', count: (m) => m.counts.parapets },
+  { key: 'roof', label: 'Roof', count: (m) => (m.roof ? 1 : 0) },
+]
 const ROW_CAP = 300 // cap rendered schedule rows (export covers all)
 const CAT_ICON: Record<string, typeof Columns3> = { Floor: SquareStack, Column: Columns3, Beam: Rows3, Window: Frame, Door: DoorOpen, 'Interior Door': DoorOpen, Wall: Square, Partition: Square, Room: Square, Stair: Rows3, Core: BoxIcon, Roof: SquareStack }
 
@@ -64,7 +88,12 @@ export default function BuildingExplorer() {
   const [isolate, setIsolate] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [schedTab, setSchedTab] = useState('Floor')
-  const [hidden, setHidden] = useState<{ glazing?: boolean; structure?: boolean; slabs?: boolean; facade?: boolean; interior?: boolean }>({})
+  const [cats, setCats] = useState<Record<string, boolean>>({})
+  const [style, setStyle] = useState<ViewerStyle>('realistic')
+  const [section, setSection] = useState(100) // % of height; 100 = section box off
+  const [sunOn, setSunOn] = useState(false)
+  const [month, setMonth] = useState(6)
+  const [hour, setHour] = useState(14)
   const [wwr, setWwr] = useState(() => init0?.wwr ?? 0.55)
   const [bayWidth, setBayWidth] = useState(() => init0?.bayWidth ?? 3.4)
   const [mullions, setMullions] = useState(() => init0?.mullions ?? true)
@@ -136,6 +165,14 @@ export default function BuildingExplorer() {
     else if (a.kind === 'add-stair') { const cx = model.core ? model.core.x + model.core.w * 1.6 : 2; const cz = model.core ? model.core.z : 0; edit((e) => addStairAt(e, model, cx, cz)) }
     else if (a.kind === 'strengthen-column') edit((e) => rescale(e, a.id, a.factor))
     else if (a.kind === 'deepen-beam') { const b = model.beams.find((x) => x.id === a.id); if (b) commit({ ...edits, edits: { ...edits.edits, [a.id]: { ...(edits.edits[a.id] ?? {}), height: b.depth * a.factor } } }) }
+  }
+  const sun = useMemo(() => { if (!sunOn) return undefined; const p = sunPosition(momentOf(month, hour), 40.71, -74.0); return { azimuth: p.azimuth, altitude: p.altitude } }, [sunOn, month, hour])
+  const clipY = section >= 100 ? null : (section / 100) * model.totalHeight
+  const snapshot = () => {
+    const el = document.querySelector('[aria-label^="3D building model"]') as (HTMLElement & { __snapshot?: () => string }) | null
+    const url = el?.__snapshot?.()
+    if (!url) return
+    const a = document.createElement('a'); a.href = url; a.download = `${slug(project.name)}-render.png`; document.body.appendChild(a); a.click(); a.remove()
   }
   const topColumns = useMemo(() => [...struct.columns].sort((a, b) => b.utilization - a.utilization).slice(0, ROW_CAP), [struct])
   const darkFirst = useMemo(() => [...energy.rooms].sort((a, b) => a.daylight - b.daylight).slice(0, ROW_CAP), [energy])
@@ -297,7 +334,7 @@ export default function BuildingExplorer() {
       <div className="grid gap-6 lg:grid-cols-[1.55fr_1fr]">
         <Card className="overflow-hidden">
           <CardHeader
-            icon={Eye} accent="blue" title="3D model" subtitle="Click any element to inspect it; isolate a floor from the levels panel. Turn on Edit to move / resize / delete / duplicate elements (or drag a column in the plan) and add columns or interior doors — the schedules update live."
+            icon={Eye} accent="blue" title="3D model & studio" subtitle="Model Studio lives here now: render styles, a sun study, a section box and PNG renders above the viewport; every building layer toggles in the Model browser alongside. Click any element to inspect; Edit to move / resize / delete and add columns, doors or stairs — schedules update live."
             action={
               <div className="flex flex-wrap items-center gap-2">
                 {isolate && <Badge variant="cyan">Isolated · {activeLevelInfo?.name ?? `Level ${activeLevel}`}</Badge>}
@@ -309,24 +346,58 @@ export default function BuildingExplorer() {
                   <button onClick={() => setAddKind((k) => (k === 'stair' ? null : 'stair'))} aria-pressed={addKind === 'stair'} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', addKind === 'stair' ? 'bg-emerald-500/20 text-emerald-100 ring-emerald-500/40' : 'text-slate-300 ring-edge/60 hover:bg-elevated/50')}><Rows3 className="h-3.5 w-3.5" /> Add stair</button>
                   <button onClick={resetEdits} disabled={!nEdits} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', nEdits ? 'text-slate-300 ring-edge/60 hover:bg-elevated/50' : 'cursor-default text-slate-600 ring-edge/40')}><RotateCcw className="h-3.5 w-3.5" /> Reset{nEdits ? ` (${nEdits})` : ''}</button>
                 </>}
-                <div className="flex flex-wrap gap-1.5">
-                  {([['structure', 'Structure'], ['facade', 'Walls'], ['interior', 'Interior'], ['glazing', 'Windows'], ['slabs', 'Slabs']] as const).map(([k, label]) => (
-                    <button key={k} onClick={() => setHidden((h) => ({ ...h, [k]: !h[k] }))} aria-pressed={!hidden[k]} className={cn('rounded-lg px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors', hidden[k] ? 'text-slate-500 ring-edge/60' : 'bg-blue-500/15 text-blue-200 ring-blue-500/40')}>{label}</button>
-                  ))}
-                </div>
               </div>
             }
           />
+          <div className="flex flex-wrap items-center gap-2 border-t border-edge/50 px-4 py-2.5">
+            <div className="flex overflow-hidden rounded-lg ring-1 ring-inset ring-edge/60">
+              {STYLES.map((st) => (
+                <button key={st.id} onClick={() => setStyle(st.id)} aria-pressed={style === st.id} className={cn('px-2.5 py-1 text-xs font-medium transition-colors', style === st.id ? 'bg-violet-500/20 text-violet-100' : 'text-slate-400 hover:bg-elevated/50 hover:text-slate-200')}>{st.label}</button>
+              ))}
+            </div>
+            <label className="flex items-center gap-1.5 text-[11px] text-slate-400" title="Horizontal section box — cut the model at a height">
+              Section
+              <input type="range" min={5} max={100} step={1} value={section} onChange={(e) => setSection(Number(e.target.value))} className="w-28 accent-violet-500" aria-label="Section height" />
+              <span className="data-mono w-10 text-slate-300">{section >= 100 ? 'off' : `${section}%`}</span>
+            </label>
+            <button onClick={() => setSunOn((v) => !v)} aria-pressed={sunOn} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-colors', sunOn ? 'bg-amber-500/20 text-amber-100 ring-amber-500/40' : 'text-slate-300 ring-edge/60 hover:bg-elevated/50')}><Sun className="h-3.5 w-3.5" /> Sun study</button>
+            {sunOn && <>
+              <label className="flex items-center gap-1.5 text-[11px] text-slate-400">Month <input type="range" min={1} max={12} value={month} onChange={(e) => setMonth(Number(e.target.value))} className="w-20 accent-amber-500" aria-label="Sun month" /><span className="data-mono w-6 text-slate-300">{month}</span></label>
+              <label className="flex items-center gap-1.5 text-[11px] text-slate-400">Hour <input type="range" min={5} max={21} step={0.5} value={hour} onChange={(e) => setHour(Number(e.target.value))} className="w-20 accent-amber-500" aria-label="Sun hour" /><span className="data-mono w-8 text-slate-300">{hour}:00</span></label>
+            </>}
+            <button onClick={snapshot} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-200 ring-1 ring-inset ring-emerald-500/40 hover:bg-emerald-500/25"><Camera className="h-3.5 w-3.5" /> Render PNG</button>
+          </div>
           <div className="border-t border-edge/50">
             <Suspense fallback={<div style={{ height: 560 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-              <ComponentBuildingViewer model={model} hidden={hidden} isolateLevel={isolate ? activeLevel : null} selected={selectedId} onSelect={selectEl} height={560} />
+              <ComponentBuildingViewer model={model} cats={cats} style={style} clipY={clipY} sun={sun} isolateLevel={isolate ? activeLevel : null} selected={selectedId} onSelect={selectEl} height={560} />
             </Suspense>
           </div>
         </Card>
 
+        <div className="flex flex-col gap-6">
+        <Card className="flex flex-col">
+          <CardHeader icon={Layers} accent="violet" title="Model browser" subtitle="Every layer, substructure to finishes — toggle visibility per category." />
+          <ul className="max-h-[300px] divide-y divide-edge/40 overflow-y-auto border-t border-edge/50">
+            {CATS.map((c) => {
+              const n = c.count(model)
+              const hiddenCat = !!cats[c.key]
+              return (
+                <li key={c.key} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                  <span className={cn('truncate text-xs', hiddenCat ? 'text-slate-600' : 'text-slate-300')}>{c.label}</span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    <span className="data-mono text-[11px] text-slate-500">{formatNumber(n)}</span>
+                    <button onClick={() => setCats((h) => ({ ...h, [c.key]: !h[c.key] }))} aria-pressed={!hiddenCat} aria-label={`Toggle ${c.label}`} className={cn('rounded p-1 transition-colors', hiddenCat ? 'text-slate-600 hover:text-slate-400' : 'text-violet-300 hover:text-violet-200')}>
+                      {hiddenCat ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    </button>
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        </Card>
         <Card className="flex flex-col">
           <CardHeader icon={Layers} accent="cyan" title="Levels" subtitle="Top-down. Click to isolate a floor & load its plan." />
-          <div className="max-h-[460px] overflow-y-auto border-t border-edge/50">
+          <div className="max-h-[300px] overflow-y-auto border-t border-edge/50">
             <ul className="divide-y divide-edge/40">
               {[...ex.levels].reverse().map((l) => {
                 const on = l.index === activeLevel
@@ -347,6 +418,7 @@ export default function BuildingExplorer() {
             </ul>
           </div>
         </Card>
+        </div>
       </div>
 
       {/* floor plan + element inspector */}
