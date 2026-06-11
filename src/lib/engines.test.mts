@@ -1599,13 +1599,14 @@ section('bim-audit')
   const comp = composition(geo.entityCounts)
   ok('composition rolls every record into the six groups (counts reconcile)', comp.reduce((s, g) => s + g.count, 0) === geo.entityCounts.reduce((s, e) => s + e.count, 0))
   ok('geometry plumbing dominates a real IFC (that is normal, and said so)', (() => { const g = comp.find((x) => x.group === 'geometry')!; return g.pct >= 40 && /normal/i.test(g.blurb) })())
-  ok('building elements group carries the physical parts with top chips', (() => { const g = comp.find((x) => x.group === 'elements')!; return g.count === geo.elementCount && g.top.length > 0 && g.top.some((t) => t.label === 'Columns') })())
+  ok('building elements group carries the physical parts with top chips', (() => { const g = comp.find((x) => x.group === 'elements')!; return g.count === geo.elementCount && g.top.length > 0 && g.top.some((t) => t.label === 'Walls') })())
   // the QA pass
   const audit = auditModel(geo)
   ok('the fixed sample passes the spatial checks (storeys + containment + geometry + units)', ['spatial', 'contain', 'geometry', 'units'].every((id) => audit.findings.find((f) => f.id === id)?.severity === 'good'))
-  ok('and is honestly told what to tighten (no types, no psets → warnings)', audit.findings.find((f) => f.id === 'types')?.severity === 'warning' && audit.findings.find((f) => f.id === 'psets')?.severity === 'warning')
+  ok('the generated sample also passes types, psets and spaces (toIfc writes them)', ['types', 'psets', 'spaces'].every((id) => audit.findings.find((f) => f.id === id)?.severity === 'good'))
+  ok('what it genuinely lacks is reported as info (no quantities, no materials)', audit.findings.find((f) => f.id === 'qto')?.severity === 'info' && audit.findings.find((f) => f.id === 'materials')?.severity === 'info')
   ok('every finding explains itself in plain language (detail + why)', audit.findings.every((f) => f.detail.length > 10 && f.why.length > 20))
-  ok('score + grade reflect the findings; headline names the first fix', audit.score > 40 && audit.score < 95 && /tighten|fix/i.test(audit.headline))
+  ok('score + grade reflect the findings (a healthy generated model grades A/B)', audit.score >= 74 && (audit.grade === 'A' || audit.grade === 'B') && /ready to federate|tighten/i.test(audit.headline))
   ok('findings are ordered critical → warning → good → info', (() => { const r = { critical: 0, warning: 1, good: 2, info: 3 } as const; const xs = audit.findings.map((f) => r[f.severity]); return xs.every((v, i) => i === 0 || v >= xs[i - 1]) })())
   // a structureless file audits worse
   const bare = auditModel({ schema: 'IFC4', totalInstances: 50, elementCount: 10, distinctTypes: 4, storeys: [], entityCounts: [{ type: 'IFCWALL', count: 10 }, { type: 'IFCCARTESIANPOINT', count: 40 }] })
@@ -1621,22 +1622,25 @@ section('ifc-geometry')
 {
   const bytes = new TextEncoder().encode(SAMPLE_IFC_GEO)
   const res = await extractGeometry(bytes, { wasmPath: './node_modules/web-ifc/' })
-  // 4 storeys × (1 slab + 6 columns + 2 beams) + 2 walls on the lower 3 = 42 elements.
-  ok('tessellates every sample element (42 meshes)', res.meshes.length === 42, res.meshes.length)
-  ok('produces real vertices', res.vertexCount > 1000, res.vertexCount)
-  ok('produces real triangles', res.triangleCount > 300, res.triangleCount)
+  // The sample is now the studio's own generated tower exported via toIfc — the
+  // full anatomy (substructure → finishes), so hundreds of real solids tessellate.
+  const solids = res.meshes.filter((m) => m.ifcTypeName !== 'IFCSPACE')
+  ok('tessellates a complete structure (hundreds of solids, not a mock-up)', solids.length > 250 && solids.length < 4000, solids.length)
+  ok('produces real vertices', res.vertexCount > 5000, res.vertexCount)
+  ok('produces real triangles', res.triangleCount > 2000, res.triangleCount)
   ok('every mesh has positions, normals and indices', res.meshes.every((m) => m.positions.length > 0 && m.normals.length === m.positions.length && m.indices.length > 0))
   ok('positions and normals are xyz triples', res.meshes.every((m) => m.positions.length % 3 === 0))
   ok('indices form whole triangles', res.meshes.every((m) => m.indices.length % 3 === 0))
   ok('each mesh carries a 4x4 placement matrix', res.meshes.every((m) => m.matrix.length === 16))
   ok('each mesh carries an RGBA colour', res.meshes.every((m) => 'r' in m.color && 'a' in m.color))
-  ok('classifies discipline from real IFC type (36 struct, 6 arch)',
-    res.meshes.filter((m) => m.discipline === 'struct').length === 36 && res.meshes.filter((m) => m.discipline === 'arch').length === 6,
-    res.meshes.reduce<Record<string, number>>((a, m) => ({ ...a, [m.discipline]: (a[m.discipline] ?? 0) + 1 }), {}))
+  ok('both disciplines are richly represented (structure + architecture)',
+    solids.filter((m) => m.discipline === 'struct').length > 40 && solids.filter((m) => m.discipline === 'arch').length > 40,
+    solids.reduce<Record<string, number>>((a, m) => ({ ...a, [m.discipline]: (a[m.discipline] ?? 0) + 1 }), {}))
   const names = new Set(res.meshes.map((m) => m.ifcTypeName))
-  ok('resolves readable IFC type names for the inspector', names.has('IFCCOLUMN') && names.has('IFCSLAB') && names.has('IFCBEAM') && names.has('IFCWALLSTANDARDCASE'), [...names])
-  ok('bbox spans the four storeys vertically (~14m, Y-up)', !!res.bbox && near(res.bbox.max[1] - res.bbox.min[1], 14, 0.5), res.bbox)
-  ok('bbox plan width ~16m', !!res.bbox && near(res.bbox.max[0] - res.bbox.min[0], 16, 0.5), res.bbox)
+  ok('the full anatomy is present — slabs, columns, beams, walls, windows, doors, stairs, railings, finishes, footings, core',
+    ['IFCSLAB', 'IFCCOLUMN', 'IFCBEAM', 'IFCWALL', 'IFCWINDOW', 'IFCDOOR', 'IFCSTAIRFLIGHT', 'IFCRAILING', 'IFCCOVERING', 'IFCFOOTING', 'IFCBUILDINGELEMENTPROXY'].every((t) => names.has(t)), [...names])
+  ok('bbox spans the four storeys vertically (~14m + parapet, Y-up)', !!res.bbox && res.bbox.max[1] - res.bbox.min[1] > 12 && res.bbox.max[1] - res.bbox.min[1] < 18, res.bbox)
+  ok('the substructure digs below ground (footings under level 0)', !!res.bbox && res.bbox.min[1] < -0.5, res.bbox?.min)
   // Robustness: garbage / empty bytes never throw, just yield an empty result.
   const junk = await extractGeometry(new TextEncoder().encode('not an ifc file'))
   ok('invalid input → empty result, no throw', junk.meshes.length === 0 && junk.bbox === null)

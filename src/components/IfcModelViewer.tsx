@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { Boxes } from 'lucide-react'
 import { buildIfcScene, DISCIPLINE_COLOR, type IfcSceneInput, type Discipline, type SelectedElement } from '@/lib/ifc-model'
 import type { IfcMesh } from '@/lib/ifc-geometry'
@@ -77,9 +78,19 @@ export function IfcModelViewer({
     let renderer: THREE.WebGLRenderer
     try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true }) }
     catch { setFailed(true); return }
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = 1.12
 
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color('#0a0f1c')
+    // sky gradient + a studio environment for real PBR reflections (glass, steel)
+    const skyCanvas = document.createElement('canvas'); skyCanvas.width = 2; skyCanvas.height = 256
+    const skyCtx = skyCanvas.getContext('2d')
+    if (skyCtx) { const gr = skyCtx.createLinearGradient(0, 0, 0, 256); gr.addColorStop(0, '#1b2a4a'); gr.addColorStop(0.55, '#0e1730'); gr.addColorStop(1, '#070b16'); skyCtx.fillStyle = gr; skyCtx.fillRect(0, 0, 2, 256) }
+    const skyTex = new THREE.CanvasTexture(skyCanvas)
+    scene.background = skyTex
+    const pmrem = new THREE.PMREMGenerator(renderer)
+    let envTex: THREE.Texture | null = null
+    try { envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; scene.environment = envTex } catch { /* software GL edge */ }
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 4000)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(width, height)
@@ -109,11 +120,41 @@ export function IfcModelViewer({
     const group = new THREE.Group()
     scene.add(group)
 
-    // Shared per-discipline materials + a reusable unit box for the reconstruction.
+    // Materials styled per IFC class — slabs read as concrete, windows as glass,
+    // railings as steel — falling back to the discipline colour for unknown types.
+    // (Discipline still drives the toggles/legend; class drives the look.)
     const unitBox = new THREE.BoxGeometry(1, 1, 1)
-    const mats: Partial<Record<Discipline, THREE.MeshStandardMaterial>> = {}
-    const matFor = (disc: Discipline) =>
-      (mats[disc] ??= new THREE.MeshStandardMaterial({ color: new THREE.Color(DISCIPLINE_COLOR[disc]), roughness: 0.55, metalness: 0.1, clipShadows: true }))
+    type Style = { color: string; roughness?: number; metalness?: number; opacity?: number }
+    const CLASS_STYLE: [RegExp, Style][] = [
+      [/^IFCSLAB|^IFCROOF/, { color: '#b8c2d0', roughness: 0.85, metalness: 0.05 }],
+      [/^IFCCOLUMN/, { color: '#64748b', roughness: 0.6, metalness: 0.15 }],
+      [/^IFCBEAM/, { color: '#566173', roughness: 0.5, metalness: 0.25 }],
+      [/^IFCWINDOW|^IFCCURTAINWALL|^IFCPLATE/, { color: '#7dd3fc', roughness: 0.06, metalness: 0.5, opacity: 0.34 }],
+      [/^IFCDOOR/, { color: '#8a6f4a', roughness: 0.65, metalness: 0.08 }],
+      [/^IFCWALL/, { color: '#9aa7b8', roughness: 0.9, metalness: 0.04 }],
+      [/^IFCSTAIR|^IFCRAMP/, { color: '#8a93a6', roughness: 0.7, metalness: 0.12 }],
+      [/^IFCRAILING/, { color: '#aab4c2', roughness: 0.35, metalness: 0.55 }],
+      [/^IFCCOVERING/, { color: '#cab27e', roughness: 0.85, metalness: 0.02 }],
+      [/^IFCFOOTING|^IFCPILE/, { color: '#3f4a5c', roughness: 0.95, metalness: 0.02 }],
+      [/^IFCMEMBER/, { color: '#2b3647', roughness: 0.4, metalness: 0.5 }],
+      [/^IFCBUILDINGELEMENTPROXY/, { color: '#475569', roughness: 0.8, metalness: 0.05 }],
+      [/^IFCFURNISHING/, { color: '#9b7c52', roughness: 0.7, metalness: 0.05 }],
+    ]
+    const mats = new Map<string, THREE.MeshStandardMaterial>()
+    const matForType = (ifcType: string | undefined, disc: Discipline) => {
+      const t = (ifcType ?? '').toUpperCase()
+      const st = CLASS_STYLE.find(([re]) => re.test(t))?.[1]
+      const key = st ? st.color : `d:${disc}`
+      let m = mats.get(key)
+      if (!m) {
+        m = st
+          ? new THREE.MeshStandardMaterial({ color: new THREE.Color(st.color), roughness: st.roughness ?? 0.7, metalness: st.metalness ?? 0.08, clipShadows: true, ...(st.opacity != null ? { transparent: true, opacity: st.opacity, depthWrite: false, side: THREE.DoubleSide } : {}) })
+          : new THREE.MeshStandardMaterial({ color: new THREE.Color(DISCIPLINE_COLOR[disc]), roughness: 0.55, metalness: 0.1, clipShadows: true })
+        mats.set(key, m)
+      }
+      return m
+    }
+    const matFor = (disc: Discipline) => matForType(undefined, disc)
 
     // Per-build disposables (real-geometry BufferGeometries) + the live object list.
     let geometries: THREE.BufferGeometry[] = []
@@ -125,6 +166,7 @@ export function IfcModelViewer({
     let curSection = 1
 
     const orbit = { azimuth: DEFAULT_AZIMUTH, polar: DEFAULT_POLAR, radius: 60, target: new THREE.Vector3(0, 0, 0) }
+    let needsRender = true // on-demand rendering: redraw only when something changed
     const applyCamera = () => {
       const { azimuth, polar, radius, target } = orbit
       camera.position.set(
@@ -133,6 +175,7 @@ export function IfcModelViewer({
         target.z + radius * Math.sin(polar) * Math.cos(azimuth),
       )
       camera.lookAt(target)
+      needsRender = true
       ;(mount as HTMLElement & { __cam?: { azimuth: number; polar: number; radius: number } }).__cam = { azimuth: orbit.azimuth, polar: orbit.polar, radius: orbit.radius }
     }
 
@@ -142,6 +185,7 @@ export function IfcModelViewer({
     // highlight the selected IFC product (every mesh of an expressID, boxed) or, in
     // the BIM tool, a single reconstruction key.
     const applyHighlight = () => {
+      needsRender = true
       clearHighlight()
       const { selectedExpressID: sx, selectedKey: sk } = propsRef.current
       if (sx != null) {
@@ -181,6 +225,7 @@ export function IfcModelViewer({
     // Spread elements apart vertically (assembled at f=0). baseY is each object's
     // un-exploded height; higher elements travel further so floors separate.
     const applyExplode = (f: number) => {
+      needsRender = true
       for (const o of objects) {
         const baseY = (o.userData as { baseY?: number }).baseY ?? o.position.y
         o.position.y = baseY + (baseY - minBaseY) * f
@@ -194,12 +239,13 @@ export function IfcModelViewer({
 
     // Cut the model at a fraction of its current height; f≥1 disables the plane.
     const applySection = (f: number) => {
+      needsRender = true
       curSection = f
       const enabled = f < 0.999
       const b = new THREE.Box3().setFromObject(group)
       sectionPlane.constant = b.isEmpty() ? 1e6 : b.min.y + f * (b.max.y - b.min.y)
       const planes = enabled ? [sectionPlane] : []
-      for (const m of Object.values(mats)) if (m) m.clippingPlanes = planes
+      for (const m of mats.values()) m.clippingPlanes = planes
       ;(mount as HTMLElement & { __sectioned?: boolean }).__sectioned = enabled
     }
     sectionRef.current = applySection
@@ -209,6 +255,7 @@ export function IfcModelViewer({
 
     const buildReal = (list: IfcMesh[], hid: Partial<Record<Discipline, boolean>>, iso: number | null) => {
       list.forEach((m, i) => {
+        if (m.ifcTypeName === 'IFCSPACE') return // room volumes are data, not fabric
         if (hid[m.discipline]) return
         if (iso != null && m.storey !== iso) return
         const geom = new THREE.BufferGeometry()
@@ -216,7 +263,7 @@ export function IfcModelViewer({
         if (m.normals.length === m.positions.length) geom.setAttribute('normal', new THREE.BufferAttribute(m.normals, 3))
         else geom.computeVertexNormals()
         geom.setIndex(new THREE.BufferAttribute(m.indices, 1))
-        const mesh = new THREE.Mesh(geom, matFor(m.discipline))
+        const mesh = new THREE.Mesh(geom, matForType(m.ifcTypeName, m.discipline))
         mesh.applyMatrix4(new THREE.Matrix4().fromArray(m.matrix))
         mesh.castShadow = true; mesh.receiveShadow = true
         mesh.userData = { key: `g${i}`, source: 'geometry', expressID: m.expressID, ifcType: m.ifcTypeName, discipline: m.discipline }
@@ -251,6 +298,7 @@ export function IfcModelViewer({
       applySection(sec ?? 1)
       applyHighlight()
       ;(mount as HTMLElement & { __meshCount?: number }).__meshCount = objects.length
+      needsRender = true
     }
     rebuildRef.current = build
 
@@ -314,23 +362,29 @@ export function IfcModelViewer({
     el.addEventListener('click', onClick)
     mount.addEventListener('keydown', onKeyDown)
 
-    const onResize = () => { const w = mount.clientWidth || 600; camera.aspect = w / height; camera.updateProjectionMatrix(); renderer.setSize(w, height) }
+    const onResize = () => { const w = mount.clientWidth || 600; camera.aspect = w / height; camera.updateProjectionMatrix(); renderer.setSize(w, height); needsRender = true }
     const ro = new ResizeObserver(onResize); ro.observe(mount)
 
     build()
     let raf = 0, spin = true
+    const spinUntil = performance.now() + 5200 // brief intro spin, then static (efficient on software GL)
     el.addEventListener('pointerdown', () => { spin = false }, { once: true })
-    const loop = () => { raf = requestAnimationFrame(loop); if (spin) { orbit.azimuth += 0.0016; applyCamera() } renderer.render(scene, camera) }
+    const loop = () => {
+      raf = requestAnimationFrame(loop)
+      if (spin) { if (performance.now() > spinUntil) spin = false; else { orbit.azimuth += 0.0016; applyCamera() } }
+      if (needsRender) { needsRender = false; renderer.render(scene, camera) }
+    }
     loop()
 
     return () => {
       cancelAnimationFrame(raf); ro.disconnect()
+      envTex?.dispose(); pmrem.dispose(); skyTex.dispose()
       el.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); el.removeEventListener('click', onClick)
       mount.removeEventListener('keydown', onKeyDown)
       clearHighlight()
       for (const g of geometries) g.dispose()
-      unitBox.dispose(); Object.values(mats).forEach((m) => m?.dispose())
+      unitBox.dispose(); for (const m of mats.values()) m.dispose()
       ground.geometry.dispose(); (ground.material as THREE.Material).dispose()
       renderer.dispose(); if (el.parentNode === mount) mount.removeChild(el)
     }

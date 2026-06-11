@@ -118,7 +118,7 @@ function unwrapValue(arg: string | undefined): string | undefined {
 const DISCIPLINE_OF: Record<string, 'arch' | 'struct' | 'mep' | 'other'> = {
   IFCWALL: 'arch', IFCWALLSTANDARDCASE: 'arch', IFCDOOR: 'arch', IFCWINDOW: 'arch',
   IFCCURTAINWALL: 'arch', IFCCOVERING: 'arch', IFCRAILING: 'arch', IFCSTAIR: 'arch',
-  IFCSTAIRFLIGHT: 'arch', IFCROOF: 'arch', IFCRAMP: 'arch', IFCFURNISHINGELEMENT: 'arch', IFCSPACE: 'arch',
+  IFCSTAIRFLIGHT: 'arch', IFCROOF: 'arch', IFCRAMP: 'arch', IFCFURNISHINGELEMENT: 'arch',
   IFCBEAM: 'struct', IFCCOLUMN: 'struct', IFCSLAB: 'struct', IFCFOOTING: 'struct', IFCPILE: 'struct',
   IFCMEMBER: 'struct', IFCPLATE: 'struct', IFCREINFORCINGBAR: 'struct', IFCREINFORCINGMESH: 'struct',
   IFCDUCTSEGMENT: 'mep', IFCDUCTFITTING: 'mep', IFCPIPESEGMENT: 'mep', IFCPIPEFITTING: 'mep',
