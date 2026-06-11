@@ -1005,7 +1005,10 @@ section('building-furniture')
 // ── families (the element catalog: types/alternatives per category) ──────────────
 section('families')
 {
-  ok('the catalog covers the full element tree (16 categories, 65+ types)', FAMILIES.length === 16 && familyCount() >= 65 && FAMILIES.every((f) => f.types.length >= 3))
+  ok('the catalog covers the full element tree (20 categories, 105+ types)', FAMILIES.length === 20 && familyCount() >= 105 && FAMILIES.every((f) => f.types.length >= 3))
+  ok('ground beams, lifts, wall finishes and ironmongery are catalogued', ['groundBeam', 'lift', 'wallFinish', 'ironmongery'].every((k) => (FAMILIES.find((f) => f.key === k)?.types.length ?? 0) >= 3))
+  ok('heritage single glazing exposes the worst-case envelope (U 5.4 vs VIG 0.6)', engineeringFor({ ...DEFAULT_TYPES, glazing: 'single' }).uWindow === 5.4 && engineeringFor({ ...DEFAULT_TYPES, glazing: 'vacuum' }).uWindow === 0.6)
+  ok('lifts carry duty + capacity props; fire-fighting lift is EN81-72', familyType('lift', 'firefighting').material.includes('EN81-72') && Number(familyType('lift', 'goods').props.capacity) === 26)
   ok('slabs, core walls, mullions and balustrades are catalogued too', ['slab', 'core', 'mullion', 'balustrade'].every((k) => (FAMILIES.find((f) => f.key === k)?.types.length ?? 0) >= 3))
   ok('timber alternatives run across the tree (column, slab, core, ceiling)', familyType('column', 'glulam-col').material.includes('GL28') && familyType('slab', 'clt').material.includes('spruce') && familyType('core', 'clt-core').props.system === 'timber shear' && familyType('ceiling', 'baffle').label.includes('Timber'))
   ok('every category carries real alternatives with material + rate + props', FAMILIES.every((f) => f.types.every((t) => t.label && t.material && t.cost > 0 && Object.keys(t.props).length > 0)))

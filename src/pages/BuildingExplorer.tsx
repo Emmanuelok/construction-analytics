@@ -67,7 +67,8 @@ const FAMILY_TO_CATS: Record<string, string[]> = {
   column: ['columns'], beam: ['beams'], facade: ['walls'], glazing: ['windows'], door: ['doors'],
   interiorDoor: ['interiorDoors'], partition: ['partitions'], floorFinish: ['finishes'], ceiling: ['ceilings'],
   roof: ['roof'], foundation: ['foundations'], stair: ['stairs'], slab: ['slabs'], core: ['core'],
-  mullion: ['mullions'], balustrade: ['parapets'],
+  mullion: ['mullions'], balustrade: ['parapets'], groundBeam: ['foundations'],
+  lift: ['core'], wallFinish: ['partitions'], ironmongery: ['interiorDoors'], // nearest host elements
 }
 const ALL_CAT_KEYS = [...CATS.map((c) => c.key), 'furniture', 'lighting', 'hvac', 'fire', 'sanitary']
 const CAT_ICON: Record<string, typeof Columns3> = { Floor: SquareStack, Column: Columns3, Beam: Rows3, Window: Frame, Door: DoorOpen, 'Interior Door': DoorOpen, Wall: Square, Partition: Square, Room: Square, Stair: Rows3, Core: BoxIcon, Roof: SquareStack }

@@ -222,7 +222,7 @@ export function ComponentBuildingViewer({
       const p = t('partition'); setBase(partMat, p.color, p.opacity ?? 1)
       setBase(finMat, t('floorFinish').color); setBase(ceilMat, t('ceiling').color)
       setBase(roofMat, t('roof').color); setBase(fdnMat, t('foundation').color); setBase(stairMat, t('stair').color)
-      setBase(slabMat, t('slab').color); setBase(coreMat, t('core').color); setBase(mullionMat, t('mullion').color)
+      setBase(slabMat, t('slab').color); setBase(coreMat, t('core').color); setBase(mullionMat, t('mullion').color); setBase(gbMat, t('groundBeam').color)
       const bal = t('balustrade'); setBase(parapetMat, bal.color, bal.id === 'glass' ? 0.45 : 1)
     }
 
