@@ -83,6 +83,21 @@ export function TypeSwatch({ family, type, size = 46 }: { family: string; type: 
         if (id === 'steel-rail') return <g><rect x={5} y={8} width={34} height={2.4} fill={c} />{[9, 15, 21, 27, 33].map((x) => <line key={x} x1={x} y1={10} x2={x} y2={26} stroke={c} strokeWidth={1.2} />)}</g>
         return <g><rect x={5} y={10} width={34} height={16} fill={c} /><rect x={4} y={8} width={36} height={2.6} fill="#b9c3d1" /></g>
       }
+      case 'groundBeam': return <g><rect x={4} y={20} width={36} height={4} fill="#3a4252" opacity={0.7} /><rect x={6} y={12} width={32} height={8} fill={c} />{id === 'precast-tie' && <line x1={22} y1={12} x2={22} y2={20} stroke={BG} strokeWidth={1.2} opacity={0.7} />}{id === 'steel-grade' && <g><rect x={6} y={12} width={32} height={2} fill="#7e8ca0" /><rect x={6} y={18} width={32} height={2} fill="#7e8ca0" /></g>}</g>
+      case 'lift': return <g><rect x={12} y={4} width={20} height={24} fill="none" stroke={c} strokeWidth={1.6} /><rect x={15} y={7} width={6.6} height={18} fill={c} opacity={0.8} /><rect x={22.4} y={7} width={6.6} height={18} fill={c} opacity={0.55} /><path d={id === 'goods' ? 'M20 2 h4' : 'M22 0.5 l2.5 3 h-5 Z'} fill={c} stroke={c} />{id === 'firefighting' && <rect x={12} y={4} width={20} height={24} fill="none" stroke="#e05d5d" strokeWidth={1.2} />}</g>
+      case 'wallFinish': {
+        const base = <rect x={4} y={4} width={36} height={24} fill={c} />
+        if (id === 'panelling') return <g>{base}{[12, 20, 28, 36].map((x) => <line key={x} x1={x} y1={4} x2={x} y2={28} stroke={BG} strokeWidth={0.9} opacity={0.5} />)}</g>
+        if (id === 'acoustic-fabric') return <g>{base}{[10, 18, 26, 34].flatMap((x) => [9, 16, 23].map((y) => <circle key={`${x}${y}`} cx={x} cy={y} r={0.8} fill={BG} opacity={0.35} />))}</g>
+        if (id === 'tile') return <g>{base}{[16, 28].map((x) => <line key={x} x1={x} y1={4} x2={x} y2={28} stroke={BG} strokeWidth={0.9} opacity={0.55} />)}<line x1={4} y1={16} x2={40} y2={16} stroke={BG} strokeWidth={0.9} opacity={0.55} /></g>
+        if (id === 'exposed-block') return <g>{base}{[10, 16, 22].map((y) => <line key={y} x1={4} y1={y} x2={40} y2={y} stroke={BG} strokeWidth={0.8} opacity={0.5} />)}</g>
+        return <g>{base}<path d="M8 26 L 20 6 L 25 6 L 13 26 Z" fill="#ffffff" opacity={0.12} /></g>
+      }
+      case 'ironmongery': {
+        if (id === 'panic') return <g><rect x={10} y={5} width={14} height={22} fill="#5a6472" rx={1} /><rect x={8} y={14} width={18} height={3.4} rx={1.6} fill={c} /></g>
+        if (id === 'access-control') return <g><rect x={10} y={5} width={14} height={22} fill="#5a6472" rx={1} /><rect x={27} y={9} width={9} height={13} rx={1.5} fill="none" stroke={c} strokeWidth={1.3} />{[12.5, 16, 19.5].map((y) => [29.5, 32, 34.5].map((x) => <circle key={`${x}${y}`} cx={x} cy={y} r={0.7} fill={c} />))}</g>
+        return <g><rect x={10} y={5} width={14} height={22} fill="#5a6472" rx={1} /><circle cx={21} cy={16} r={1.6} fill={c} /><rect x={21} y={15} width={8} height={2.4} rx={1.2} fill={c} />{id === 'dda' && <rect x={10} y={23} width={14} height={3} fill={c} opacity={0.8} />}</g>
+      }
       default: return <rect x={8} y={8} width={28} height={16} fill={c} opacity={op} />
     }
   }

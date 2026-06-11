@@ -35,11 +35,11 @@ try {
 
   // ── families card ──
   const fam = await cardText('[data-families]')
-  ok('the Families & Types catalog renders all 16 families', /Families & types — \d+ types across 16 families/.test(fam))
+  ok('the Families & Types catalog renders all 20 families', /Families & types — \d+ types across 20 families/.test(fam))
   ok('catalog cells show material + rate for the active type', /C32\/40 concrete/.test(fam) && /\$\d/.test(fam))
   // every type has a clickable render preview (swatch); clicking one selects it
   const swatches = await page.evaluate(() => document.querySelectorAll('[data-families] [role="group"] button svg').length)
-  ok('every type carries a render-preview swatch (65+)', swatches >= 65, swatches)
+  ok('every type carries a render-preview swatch (105+)', swatches >= 105, swatches)
   await page.evaluate(() => { const b = [...document.querySelectorAll('[data-families] button')].find((x) => x.getAttribute('aria-label') === 'Floor finishes: Engineered timber'); b?.click() })
   await wait(700)
   ok('clicking a swatch selects that type (timber floor active)', await page.evaluate(() => document.querySelector('select[aria-label="Floor finishes type"]')?.value) === 'timber')
