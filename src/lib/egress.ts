@@ -42,18 +42,39 @@ function pointToPoly(p: Pt, poly: Pt[]): number {
   return min
 }
 
-type Graph = { center: Pt[]; coreNode: number; adj: { to: number; w: number }[][] }
+type Graph = { center: Pt[]; coreNode: number; adj: { to: number; w: number }[][]; circ: boolean[] }
+
+const bboxOf = (poly: Pt[]) => {
+  const xs = poly.map((p) => p.x), zs = poly.map((p) => p.z)
+  return { x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs) }
+}
+/** Do two axis-aligned spaces share an edge (touch on one axis, overlap on the other)? */
+function sharesEdge(a: ReturnType<typeof bboxOf>, b: ReturnType<typeof bboxOf>, tol = 0.06): boolean {
+  const xTouch = Math.abs(a.x1 - b.x0) < tol || Math.abs(b.x1 - a.x0) < tol
+  const zTouch = Math.abs(a.z1 - b.z0) < tol || Math.abs(b.z1 - a.z0) < tol
+  const xOver = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)
+  const zOver = Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0)
+  return (xTouch && zOver > tol) || (zTouch && xOver > tol)
+}
 
 /** Build the routed egress graph for one level: room nodes joined where a door links
- *  them, plus a core node (the egress source) reached by doors on the core boundary. */
+ *  them; corridors (circulation spaces) interconnect wherever they touch — they're
+ *  open — and connect to the core node (the egress source) where they meet the core. */
 function buildGraph(m: BuildingModel, level: number): Graph {
   const rooms = m.rooms.filter((r) => r.level === level)
   const doors = m.interiorDoors.filter((d) => (d.level ?? 0) === level)
   const n = rooms.length
   const coreNode = n
   const center = rooms.map((r) => r.center)
+  const circ = rooms.map((r) => r.use === 'circulation')
   const adj: { to: number; w: number }[][] = Array.from({ length: n + 1 }, () => [])
-  const link = (a: number, b: number, w: number) => { adj[a].push({ to: b, w }); adj[b].push({ to: a, w }) }
+  const linked = new Set<string>()
+  const link = (a: number, b: number, w: number) => {
+    const k = a < b ? `${a}|${b}` : `${b}|${a}`
+    if (linked.has(k)) return
+    linked.add(k)
+    adj[a].push({ to: b, w }); adj[b].push({ to: a, w })
+  }
   const core = exitsFor(m, level)[0] ?? null
   const tol = 0.12
   for (const d of doors) {
@@ -63,7 +84,32 @@ function buildGraph(m: BuildingModel, level: number): Graph {
     if (touch.length >= 2) link(touch[0], touch[1], dist(center[touch[0]], center[touch[1]]) * LEN)
     else if (touch.length === 1) link(touch[0], coreNode, (dist(center[touch[0]], mid) + (core ? dist(mid, core) : 0)) * LEN)
   }
-  return { center, coreNode, adj }
+  // circulation is open space: adjacent corridor segments connect without doors,
+  // and any corridor that meets the core reaches the protected stair directly
+  const bbs = rooms.map((r) => bboxOf(r.polygon))
+  const coreBB = m.core ? { x0: m.core.x - m.core.w / 2, x1: m.core.x + m.core.w / 2, z0: m.core.z - m.core.d / 2, z1: m.core.z + m.core.d / 2 } : null
+  for (let i = 0; i < n; i++) {
+    if (!circ[i]) continue
+    for (let j = i + 1; j < n; j++) {
+      if (!circ[j]) continue
+      if (sharesEdge(bbs[i], bbs[j])) link(i, j, dist(center[i], center[j]) * LEN)
+    }
+    if (coreBB && sharesEdge(bbs[i], coreBB)) link(i, coreNode, Math.max(0.5, (core ? dist(center[i], core) : 1) * LEN))
+  }
+  // an exit stair that lands inside a space (an added shaft outside the core, say)
+  // gives that space direct access to the exit node
+  for (const e of exitsFor(m, level)) {
+    let best = -1, bd = Infinity
+    for (let i = 0; i < n; i++) {
+      const b = bbs[i]
+      if (e.x > b.x0 - tol && e.x < b.x1 + tol && e.z > b.z0 - tol && e.z < b.z1 + tol) {
+        const d = dist(center[i], e)
+        if (d < bd) { bd = d; best = i }
+      }
+    }
+    if (best >= 0) link(best, coreNode, Math.max(0.5, bd * LEN))
+  }
+  return { center, coreNode, adj, circ }
 }
 
 /** Dijkstra from the core node → distance (m) + predecessor for every room. */
@@ -96,11 +142,14 @@ export function egressAnalysis(m: BuildingModel, opts: { code?: CodeKey } = {}):
     const g = buildGraph(m, lvl)
     const { dist } = shortestFromCore(g)
     const lvlRooms: EgressRoom[] = rs.map((room, i) => {
-      const occupancy = Math.max(1, Math.ceil(room.area / lim.occLoadFactor))
+      const occupancy = room.use === 'circulation' ? 0 : Math.max(1, Math.ceil(room.area / lim.occLoadFactor))
       const routes = g.adj[i].length // doorways out of this room
       const reachable = isFinite(dist[i]) && exits.length > 0
       const travel = reachable ? r1(dist[i]) : 0
-      const deadEnd = reachable && routes <= 1 && travel > lim.commonPath
+      // a single door straight onto circulation (or the core) reaches a junction —
+      // the common path ends at the corridor, so it isn't a dead-end condition
+      const ontoCirc = g.adj[i].some((e) => e.to === g.coreNode || g.circ[e.to])
+      const deadEnd = reachable && routes <= 1 && !ontoCirc && travel > lim.commonPath
       const ok = reachable && travel <= lim.maxTravel + 1e-6 && !deadEnd
       const reason = exits.length === 0 ? 'no exit on floor' : !reachable ? 'no door route to a stair' : travel > lim.maxTravel ? 'beyond travel limit' : deadEnd ? `single-egress dead end > ${lim.commonPath}m` : undefined
       return { id: room.id, level: lvl, name: room.name, area: room.area, occupancy, travel, routes, ok, reason }

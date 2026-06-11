@@ -417,7 +417,7 @@ export function explodeBuilding(m: BuildingModel, opts: ExplodeOpts = {}): Build
 export type PlanColumn = { id: string; x: number; z: number; w: number; d: number }
 export type PlanPanel = { id: string; a: Pt; b: Pt; facing: number }
 export type PlanDoor = { id: string; a: Pt; b: Pt }
-export type PlanRoom = { id: string; polygon: Pt[]; name: string; area: number }
+export type PlanRoom = { id: string; polygon: Pt[]; name: string; area: number; use?: string }
 export type PlanWall = { id: string; a: Pt; b: Pt }
 export type PlanStair = { id: string; x: number; z: number; w: number; d: number; dir: 'x' | 'z' }
 export type LevelPlan = {
@@ -450,7 +450,7 @@ export function planForLevel(m: BuildingModel, level: number): LevelPlan {
     level, isRoof,
     outline,
     hole: slab?.hole,
-    rooms: isRoof ? [] : levelRooms(m, level).map((r) => ({ id: r.id, polygon: r.polygon, name: r.name, area: r.area })),
+    rooms: isRoof ? [] : levelRooms(m, level).map((r) => ({ id: r.id, polygon: r.polygon, name: r.name, area: r.area, use: r.use })),
     partitions: isRoof ? [] : levelPartitions(m, level).map((g, i) => ({ id: g.id ?? `part-${level}-${i}`, a: g.a, b: g.b })),
     interiorDoors: isRoof ? [] : levelInteriorDoors(m, level).map((g, i) => ({ id: g.id ?? `idoor-${level}-${i}`, a: g.a, b: g.b })),
     columns: cols.map((col, i) => ({ id: col.id ?? `col-${level}-${i}`, x: col.x, z: col.z, w: col.w, d: col.d })),

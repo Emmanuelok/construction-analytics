@@ -58,7 +58,8 @@ export function energyAnalysis(m: BuildingModel, opts: EnergyOpts = {}): EnergyR
   const minDaylight = opts.minDaylight ?? 0.1 // window-to-floor ratio threshold
 
   // per-room daylight: glazing whose midpoint sits on the room's façade edge
-  const rooms: DaylightRoom[] = m.rooms.map((room) => {
+  // (circulation spaces are excluded — corridors don't need daylight)
+  const rooms: DaylightRoom[] = m.rooms.filter((r) => r.use !== 'circulation').map((room) => {
     const lvlGlazing = m.glazing.filter((g) => (g.level ?? 0) === room.level)
     let wa = 0
     for (const g of lvlGlazing) { const mid = { x: (g.a.x + g.b.x) / 2, z: (g.a.z + g.b.z) / 2 }; if (pointToPoly(mid, room.polygon) < 0.25) wa += winArea(g, sh) }

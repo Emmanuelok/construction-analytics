@@ -91,11 +91,16 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
         <g>
           {plan.rooms.map((r) => {
             const on = selected === r.id
+            const circ = r.use === 'circulation'
             const cx = r.polygon.reduce((s, p) => s + p.x, 0) / r.polygon.length, cz = r.polygon.reduce((s, p) => s + p.z, 0) / r.polygon.length
             return (
-              <g key={r.id} data-room={r.id} className="cursor-pointer" onClick={() => !addMode && onSelect(r.id)}>
-                <polygon points={r.polygon.map((p) => `${toX(p.x)},${toY(p.z)}`).join(' ')} fill={on ? '#fbbf2422' : '#16243c80'} stroke={on ? '#fbbf24' : '#2c4a6e'} strokeWidth={on ? 1.6 : 0.8} vectorEffect="non-scaling-stroke" />
-                <text x={toX(cx)} y={toY(cz)} fontSize={ext * 0.026} fill={on ? '#fbbf24' : '#7c93b2'} textAnchor="middle" className="pointer-events-none select-none">{r.area} m²</text>
+              <g key={r.id} data-room={circ ? undefined : r.id} data-corridor={circ ? r.id : undefined} className="cursor-pointer" onClick={() => !addMode && onSelect(r.id)}>
+                <polygon points={r.polygon.map((p) => `${toX(p.x)},${toY(p.z)}`).join(' ')}
+                  fill={on ? '#fbbf2422' : circ ? '#13243d' : '#16243c80'}
+                  stroke={on ? '#fbbf24' : circ ? '#2b4866' : '#2c4a6e'} strokeWidth={on ? 1.6 : 0.7} strokeDasharray={circ ? '3 2' : undefined} vectorEffect="non-scaling-stroke">
+                  {circ && <title>{r.name} (circulation)</title>}
+                </polygon>
+                {!circ && <text x={toX(cx)} y={toY(cz)} fontSize={ext * 0.026} fill={on ? '#fbbf24' : '#7c93b2'} textAnchor="middle" className="pointer-events-none select-none">{r.area} m²</text>}
               </g>
             )
           })}
@@ -153,7 +158,25 @@ export function FloorPlan({ plan, selected, onSelect, editable = false, addMode 
         {/* columns (draggable) */}
         <g>{plan.columns.map((c) => { const on = selected === c.id; return <circle key={c.id} cx={toX(c.x)} cy={toY(c.z)} r={on ? colR * 1.7 : colR} fill={on ? '#fbbf24' : '#94a3b8'} stroke="#0a0f1c" strokeWidth={0.6} vectorEffect="non-scaling-stroke" className={editable ? 'cursor-grab' : 'cursor-pointer'} onPointerDown={(e) => startElDrag(e, c.id)} onClick={() => { if (!dragRef.current?.moved) onSelect(c.id) }} /> })}</g>
         {/* core footprint */}
-        {plan.core && <rect x={toX(plan.core.x) - plan.core.w / 2} y={toY(plan.core.z) - plan.core.d / 2} width={plan.core.w} height={plan.core.d} fill={selected === 'core' ? '#fbbf2433' : '#33415566'} stroke={selected === 'core' ? '#fbbf24' : '#64748b'} strokeWidth={selected === 'core' ? 2.5 : 1.2} vectorEffect="non-scaling-stroke" className="cursor-pointer" onClick={() => !addMode && onSelect('core')} />}
+        {plan.core && (() => {
+          const c = plan.core
+          const x0 = toX(c.x) - c.w / 2, y0 = toY(c.z) - c.d / 2
+          // lift bank: two cars on the core's east half (doors opening to the lobby)
+          const lw = Math.min(c.w * 0.22, c.d * 0.34), lh = lw * 1.15
+          const lx = x0 + c.w * 0.62, ly0 = toY(c.z) - lh - c.d * 0.04, ly1 = toY(c.z) + c.d * 0.04
+          return (
+            <g className="cursor-pointer" onClick={() => !addMode && onSelect('core')}>
+              <rect x={x0} y={y0} width={c.w} height={c.d} fill={selected === 'core' ? '#fbbf2433' : '#33415566'} stroke={selected === 'core' ? '#fbbf24' : '#64748b'} strokeWidth={selected === 'core' ? 2.5 : 1.2} vectorEffect="non-scaling-stroke" />
+              {[ly0, ly1].map((ly, i) => (
+                <g key={i}>
+                  <rect x={lx} y={ly} width={lw} height={lh} fill="#1d2c42" stroke="#7c93b2" strokeWidth={0.8} vectorEffect="non-scaling-stroke" />
+                  <line x1={lx + lw / 2} y1={ly} x2={lx + lw / 2} y2={ly + lh} stroke="#7c93b2" strokeWidth={0.6} vectorEffect="non-scaling-stroke" />
+                  <line x1={lx} y1={ly + lh / 2} x2={lx + lw} y2={ly + lh / 2} stroke="#46618c" strokeWidth={0.5} strokeDasharray="1.5 1.5" vectorEffect="non-scaling-stroke" />
+                </g>
+              ))}
+            </g>
+          )
+        })()}
         {/* add capture layer (on top while Add column / Add door is active, so a click anywhere places the element) */}
         {addMode && onAddAt && (
           <rect x={-pad * 4} y={-pad * 4} width={(w + 2 * pad) * 4} height={(h + 2 * pad) * 4} fill="transparent" className="cursor-crosshair" onClick={(e) => { const p = worldAt(e.clientX, e.clientY); onAddAt(p.x, p.z) }} />

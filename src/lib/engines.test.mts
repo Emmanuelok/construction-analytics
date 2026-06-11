@@ -920,10 +920,12 @@ section('building-rooms')
   const fp = m.slabs[0].polygon
   const rooms = floorRooms(fp, { roomSize: 8 })
   ok('floorRooms tiles a floor (room areas ≈ floor area)', near(rooms.reduce((s, r) => s + r.area, 0), polygonArea(fp) * AREA, polygonArea(fp) * AREA * 0.08))
-  ok('rooms inside the core are dropped (circulation)', floorRooms(fp, { core: { x: m.core!.x, z: m.core!.z, w: m.core!.w, d: m.core!.d } }).length < rooms.length)
+  ok('the layout carves a corridor network (circulation spaces, ~10-25% share)', (() => { const circ = rooms.filter((r) => r.use === 'circulation'); const share = circ.reduce((s, r) => s + r.area, 0) / rooms.reduce((s, r) => s + r.area, 0); return circ.length > 0 && share > 0.05 && share < 0.3 })())
+  ok('no space sits inside the core (it is lifts/stairs, not lettable)', (() => { const core = { x: m.core!.x, z: m.core!.z, w: m.core!.w, d: m.core!.d }; const rs = floorRooms(fp, { core }); return rs.every((r) => Math.abs(r.center.x - core.x) > core.w / 2 - 1e-6 || Math.abs(r.center.z - core.z) > core.d / 2 - 1e-6) })())
   ok('a larger room size → fewer, bigger rooms', floorRooms(fp, { roomSize: 16 }).length < rooms.length)
   // the shared grid: rooms are exactly the cells flagged as rooms (single source of truth)
-  ok('floorGrid flags room cells = floorRooms count', (() => { const g = floorGrid(fp, { roomSize: 8 })!; return g.cells.filter((c) => c.room).length === rooms.length })())
+  ok('floorGrid room cells = floorRooms rooms; corridor cells = circulation spaces', (() => { const g = floorGrid(fp, { roomSize: 8 })!; const nR = rooms.filter((r) => r.use !== 'circulation').length; const nC = rooms.filter((r) => r.use === 'circulation').length; return g.cells.filter((c) => c.kind === 'room').length === nR && g.cells.filter((c) => c.kind === 'corridor').length === nC })())
+  ok('every room is assigned its entrance edge (BFS from the corridors)', (() => { const g = floorGrid(fp, { roomSize: 8 })!; return g.cells.filter((c) => c.kind === 'room').every((c) => c.doorTo !== null) })())
 }
 
 // ── room-types (space-type + finish catalog used by the Room Studio) ─────────────
@@ -1161,19 +1163,21 @@ section('egress')
   ok('three code presets carry stair + egress + compartment limits', CODE_KEYS.length === 3 && CODE_KEYS.every((k) => CODE_PRESETS[k].stair.maxRise > 0 && CODE_PRESETS[k].egress.maxTravel > 0 && CODE_PRESETS[k].egress.occLoadFactor > 0 && CODE_PRESETS[k].egress.maxCompartment > 0))
   const m = buildBuilding(buildMassing({ gfa: 120_000, progress: 100, storeys: 8, shape: 'rect' }), { coreRatio: 0.16 })
   const eg = egressAnalysis(m, { code: 'IBC' })
-  ok('every room gets an occupant load + a routed travel distance', eg.rooms.length === m.rooms.length && eg.rooms.every((r) => r.occupancy >= 1 && r.travel >= 0) && eg.rooms.some((r) => r.travel > 0))
+  const circIds = new Set(m.rooms.filter((r) => r.use === 'circulation').map((r) => r.id))
+  ok('every space gets a routed travel; rooms load occupants, corridors none', eg.rooms.length === m.rooms.length && eg.rooms.every((r) => (circIds.has(r.id) ? r.occupancy === 0 : r.occupancy >= 1) && r.travel >= 0) && eg.rooms.some((r) => r.travel > 0))
   ok('a floor summary per storey with occupancy, exits, width & compartments', eg.floors.length > 0 && eg.floors.every((f) => f.occupancy > 0 && f.exits >= 1 && f.requiredWidth >= 0 && f.providedWidth > 0 && f.area > 0 && f.compartments >= 1))
   ok('occupancy is denser under UK than IBC (lower load factor)', egressAnalysis(m, { code: 'UK' }).summary.occupancy > eg.summary.occupancy)
   ok('a tighter travel limit fails at least as many rooms (EU ≤ IBC limit)', egressAnalysis(m, { code: 'EU' }).summary.roomsOverTravel >= eg.summary.roomsOverTravel)
   ok('the building summary totals occupancy + max compartments', eg.summary.occupancy === eg.floors.reduce((s, f) => s + f.occupancy, 0) && eg.summary.maxCompartments === Math.max(...eg.floors.map((f) => f.compartments)) && eg.summary.maxTravelLimit === CODE_PRESETS.IBC.egress.maxTravel)
   // travel is ROUTED through the doors: remove every interior door → rooms are stranded
-  ok('routed travel needs doors (no doors → rooms stranded)', (() => { const e2 = egressAnalysis({ ...m, interiorDoors: [] }); return e2.rooms.every((r) => !r.ok && r.reason === 'no door route to a stair') })())
+  ok('routed travel needs doors (no doors → every room stranded; corridors stay open)', (() => { const e2 = egressAnalysis({ ...m, interiorDoors: [] }); return e2.rooms.filter((r) => !circIds.has(r.id)).every((r) => !r.ok && r.reason === 'no door route to a stair') })())
   ok('egressPathFor returns a routed polyline (room → … → exit)', (() => { const p = egressPathFor(m, m.rooms[0].id); return !!p && p.points.length >= 2 })())
   ok('no stairs & no core → every room is flagged (no exit)', (() => { const e2 = egressAnalysis({ ...m, stairs: [], core: null }); return e2.rooms.every((r) => !r.ok) && e2.floors.every((f) => !f.ok) })())
   // dead-end / common-path: each room reports its doorways out; a tighter common path flags more
   ok('rooms report their number of egress routes (doorways out)', eg.rooms.every((r) => r.routes >= 0) && eg.floors.every((f) => f.deadEnds >= 0) && typeof eg.summary.deadEnds === 'number')
   ok('removing most doors strands / dead-ends far more rooms', egressAnalysis({ ...m, interiorDoors: m.interiorDoors.slice(0, 3) }).summary.roomsOverTravel > eg.summary.roomsOverTravel)
-  ok('a single-door room past the common path is flagged a dead end', (() => { const r = eg.rooms.find((x) => x.routes <= 1 && x.travel > CODE_PRESETS.IBC.egress.commonPath && x.travel <= CODE_PRESETS.IBC.egress.maxTravel); return !r || /dead end/.test(r.reason ?? '') })())
+  ok('a door straight onto a corridor satisfies the common path (no dead-ends here)', eg.summary.deadEnds === 0 && eg.rooms.filter((r) => !circIds.has(r.id)).every((r) => r.routes >= 1))
+  ok('any flagged dead-end would be a room chained through another room', eg.rooms.filter((r) => /dead end/.test(r.reason ?? '')).every((r) => !circIds.has(r.id)))
 }
 
 // ── fire (compartmentation + per-compartment takeoff) ───────────────────────────
@@ -1209,8 +1213,9 @@ section('energy')
 {
   const m = buildBuilding(buildMassing({ gfa: 80_000, progress: 100, storeys: 8, shape: 'rect' }), { coreRatio: 0.16, wwr: 0.6 })
   const e = energyAnalysis(m, { storeyHeight: 3.6 })
-  ok('every room gets a daylight ratio (window-to-floor)', e.rooms.length === m.rooms.length && e.rooms.every((r) => r.daylight >= 0 && r.area > 0))
-  ok('rooms split into daylit + dark, summing to all rooms', e.summary.daylitRooms > 0 && e.summary.daylitRooms + e.summary.darkRooms === m.rooms.length)
+  const nLettable = m.rooms.filter((r) => r.use !== 'circulation').length
+  ok('every lettable room gets a daylight ratio (corridors exempt)', e.rooms.length === nLettable && e.rooms.every((r) => r.daylight >= 0 && r.area > 0))
+  ok('rooms split into daylit + dark, summing to the lettable rooms', e.summary.daylitRooms > 0 && e.summary.daylitRooms + e.summary.darkRooms === nLettable)
   ok('orientation breakdown sums to the glazing area', (() => { const sum = e.orientations.reduce((s, o) => s + o.windowArea, 0); return near(sum, e.summary.glazing, Math.max(1, e.summary.glazing * 0.03)) })())
   ok('a higher WWR raises the glazing area', energyAnalysis(buildBuilding(buildMassing({ gfa: 80_000, progress: 100, storeys: 8, shape: 'rect' }), { coreRatio: 0.16, wwr: 0.8 })).summary.glazing > e.summary.glazing)
   ok('envelope estimate: heat-loss coefficient, EUI + rating', e.summary.heatLoss > 0 && e.summary.eui > 0 && /^[A-F]$/.test(e.summary.rating))
