@@ -22,6 +22,9 @@ import {
   ShieldCheck,
   BookOpen,
   Pencil,
+  Footprints,
+  Camera,
+  Layers,
 } from 'lucide-react'
 import {
   PageHeader,
@@ -48,7 +51,9 @@ import type { KPI } from '@/lib/scenarios'
 import { parseIfc, type ParsedIfc } from '@/lib/ifc'
 import { auditModel, composition, auditCsv, type AuditSeverity } from '@/lib/bim-audit'
 import { buildIfcScene, DISCIPLINE_COLOR, DISCIPLINE_LABEL, describeSelection, type Discipline, type SelectedElement } from '@/lib/ifc-model'
-import type { IfcMesh } from '@/lib/ifc-geometry'
+import type { IfcMesh, IfcStorey } from '@/lib/ifc-geometry'
+import { meshBoxes, detectClashes, geometryTakeoff, clashCsv } from '@/lib/ifc-clash'
+import type { IfcViewerStyle } from '@/components/IfcModelViewer'
 import { locateWasm } from '@/lib/ifc-wasm-url'
 const IfcModelViewer = lazy(() => import('@/components/IfcModelViewer').then((m) => ({ default: m.IfcModelViewer })))
 import { SAMPLE_IFC } from '@/lib/ifc-sample'
@@ -216,7 +221,8 @@ export default function Bim() {
         </div>
       )}
 
-      {parsed && <ParsedModel data={parsed} source={source ?? ''} onClear={() => { setParsed(null); setSource(null) }} />}
+      {parsed && <ParsedModel data={parsed} source={source ?? ''} onClear={() => { setParsed(null); setSource(null) }}
+        onAdoptClashes={(rows, totalElements) => { setPairs(rows); setElements(totalElements); setEdited(true) }} />}
 
       {/* import a neutral 3D model (glTF / OBJ / STL) — view + extract geometry data.
           Revit → export IFC (above) or glTF/OBJ → drop it here. */}
@@ -531,7 +537,9 @@ const DISCIPLINES: Discipline[] = ['struct', 'arch', 'mep', 'other']
 const SEV_DOT: Record<AuditSeverity, string> = { critical: 'bg-rose-400', warning: 'bg-amber-400', good: 'bg-emerald-400', info: 'bg-sky-400' }
 const AUDIT_GRADE_ACCENT: Record<string, Accent> = { A: 'emerald', B: 'lime', C: 'amber', D: 'rose', E: 'rose' }
 
-function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: string; onClear: () => void }) {
+const DISC_NAME: Record<string, string> = { struct: 'Struct', arch: 'Arch', mep: 'MEP', other: 'Other' }
+
+function ParsedModel({ data, source, onClear, onAdoptClashes }: { data: ParsedIfc; source: string; onClear: () => void; onAdoptClashes?: (rows: ClashPair[], totalElements: number) => void }) {
   const maxEntity = data.entityCounts[0]?.count ?? 1
   const audit = useMemo(() => auditModel(data), [data])
   const comp = useMemo(() => composition(data.entityCounts), [data])
@@ -550,15 +558,23 @@ function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: strin
   const [explode, setExplode] = useState(0)
   const [section, setSection] = useState(1)
   const [resetNonce, setResetNonce] = useState(0)
+  const [styleMode, setStyleMode] = useState<IfcViewerStyle>('realistic')
+  const [walking, setWalking] = useState(false)
+  const [hiddenTypes, setHiddenTypes] = useState<Record<string, boolean>>({})
+  const [storeyIso, setStoreyIso] = useState<number | null>(null)
+  const [geoStoreys, setGeoStoreys] = useState<IfcStorey[]>([])
+  const [clashSel, setClashSel] = useState<number[] | null>(null)
   useEffect(() => {
     let cancelled = false
     setMeshes(null); setGeoState('loading'); setHidden({}); setSelected(null); setExplode(0); setSection(1)
+    setStyleMode('realistic'); setWalking(false); setHiddenTypes({}); setStoreyIso(null); setGeoStoreys([]); setClashSel(null)
     if (!source) { setGeoState('recon'); return }
     import('@/lib/ifc-geometry')
       .then(({ extractGeometry }) => extractGeometry(new TextEncoder().encode(source), { locateFile: locateWasm }))
       .then((res) => {
         if (cancelled) return
         const solids = res.meshes.filter((m) => m.ifcTypeName !== 'IFCSPACE') // rooms are data, not fabric
+        setGeoStoreys(res.storeys ?? [])
         if (solids.length) { setMeshes(solids); setGeoState('real') }
         else { setMeshes(null); setGeoState('recon') }
       })
@@ -566,6 +582,26 @@ function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: strin
     return () => { cancelled = true }
   }, [source])
 
+  // geometry intelligence: world boxes → real clash pass + per-class takeoff
+  const boxes = useMemo(() => (meshes ? meshBoxes(meshes) : []), [meshes])
+  const geoClash = useMemo(() => (boxes.length ? detectClashes(boxes) : null), [boxes])
+  const takeoff = useMemo(() => (boxes.length ? geometryTakeoff(boxes) : []), [boxes])
+  const typeCounts = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const b of boxes) m.set(b.type, (m.get(b.type) ?? 0) + 1)
+    return [...m.entries()].sort((a, b) => b[1] - a[1])
+  }, [boxes])
+  const adoptRows = (): ClashPair[] => {
+    if (!geoClash) return []
+    const sev = (worst: number): Severity => (worst > 0.5 ? 'Critical' : worst > 0.05 ? 'Major' : 'Minor')
+    return geoClash.pairs.map((p, i) => ({ id: `geo-${i}`, a: DISC_NAME[p.a] ?? p.a, b: DISC_NAME[p.b] ?? p.b, total: p.count, resolved: 0, severity: sev(p.worst) }))
+  }
+  const snapshotPng = () => {
+    const el = document.querySelector('[data-bim-viewer] [role="application"]') as (HTMLElement & { __snapshot?: () => string }) | null
+    const url = el?.__snapshot?.()
+    if (!url) return
+    const a = document.createElement('a'); a.href = url; a.download = `${data.fileName.replace(/\.ifc$/i, '')}-render.png`; document.body.appendChild(a); a.click(); a.remove()
+  }
   const real = geoState === 'real' && meshes !== null
   const disciplines = real
     ? DISCIPLINES.map((d) => ({ discipline: d, count: meshes!.filter((m) => m.discipline === d).length })).filter((d) => d.count > 0)
@@ -676,14 +712,47 @@ function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: strin
                 <span>Section</span>
                 <input type="range" min={0.05} max={1} step={0.01} value={section} onChange={(e) => setSection(Number(e.target.value))} className="h-1 w-28 cursor-pointer accent-blue-500" aria-label="Section cut height" />
               </label>
-              <button onClick={() => { setExplode(0); setSection(1); setSelected(null); setResetNonce((n) => n + 1) }} className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 font-medium text-slate-300 ring-1 ring-inset ring-edge/70 hover:bg-elevated/60">
+              <button onClick={() => { setExplode(0); setSection(1); setSelected(null); setClashSel(null); setResetNonce((n) => n + 1) }} className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 font-medium text-slate-300 ring-1 ring-inset ring-edge/70 hover:bg-elevated/60">
                 <RotateCcw className="h-3.5 w-3.5" /> Reset view
               </button>
+              {real && (
+                <>
+                  <div className="flex overflow-hidden rounded-lg ring-1 ring-inset ring-edge/60">
+                    {(['wire', 'mono', 'shaded', 'realistic', 'xray'] as IfcViewerStyle[]).map((st) => (
+                      <button key={st} onClick={() => setStyleMode(st)} aria-pressed={styleMode === st} className={cn('px-2 py-1 text-[11px] font-medium capitalize transition-colors', styleMode === st ? 'bg-violet-500/20 text-violet-100' : 'text-slate-400 hover:bg-elevated/50 hover:text-slate-200')}>{st === 'mono' ? 'hidden line' : st}</button>
+                    ))}
+                  </div>
+                  <button onClick={() => setWalking((v) => !v)} aria-pressed={walking} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2 py-1 font-medium ring-1 ring-inset transition-colors', walking ? 'bg-amber-500/25 text-amber-100 ring-amber-500/50' : 'bg-amber-500/10 text-amber-200 ring-amber-500/30 hover:bg-amber-500/20')}><Footprints className="h-3.5 w-3.5" /> {walking ? 'Exit fly-through' : 'Fly-through'}</button>
+                  <button onClick={snapshotPng} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/15 px-2 py-1 font-medium text-emerald-200 ring-1 ring-inset ring-emerald-500/40 hover:bg-emerald-500/25"><Camera className="h-3.5 w-3.5" /> Render PNG</button>
+                </>
+              )}
               <span className="text-slate-500">Drag or arrow-keys to orbit · scroll to zoom · click to inspect</span>
             </div>
-            <div className="relative">
+            {real && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-edge/60 bg-elevated/10 px-4 py-2 text-xs">
+                <span className="flex items-center gap-1.5 text-slate-500"><Layers className="h-3.5 w-3.5" /> Storeys</span>
+                <div className="flex flex-wrap gap-1">
+                  <button onClick={() => setStoreyIso(null)} aria-pressed={storeyIso === null} className={cn('rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset transition-colors', storeyIso === null ? 'bg-blue-500/20 text-blue-100 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50')}>All</button>
+                  {[...geoStoreys].sort((a, b) => a.elevation - b.elevation).map((st) => (
+                    <button key={st.expressID} onClick={() => setStoreyIso((cur) => (cur === st.expressID ? null : st.expressID))} aria-pressed={storeyIso === st.expressID} className={cn('rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset transition-colors', storeyIso === st.expressID ? 'bg-blue-500/20 text-blue-100 ring-blue-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50')}>{st.name}</button>
+                  ))}
+                </div>
+                <span className="ml-2 text-slate-600">·</span>
+                <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+                  {typeCounts.map(([t, n]) => {
+                    const off = !!hiddenTypes[t]
+                    return (
+                      <button key={t} onClick={() => setHiddenTypes((h) => ({ ...h, [t]: !h[t] }))} aria-pressed={!off} title={t} className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset transition-colors', off ? 'text-slate-600 ring-edge/50' : 'text-slate-300 ring-edge/70 bg-elevated/40')}>
+                        {t.replace(/^IFC/, '').toLowerCase()} <span className="text-slate-500">{n}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+            <div className="relative" data-bim-viewer>
               <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-                <IfcModelViewer input={sceneInput} meshes={real ? meshes! : undefined} hidden={hidden} selectedKey={selected?.key ?? null} onSelect={setSelected} explode={explode} section={section} resetNonce={resetNonce} height={460} />
+                <IfcModelViewer input={sceneInput} meshes={real ? meshes! : undefined} hidden={hidden} hiddenTypes={hiddenTypes} styleMode={styleMode} walk={walking} onWalkEnd={() => setWalking(false)} selectedKey={selected?.key ?? null} highlightIDs={clashSel} isolateStorey={storeyIso} onSelect={setSelected} explode={explode} section={section} resetNonce={resetNonce} height={460} />
               </Suspense>
               {selected && (
                 <div className="absolute left-3 top-3 w-60 rounded-lg border border-edge/70 bg-base/90 p-3 text-xs shadow-xl backdrop-blur" role="status" aria-label={describeSelection(selected)}>
@@ -709,6 +778,66 @@ function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: strin
                 ? <>Real triangulated geometry tessellated from the IFC file by the web-ifc WASM kernel, coloured by discipline. Drag to orbit, scroll to zoom, click an element to inspect it, toggle disciplines above.</>
                 : <>This file carries no mesh geometry, so the model is reconstructed from its real element counts and storeys (columns on a grid, walls at the perimeter, slabs per floor, beams + MEP risers). Drag to orbit, scroll to zoom, click an element to inspect it, toggle disciplines above.</>}
             </p>
+          </div>
+        )}
+
+        {real && geoClash && (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {/* measured per-class takeoff from the tessellated solids */}
+            <div data-bim-takeoff className="overflow-hidden rounded-xl border border-edge/60">
+              <div className="flex items-center justify-between gap-2 border-b border-edge/60 bg-elevated/30 px-4 py-2.5">
+                <span className="flex items-center gap-2 text-sm font-medium text-slate-200"><Ruler className="h-4 w-4 text-emerald-400" /> Geometry takeoff · {formatNumber(boxes.length)} solids measured</span>
+                <button onClick={() => downloadText(`${data.fileName.replace(/\.ifc$/i, '')}-takeoff.csv`, ['Class,Count,Bounding volume (m³)', ...takeoff.map((t) => `${t.label},${t.count},${t.volume}`)].join('\n'), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>
+              </div>
+              <table className="w-full text-left text-sm">
+                <thead><tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500"><th className="px-4 py-2 font-medium">Element class</th><th className="px-3 py-2 text-right font-medium">Count</th><th className="px-3 py-2 text-right font-medium">Bounding vol (m³)</th></tr></thead>
+                <tbody className="divide-y divide-edge/40">
+                  {takeoff.slice(0, 12).map((t) => (
+                    <tr key={t.type} className="hover:bg-elevated/30">
+                      <td className="px-4 py-1.5 font-medium text-slate-200">{t.label}</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(t.count)}</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-slate-400">{formatNumber(t.volume)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="border-t border-edge/60 px-4 py-2 text-[11px] text-slate-500">Measured from each solid's real vertices × placement (axis-aligned bounds) — an instant sanity takeoff, not the authored quantities.</p>
+            </div>
+
+            {/* REAL clash detection on the tessellated geometry */}
+            <div data-bim-clash className="overflow-hidden rounded-xl border border-edge/60">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-edge/60 bg-elevated/30 px-4 py-2.5">
+                <span className="flex items-center gap-2 text-sm font-medium text-slate-200">
+                  <GitCompare className={cn('h-4 w-4', geoClash.clashes.length ? 'text-rose-400' : 'text-emerald-400')} />
+                  Geometric clash check · {geoClash.clashes.length === 0 ? 'clear' : `${formatNumber(geoClash.clashes.length)} found`}
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {geoClash.clashes.length > 0 && <button onClick={() => downloadText(`${data.fileName.replace(/\.ifc$/i, '')}-clashes.csv`, clashCsv(geoClash), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+                  {onAdoptClashes && geoClash.clashes.length > 0 && (
+                    <button onClick={() => onAdoptClashes(adoptRows(), boxes.length)} className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/15 px-2.5 py-1 text-xs font-medium text-rose-200 ring-1 ring-inset ring-rose-500/40 hover:bg-rose-500/25"><GitCompare className="h-3.5 w-3.5" /> Send to coordination</button>
+                  )}
+                </div>
+              </div>
+              <p className="border-b border-edge/50 bg-elevated/10 px-4 py-2 text-xs text-slate-400">{geoClash.headline} <span className="text-slate-500">AABB pass on every solid; by-design fits (windows in walls, bearings, finishes, the core) are suppressed.</span></p>
+              {geoClash.clashes.length > 0 ? (
+                <table className="w-full text-left text-sm">
+                  <thead><tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500"><th className="px-4 py-2 font-medium">A × B</th><th className="px-3 py-2 text-center font-medium">Severity</th><th className="px-3 py-2 text-right font-medium">Depth (m)</th><th className="px-3 py-2 text-right font-medium">Vol (m³)</th></tr></thead>
+                  <tbody className="divide-y divide-edge/40">
+                    {geoClash.clashes.slice(0, 8).map((c, i) => (
+                      <tr key={i} onClick={() => setClashSel([c.a.id, c.b.id])} className={cn('cursor-pointer transition-colors', clashSel?.includes(c.a.id) ? 'bg-amber-500/10' : 'hover:bg-elevated/30')}>
+                        <td className="px-4 py-1.5 text-slate-200"><span className="data-mono">{c.a.type.replace(/^IFC/, '')}</span> <span className="text-slate-600">×</span> <span className="data-mono">{c.b.type.replace(/^IFC/, '')}</span></td>
+                        <td className="px-3 py-1.5 text-center"><Badge variant={c.severity === 'Critical' ? 'danger' : c.severity === 'Major' ? 'warn' : 'neutral'}>{c.severity}</Badge></td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-300">{c.depth}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-300">{c.volume}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="grid h-32 place-items-center px-4 text-sm text-emerald-300">No real intersections — the structure is geometrically coordinated.</p>
+              )}
+              <p className="border-t border-edge/60 px-4 py-2 text-[11px] text-slate-500">Click a clash to highlight both elements in the 3D model. “Send to coordination” loads the measured pairs into the workbench below — real numbers, not estimates.</p>
+            </div>
           </div>
         )}
 
