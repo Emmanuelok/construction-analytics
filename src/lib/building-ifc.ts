@@ -11,13 +11,36 @@
 import type { BuildingModel, Quad, Beam, Box, Plate, Stair } from './building'
 import type { Pt } from './zoning'
 import { SCENE_LEN_TO_M } from './massing'
+import { familyType, type TypeSelections } from './families'
+
+// family key → IfcTypeObject class + attribute tail (after HasPropertySets):
+// standard element types end RepresentationMaps,Tag,ElementType,PredefinedType;
+// window/door insert PredefinedType then their partitioning/operation enums.
+const TYPE_DEF: Record<string, { cls: string; args: string }> = {
+  column: { cls: 'IFCCOLUMNTYPE', args: '$,$,$,.COLUMN.' },
+  beam: { cls: 'IFCBEAMTYPE', args: '$,$,$,.BEAM.' },
+  groundBeam: { cls: 'IFCBEAMTYPE', args: '$,$,$,.BEAM.' },
+  facade: { cls: 'IFCWALLTYPE', args: '$,$,$,.SOLIDWALL.' },
+  partition: { cls: 'IFCWALLTYPE', args: '$,$,$,.PARTITIONING.' },
+  balustrade: { cls: 'IFCWALLTYPE', args: '$,$,$,.PARAPET.' },
+  glazing: { cls: 'IFCWINDOWTYPE', args: '$,$,.WINDOW.,.NOTDEFINED.,$,$' },
+  door: { cls: 'IFCDOORTYPE', args: '$,$,.DOOR.,.SINGLE_SWING_LEFT.,$,$' },
+  interiorDoor: { cls: 'IFCDOORTYPE', args: '$,$,.DOOR.,.SINGLE_SWING_LEFT.,$,$' },
+  slab: { cls: 'IFCSLABTYPE', args: '$,$,$,.FLOOR.' },
+  roof: { cls: 'IFCSLABTYPE', args: '$,$,$,.ROOF.' },
+  floorFinish: { cls: 'IFCCOVERINGTYPE', args: '$,$,$,.FLOORING.' },
+  ceiling: { cls: 'IFCCOVERINGTYPE', args: '$,$,$,.CEILING.' },
+  foundation: { cls: 'IFCFOOTINGTYPE', args: '$,$,$,.PAD_FOOTING.' },
+  stair: { cls: 'IFCSTAIRTYPE', args: '$,$,$,.HALF_TURN_STAIR.' },
+  core: { cls: 'IFCBUILDINGELEMENTPROXYTYPE', args: '$,$,$,.ELEMENT.' },
+}
 
 const LEN = SCENE_LEN_TO_M
 const R = (n: number) => { const v = Math.round(n * 1e5) / 1e5; return Number.isInteger(v) ? `${v}.` : `${v}` }
 const GA = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$'
 const guid = () => { let s = ''; for (let i = 0; i < 22; i++) s += GA[Math.floor(Math.random() * 64)]; return s }
 
-export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: number }): string {
+export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: number; types?: TypeSelections }): string {
   const sh = opts?.storeyHeight ?? 3.6
   const name = opts?.name ?? 'Building'
   // IFC coords (Z-up, metres): X = x·LEN (East), Y = z·LEN (North), Z = y·sh (up)
@@ -81,8 +104,10 @@ export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: n
   }
   const edgeDir = (a: Pt, bp: Pt): [number, number, number] => { const A = ifc(a.x, 0, a.z), B = ifc(bp.x, 0, bp.z); const dx = B[0] - A[0], dy = B[1] - A[1], l = Math.hypot(dx, dy) || 1; return [dx / l, dy / l, 0] }
 
-  // ---- products, grouped by storey for containment ----
+  // ---- products, grouped by storey for containment + by family for typing ----
   const byStorey: number[][] = storeyIds.map(() => [])
+  const typed: Record<string, number[]> = {}
+  const bucket = (key: string, e: number) => { (typed[key] ??= []).push(e); return e }
   const psetRels: string[] = []
   const inStorey = (eid: number, level: number) => { const s = Math.max(0, Math.min(storeys - 1, level)); byStorey[s].push(eid) }
   const pset = (eid: number, mark: string, level: string, dims: [string, number][]) => {
@@ -96,12 +121,12 @@ export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: n
   const slab = (p: Plate, mark: string, pred: 'FLOOR' | 'ROOF', lvl: number) => {
     const solid = extrude(arbProfile(p.polygon), place(ifc(0, p.y, 0), null, null), p.thickness * sh)
     const e = add(`IFCSLAB('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shapeOf(solid)},'${esc(mark)}',.${pred}.)`)
-    inStorey(e, lvl === storeys ? storeys - 1 : lvl); pset(e, mark, lvlName(lvl), [['Thickness', p.thickness * sh]])
+    inStorey(e, lvl === storeys ? storeys - 1 : lvl); pset(e, mark, lvlName(lvl), [['Thickness', p.thickness * sh]]); return e
   }
   const column = (c: Box, mark: string, lvl: number) => {
     const base = ifc(c.x, c.y - c.h / 2, c.z); const solid = vSolid(rect(c.w * LEN, c.d * LEN), base, [1, 0, 0], c.h * sh)
     const e = add(`IFCCOLUMN('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shapeOf(solid)},'${esc(mark)}',.COLUMN.)`)
-    inStorey(e, lvl); pset(e, mark, lvlName(lvl), [['Width', c.w * LEN], ['Height', c.h * sh]])
+    inStorey(e, lvl); pset(e, mark, lvlName(lvl), [['Width', c.w * LEN], ['Height', c.h * sh]]); return e
   }
   const panel = (q: Quad, kind: 'WALL' | 'WINDOW' | 'DOOR', mark: string, lvl: number, thick: number, wallType = 'SOLIDWALL') => {
     const mid = { x: (q.a.x + q.b.x) / 2, z: (q.a.z + q.b.z) / 2 }
@@ -112,11 +137,11 @@ export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: n
     if (kind === 'WALL') e = add(`IFCWALL('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shp},'${esc(mark)}',.${wallType}.)`)
     else if (kind === 'WINDOW') e = add(`IFCWINDOW('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shp},'${esc(mark)}',${R(q.h * sh)},${R(len)},$,$,$)`)
     else e = add(`IFCDOOR('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shp},'${esc(mark)}',${R(q.h * sh)},${R(len)},$,$,$)`)
-    inStorey(e, lvl); pset(e, mark, lvlName(lvl), [['Width', len], ['Height', q.h * sh]])
+    inStorey(e, lvl); pset(e, mark, lvlName(lvl), [['Width', len], ['Height', q.h * sh]]); return e
   }
   const beam = (b: Beam, mark: string, lvl: number) => {
     const e = add(`IFCBEAM('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shapeOf(beamSolid(b))},'${esc(mark)}',.BEAM.)`)
-    inStorey(e, lvl); pset(e, mark, lvlName(lvl), [['Depth', b.depth * sh]])
+    inStorey(e, lvl); pset(e, mark, lvlName(lvl), [['Depth', b.depth * sh]]); return e
   }
   // an axis-aligned box → extruded solid (treads, landings, rails)
   const boxSolid = (b: Box) => vSolid(rect(b.w * LEN, b.d * LEN), ifc(b.x, b.y - b.h / 2, b.z), [1, 0, 0], b.h * sh)
@@ -138,35 +163,36 @@ export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: n
     const rise = ((s.top - s.base) / Math.max(1, s.risers)) * sh
     inStorey(e, s.level); pset(e, mark, lvlName(s.level), [['Width', s.widthScene * LEN], ['RiserHeight', rise]])
     if (parts.length) add(`IFCRELAGGREGATES('${guid()}',#${OWNER},$,$,#${e},(${parts.map((p) => `#${p}`).join(',')}))`)
+    return e
   }
 
   const pad = (n: number) => String(n + 1).padStart(2, '0')
-  m.slabs.forEach((s) => slab(s, `F-${(s.level ?? 0) === 0 ? 'G' : pad((s.level ?? 0) - 1)}`, 'FLOOR', s.level ?? 0))
-  if (m.roof) slab(m.roof, 'ROOF', 'ROOF', storeys)
-  m.columns.forEach((c, i) => column(c, c.id ?? `C-${pad(i)}`, c.level ?? 0))
-  m.beams.forEach((b, i) => beam(b, b.id ?? `B-${pad(i)}`, b.level ?? 0))
-  m.walls.forEach((q, i) => panel(q, 'WALL', q.id ?? `WL-${pad(i)}`, q.level ?? 0, 0.2))
-  m.partitions.forEach((q, i) => panel(q, 'WALL', q.id ?? `P-${pad(i)}`, q.level ?? 0, 0.1, 'PARTITIONING'))
-  m.glazing.forEach((q, i) => panel(q, 'WINDOW', q.id ?? `W-${pad(i)}`, q.level ?? 0, 0.06))
-  m.doors.forEach((q, i) => panel(q, 'DOOR', q.id ?? `D-${pad(i)}`, q.level ?? 0, 0.1))
-  m.interiorDoors.forEach((q, i) => panel(q, 'DOOR', q.id ?? `ID-${pad(i)}`, q.level ?? 0, 0.05))
-  m.stairs.forEach((s) => stair(s, s.id))
+  m.slabs.forEach((s) => bucket('slab', slab(s, `F-${(s.level ?? 0) === 0 ? 'G' : pad((s.level ?? 0) - 1)}`, 'FLOOR', s.level ?? 0)))
+  if (m.roof) bucket('roof', slab(m.roof, 'ROOF', 'ROOF', storeys))
+  m.columns.forEach((c, i) => bucket('column', column(c, c.id ?? `C-${pad(i)}`, c.level ?? 0)))
+  m.beams.forEach((b, i) => bucket('beam', beam(b, b.id ?? `B-${pad(i)}`, b.level ?? 0)))
+  m.walls.forEach((q, i) => bucket('facade', panel(q, 'WALL', q.id ?? `WL-${pad(i)}`, q.level ?? 0, 0.2)))
+  m.partitions.forEach((q, i) => bucket('partition', panel(q, 'WALL', q.id ?? `P-${pad(i)}`, q.level ?? 0, 0.1, 'PARTITIONING')))
+  m.glazing.forEach((q, i) => bucket('glazing', panel(q, 'WINDOW', q.id ?? `W-${pad(i)}`, q.level ?? 0, 0.06)))
+  m.doors.forEach((q, i) => bucket('door', panel(q, 'DOOR', q.id ?? `D-${pad(i)}`, q.level ?? 0, 0.1)))
+  m.interiorDoors.forEach((q, i) => bucket('interiorDoor', panel(q, 'DOOR', q.id ?? `ID-${pad(i)}`, q.level ?? 0, 0.05)))
+  m.stairs.forEach((s) => bucket('stair', stair(s, s.id)))
   // substructure
   m.foundations.forEach((c, i) => {
     const e = add(`IFCFOOTING('${guid()}',#${OWNER},'${esc(c.id ?? `FDN-${pad(i)}`)}',$,$,#${idP},#${shapeOf(boxSolid(c))},'${esc(c.id ?? `FDN-${pad(i)}`)}',.${c.id === 'fdn-core' ? 'FOOTING_BEAM' : 'PAD_FOOTING'}.)`)
-    inStorey(e, 0); pset(e, c.id ?? `FDN-${pad(i)}`, 'Substructure', [['Width', c.w * LEN], ['Depth', c.h * sh]])
+    inStorey(e, 0); pset(e, c.id ?? `FDN-${pad(i)}`, 'Substructure', [['Width', c.w * LEN], ['Depth', c.h * sh]]); bucket('foundation', e)
   })
-  m.groundBeams.forEach((b, i) => beam(b, b.id ?? `GB-${pad(i)}`, 0))
+  m.groundBeams.forEach((b, i) => bucket('groundBeam', beam(b, b.id ?? `GB-${pad(i)}`, 0)))
   // finishes (coverings) + the parapet
   const covering = (p: Plate, mark: string, pred: 'FLOORING' | 'CEILING', lvl: number) => {
     const solid = extrude(arbProfile(p.polygon), place(ifc(0, p.y, 0), null, null), Math.max(0.012, p.thickness * sh))
     const e = add(`IFCCOVERING('${guid()}',#${OWNER},'${esc(mark)}',$,$,#${idP},#${shapeOf(solid)},'${esc(mark)}',.${pred}.)`)
-    inStorey(e, lvl); pset(e, mark, lvlName(lvl), [['Thickness', p.thickness * sh]])
+    inStorey(e, lvl); pset(e, mark, lvlName(lvl), [['Thickness', p.thickness * sh]]); return e
   }
-  m.floorFinishes.forEach((p) => covering(p, p.id ?? `FF-${p.level}`, 'FLOORING', p.level ?? 0))
-  m.ceilings.forEach((p) => covering(p, p.id ?? `CLG-${p.level}`, 'CEILING', p.level ?? 0))
-  m.parapets.forEach((q, i) => panel(q, 'WALL', q.id ?? `PAR-${pad(i)}`, Math.max(0, storeys - 1), 0.18, 'PARAPET'))
-  if (m.core) { const c = m.core; const solid = vSolid(rect(c.w * LEN, c.d * LEN), ifc(c.x, c.y - c.h / 2, c.z), [1, 0, 0], c.h * sh); const e = add(`IFCBUILDINGELEMENTPROXY('${guid()}',#${OWNER},'Core',$,$,#${idP},#${shapeOf(solid)},'CORE',$)`); inStorey(e, 0); pset(e, 'CORE', 'All levels', [['Width', c.w * LEN]]) }
+  m.floorFinishes.forEach((p) => bucket('floorFinish', covering(p, p.id ?? `FF-${p.level}`, 'FLOORING', p.level ?? 0)))
+  m.ceilings.forEach((p) => bucket('ceiling', covering(p, p.id ?? `CLG-${p.level}`, 'CEILING', p.level ?? 0)))
+  m.parapets.forEach((q, i) => bucket('balustrade', panel(q, 'WALL', q.id ?? `PAR-${pad(i)}`, Math.max(0, storeys - 1), 0.18, 'PARAPET')))
+  if (m.core) { const c = m.core; const solid = vSolid(rect(c.w * LEN, c.d * LEN), ifc(c.x, c.y - c.h / 2, c.z), [1, 0, 0], c.h * sh); const e = add(`IFCBUILDINGELEMENTPROXY('${guid()}',#${OWNER},'Core',$,$,#${idP},#${shapeOf(solid)},'CORE',$)`); inStorey(e, 0); pset(e, 'CORE', 'All levels', [['Width', c.w * LEN]]); bucket('core', e) }
   // interior spaces (IfcSpace) — extrude each room up to a clear height
   for (const r of m.rooms) {
     const slabY = m.slabs.find((s) => s.level === r.level)?.y ?? r.level
@@ -177,6 +203,24 @@ export function toIfc(m: BuildingModel, opts?: { name?: string; storeyHeight?: n
 
   storeyIds.forEach((sid, i) => { if (byStorey[i].length) add(`IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid()}',#${OWNER},$,$,(${byStorey[i].map((e) => `#${e}`).join(',')}),#${sid})`) })
   for (const r of psetRels) add(r)
+
+  // ---- IfcTypeObjects (the active family/type per category) + occurrence relations ----
+  // every product of a family is related to one shared type, so it re-opens in Revit /
+  // Solibri as instances of a named type carrying its material, rate and key properties.
+  const sel = opts?.types ?? {}
+  for (const key of Object.keys(typed)) {
+    const ids = typed[key]; const def = TYPE_DEF[key]
+    if (!ids?.length || !def) continue
+    const t = familyType(key, sel[key])
+    const tp = [
+      add(`IFCPROPERTYSINGLEVALUE('Material',$,IFCTEXT('${esc(t.material)}'),$)`),
+      add(`IFCPROPERTYSINGLEVALUE('Rate',$,IFCTEXT('${esc(`$${t.cost}/${t.unit}`)}'),$)`),
+      ...Object.entries(t.props).slice(0, 4).map(([n, v]) => add(`IFCPROPERTYSINGLEVALUE('${esc(n)}',$,IFCTEXT('${esc(String(v))}'),$)`)),
+    ]
+    const ps = add(`IFCPROPERTYSET('${guid()}',#${OWNER},'Pset_TypeCommon',$,(${tp.map((i) => `#${i}`).join(',')}))`)
+    const typeId = add(`${def.cls}('${guid()}',#${OWNER},'${esc(t.label)}',$,$,(#${ps}),${def.args})`)
+    add(`IFCRELDEFINESBYTYPE('${guid()}',#${OWNER},$,$,(${ids.map((i) => `#${i}`).join(',')}),#${typeId})`)
+  }
 
   const stamp = new Date().toISOString().replace(/\.\d+Z$/, '')
   const header = [

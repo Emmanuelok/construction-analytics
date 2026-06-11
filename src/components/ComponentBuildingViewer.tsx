@@ -5,7 +5,7 @@ import { Building2, Footprints } from 'lucide-react'
 import type { BuildingModel, Plate, Quad, Beam } from '@/lib/building'
 import type { FurnitureItem, RoomPatch } from '@/lib/building-furniture'
 import type { SvcItem } from '@/lib/building-services'
-import { familyType, type TypeSelections } from '@/lib/families'
+import { familyType, familyOfElement, type TypeSelections } from '@/lib/families'
 import { PLATE_SCALE } from '@/lib/massing'
 import { sunDirection } from '@/lib/sun'
 import { findElementGeom } from '@/lib/building-explorer'
@@ -37,6 +37,7 @@ export function ComponentBuildingViewer({
   furniture = null,
   services = null,
   types = null,
+  overrides = null,
   walk = null,
   onWalkEnd,
   sun,
@@ -55,6 +56,7 @@ export function ComponentBuildingViewer({
   furniture?: { items: FurnitureItem[]; patches: RoomPatch[] } | null // FF&E layer (from furnitureFor)
   services?: { items: SvcItem[] } | null // MEP layer (from buildingServices)
   types?: TypeSelections | null // family/type selections (colour, section shape, façade system…)
+  overrides?: Record<string, string> | null // per-element type overrides (elementId → typeId)
   walk?: WalkSpawn | null // first-person walkthrough: spawn point + level (null = orbit mode)
   onWalkEnd?: () => void
   sun?: { azimuth: number; altitude: number }
@@ -66,8 +68,8 @@ export function ComponentBuildingViewer({
 }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
-  const propsRef = useRef({ model, hidden, cats, style, clipY, focus, furniture, services, types, walk, onWalkEnd, sun, shadows, isolateLevel, selected, onSelect })
-  propsRef.current = { model, hidden, cats, style, clipY, focus, furniture, services, types, walk, onWalkEnd, sun, shadows, isolateLevel, selected, onSelect }
+  const propsRef = useRef({ model, hidden, cats, style, clipY, focus, furniture, services, types, overrides, walk, onWalkEnd, sun, shadows, isolateLevel, selected, onSelect })
+  propsRef.current = { model, hidden, cats, style, clipY, focus, furniture, services, types, overrides, walk, onWalkEnd, sun, shadows, isolateLevel, selected, onSelect }
 
   const rebuildRef = useRef<(() => void) | null>(null)
   const sunFnRef = useRef<(() => void) | null>(null)
@@ -76,7 +78,7 @@ export function ComponentBuildingViewer({
   const styleRef = useRef<(() => void) | null>(null)
   const clipRef = useRef<(() => void) | null>(null)
   const walkFnRef = useRef<(() => void) | null>(null)
-  useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs, hidden.facade, hidden.interior, cats, isolateLevel, furniture, services, types])
+  useEffect(() => { rebuildRef.current?.() }, [model, hidden.glazing, hidden.structure, hidden.slabs, hidden.facade, hidden.interior, cats, isolateLevel, furniture, services, types, overrides])
   useEffect(() => { styleRef.current?.() }, [style])
   useEffect(() => { clipRef.current?.() }, [clipY])
   useEffect(() => { rebuildRef.current?.(); frameRef.current?.() }, [focus])
@@ -569,9 +571,30 @@ export function ComponentBuildingViewer({
         }
         for (const [color, parts] of svcBuckets) boxInst(parts, furMat(color, { rough: 0.45 }))
       }
+      // per-element type overrides — recolour the specific re-typed elements by
+      // drawing a tight cover in the override type's colour (and section shape)
+      const ov = propsRef.current.overrides
+      let ovCount = 0
+      if (ov) {
+        for (const id of Object.keys(ov)) {
+          const fam = familyOfElement(id); if (!fam) continue
+          const g = findElementGeom(m, id); if (!g) continue
+          if (!inFocus(g.center.x, g.center.z)) continue
+          const lvlGuess = Math.round((g.center.y / Math.max(sceneShOf(m), 1e-6)) - 0.5)
+          if (isolating && fLvl != null && lvlGuess !== fLvl) continue
+          const ft = familyType(fam, ov[id]); if (!ft.color) continue
+          const cyl = ft.shape === 'cylinder'
+          const mesh = new THREE.Mesh(cyl ? unitCyl : unitBox, furMat(ft.color, { rough: 0.6 }))
+          mesh.scale.set(Math.max(g.size.x, 0.05) * 1.04, Math.max(g.size.y, 0.05) * 1.04, Math.max(g.size.z, 0.05) * 1.04)
+          mesh.position.set(g.center.x, g.center.y, g.center.z)
+          if (g.dir) { const ex = new THREE.Vector3(g.dir.x, 0, g.dir.z).normalize(), ez = new THREE.Vector3().crossVectors(ex, up).normalize(); mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(ex, up, ez)) }
+          mesh.castShadow = true; mesh.receiveShadow = true; mesh.userData.id = id
+          group.add(mesh); objects.push(mesh); ovCount++
+        }
+      }
       applySun(); applyHighlight(); applyStyle(); applyClip(); invalidate()
       const svcCount = (sys: string) => (svc && vis(sys, 'interior') ? svc.items.filter((i) => i.system === sys).length : 0)
-      ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, windows: m.counts.windows, glazing: m.counts.windows, beams: m.counts.beams, doors: m.counts.doors, slabs: m.counts.slabs, partitions: m.counts.partitions, interiorDoors: m.counts.interiorDoors, stairs: m.counts.stairs, foundations: m.counts.foundations, ceilings: m.counts.ceilings, finishes: m.counts.finishes, parapets: m.counts.parapets, furniture: fur && vis('furniture', 'interior') ? fur.items.length : 0, lighting: svcCount('lighting'), hvac: svcCount('hvac'), fire: svcCount('fire'), sanitary: svcCount('sanitary') }
+      ;(mount as HTMLElement & { __components?: object }).__components = { columns: m.counts.columns, windows: m.counts.windows, glazing: m.counts.windows, beams: m.counts.beams, doors: m.counts.doors, slabs: m.counts.slabs, partitions: m.counts.partitions, interiorDoors: m.counts.interiorDoors, stairs: m.counts.stairs, foundations: m.counts.foundations, ceilings: m.counts.ceilings, finishes: m.counts.finishes, parapets: m.counts.parapets, furniture: fur && vis('furniture', 'interior') ? fur.items.length : 0, lighting: svcCount('lighting'), hvac: svcCount('hvac'), fire: svcCount('fire'), sanitary: svcCount('sanitary'), overrides: ovCount }
       ;(mount as HTMLElement & { __studio?: object }).__studio = { style: propsRef.current.style, clipY: propsRef.current.clipY ?? null, cats: propsRef.current.cats ?? null, focus: propsRef.current.focus ?? null, types: propsRef.current.types ?? null }
     }
     rebuildRef.current = build

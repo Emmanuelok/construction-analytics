@@ -73,7 +73,7 @@ try {
   await page.evaluate(() => { const t = [...document.querySelectorAll('button')].find((x) => /^Columns \(/.test((x.textContent || '').trim())); t?.click() })
   await new Promise((r) => setTimeout(r, 300))
   const rowOk = await page.evaluate(() => {
-    const row = [...document.querySelectorAll('tbody tr')][0]
+    const row = document.querySelector('[aria-label^="Columns schedule"] tbody tr') || document.querySelector('tbody tr')
     row?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     return !!row
   })
@@ -94,7 +94,8 @@ try {
   // selecting a room draws its egress path (centre → nearest stair) in the plan
   await page.evaluate(() => { const t = [...document.querySelectorAll('button')].find((x) => /^Rooms \(/.test((x.textContent || '').trim())); t?.click() })
   await new Promise((r) => setTimeout(r, 250))
-  await page.evaluate(() => document.querySelector('tbody tr')?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+  // click a room in the Rooms *schedule* specifically (other cards now have tables higher up)
+  await page.evaluate(() => (document.querySelector('[aria-label^="Rooms schedule"] tbody tr') || document.querySelector('tbody tr'))?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
   await new Promise((r) => setTimeout(r, 400))
   const hasPath = await page.evaluate(() => { const svg = [...document.querySelectorAll('svg')].find((s) => (s.getAttribute('aria-label') || '').startsWith('Floor plan')); return !!svg && !!svg.querySelector('polyline[stroke-dasharray="4 3"]') })
   ok('selecting a room draws its routed egress path in the plan', hasPath)

@@ -33,7 +33,8 @@ import { floorRooms, floorGrid } from './building-rooms.ts'
 import { spaceType, finishGrade, occupants, SPACE_TYPES, FINISHES } from './room-types.ts'
 import { roomReport, floorReport, finishSchedule, finishCsv } from './room-studio.ts'
 import { furnitureFor, ffeCsv, FFE_CATALOG, FLOOR_TINT, FFE_ALTERNATES, ffeAlt } from './building-furniture.ts'
-import { FAMILIES, DEFAULT_TYPES, familyType, familyCount, engineeringFor, familiesCsv } from './families.ts'
+import { FAMILIES, DEFAULT_TYPES, familyType, familyCount, familyOfElement, engineeringFor, familiesCsv } from './families.ts'
+import { costPlan, costPlanCsv } from './cost-plan.ts'
 import { buildingServices, servicesCsv, SVC_TYPES, svcType } from './building-services.ts'
 import { fastenerTakeoff, fastenersCsv } from './fasteners.ts'
 import { parseDxf, summarize as dxfSummarize, entityLength, dxfCsv, SAMPLE_DXF } from './dxf.ts'
@@ -1023,6 +1024,46 @@ section('families')
   ok('selecting TGU lowers the energy intensity (EUI)', (() => { const a = energyAnalysis(m, { storeyHeight: 3.6, uWindow: 1.4 }); const b = energyAnalysis(m, { storeyHeight: 3.6, uWindow: 0.9 }); return b.summary.eui < a.summary.eui })())
   ok('selecting a stronger column section drops the max utilisation', (() => { const a = structuralCheck(m, { storeyHeight: 3.6, fc: 32 }); const b = structuralCheck(m, { storeyHeight: 3.6, fc: 88 }); return b.summary.maxColUtil < a.summary.maxColUtil })())
   ok('the families CSV schedules every type and flags the active one', (() => { const c = familiesCsv({ ...DEFAULT_TYPES, glazing: 'tgu' }); return c.split('\n').length === familyCount() + 1 && c.includes('Triple glazed (TGU),6/12/6/12/6,760,m²,YES') && c.includes('Double glazed (DGU low-E),6/16Ar/6 low-E,540,m²,') })())
+  // family-of-element mapping (per-element overrides + cost + IFC all key off this)
+  ok('familyOfElement maps ids to families by prefix', familyOfElement('col-2-3') === 'column' && familyOfElement('wall-0-1') === 'facade' && familyOfElement('pan-1-2') === 'glazing' && familyOfElement('idoor-0-4') === 'interiorDoor' && familyOfElement('floor-3') === 'slab' && familyOfElement('core') === 'core' && familyOfElement('roof') === 'roof')
+  ok('familyOfElement returns null for unknown ids', familyOfElement('mystery-9') === null)
+}
+
+// ── cost-plan (elemental cost plan: model qty × family rates, override-aware) ─────
+section('cost-plan')
+{
+  const m = buildBuilding(buildMassing({ gfa: 60_000, progress: 100, storeys: 6, shape: 'rect' }), { coreRatio: 0.16 })
+  const cp = costPlan(m, { storeyHeight: 3.6, ffeCost: 1_000_000, mepCost: 2_000_000, fixingsCost: 500_000 })
+  ok('the plan totals a real construction cost + $/m² GFA', cp.total > 0 && cp.gfa > 0 && cp.perM2 === Math.round(cp.total / cp.gfa))
+  ok('it is grouped NRM-style (substructure, frame, envelope, internal…)', ['substructure', 'frame', 'envelope', 'internal'].every((k) => cp.groups.some((g) => g.key === k)))
+  ok('group costs sum to the total; each carries a $/m²', Math.abs(cp.groups.reduce((s, g) => s + g.cost, 0) - cp.total) < 2 && cp.groups.every((g) => g.perM2 >= 0))
+  ok('soft systems fold in (MEP / FF&E / fixings totals appear as lines)', cp.groups.find((g) => g.key === 'services')!.lines.some((l) => l.cost === 2_000_000) && cp.groups.find((g) => g.key === 'ffe')!.cost === 1_000_000 && cp.groups.find((g) => g.key === 'fixings')!.cost === 500_000)
+  ok('frame line uses the selected column rate (lm × $/m)', (() => { const fr = cp.groups.find((g) => g.key === 'frame')!; const col = fr.lines.find((l) => l.family === 'column')!; return col.unit === 'm' && col.qty > 0 && col.cost === Math.round(col.qty * familyType('column').cost) })())
+  ok('switching to a costlier façade raises the envelope cost', (() => { const a = costPlan(m, {}).groups.find((g) => g.key === 'envelope')!.cost; const b = costPlan(m, { types: { ...DEFAULT_TYPES, facade: 'double-skin' } }).groups.find((g) => g.key === 'envelope')!.cost; return b > a })())
+  // per-element override splits one column onto its own steel line + raises columns cost
+  const colId = m.columns.find((c) => c.level === 0)!.id!
+  ok('a per-element override splits the family onto a second priced line', (() => {
+    const base = costPlan(m, {}); const ov = costPlan(m, { overrides: { [colId]: 'steel-uc' } })
+    const baseColLines = base.groups.find((g) => g.key === 'frame')!.lines.filter((l) => l.family === 'column').length
+    const ovFrame = ov.groups.find((g) => g.key === 'frame')!
+    const ovColLines = ovFrame.lines.filter((l) => l.family === 'column')
+    const baseColCost = base.groups.find((g) => g.key === 'frame')!.lines.filter((l) => l.family === 'column').reduce((s, l) => s + l.cost, 0)
+    const ovColCost = ovColLines.reduce((s, l) => s + l.cost, 0)
+    return baseColLines === 1 && ovColLines.length === 2 && ovColLines.some((l) => l.overridden && l.type === 'steel-uc') && ovColCost > baseColCost
+  })())
+  ok('the cost-plan CSV lists groups, subtotals, the total and $/m²', (() => { const c = costPlanCsv(cp); return c.includes('Substructure,SUBTOTAL') && /TOTAL,,,,,\d/.test(c) && c.includes('$/m² GFA') })())
+}
+
+// ── building-ifc type objects (family/type → IfcTypeObject + occurrence rels) ─────
+section('ifc-types')
+{
+  const m = buildBuilding(buildMassing({ gfa: 40_000, progress: 100, storeys: 4, shape: 'rect' }), { coreRatio: 0.16 })
+  const spf = toIfc(m, { name: 'T', storeyHeight: 3.6, types: { ...DEFAULT_TYPES, column: 'steel-uc', glazing: 'tgu' } })
+  ok('IfcTypeObjects are emitted per family (column/beam/wall/slab/window/covering)', ['IFCCOLUMNTYPE', 'IFCBEAMTYPE', 'IFCWALLTYPE', 'IFCSLABTYPE', 'IFCWINDOWTYPE', 'IFCCOVERINGTYPE'].every((c) => spf.includes(c)))
+  ok('occurrences are bound to their type via IfcRelDefinesByType', spf.includes('IFCRELDEFINESBYTYPE'))
+  ok('the selected type name + material ride into the IFC', spf.includes("'Steel UC 305×305'") && spf.includes('Triple glazed (TGU)') && spf.includes('S355 steel'))
+  ok('default selection still names the base types', toIfc(m, { storeyHeight: 3.6 }).includes("'RC square 400'"))
+  ok('partition walls get a distinct PARTITIONING wall type', spf.includes('.PARTITIONING.') && spf.includes('.SOLIDWALL.'))
 }
 
 // ── building-services (MEP: lighting, air, fire, power, sanitary) ────────────────
@@ -1292,7 +1333,7 @@ section('building-ifc')
   ok('spatial structure + each stair aggregates its parts', count('IFCRELAGGREGATES') === 3 + model.stairs.length && count('IFCRELCONTAINEDINSPATIALSTRUCTURE') >= 1)
   ok('interior rooms export as IfcSpace', count('IFCSPACE') === model.rooms.length && model.rooms.length > 0)
   ok('stairs are half-turn IfcStair decomposed into IfcStairFlight + IfcRailing', count('IFCSTAIR') === model.stairs.length && model.stairs.length === 8 && count('IFCSTAIRFLIGHT') === model.stairs.length * 2 && count('IFCRAILING') === model.stairs.length * 2 && /\.HALF_TURN_STAIR\./.test(ifc))
-  ok('interior partitions export as IfcWall (.PARTITIONING.)', model.partitions.length > 0 && (ifc.match(/\.PARTITIONING\./g) || []).length === model.partitions.length)
+  ok('interior partitions export as IfcWall (.PARTITIONING.) + one IfcWallType', model.partitions.length > 0 && (ifc.match(/\.PARTITIONING\./g) || []).length === model.partitions.length + 1)
   // every #ref resolves to a defined #id (no dangling references)
   ok('every entity reference resolves (well-formed model)', (() => {
     const defined = new Set([...ifc.matchAll(/^#(\d+)=/gm)].map((x) => x[1]))
