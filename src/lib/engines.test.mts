@@ -59,6 +59,7 @@ import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
 import { SAMPLE_IFC } from './ifc-sample.ts'
 import { parseIfc } from './ifc.ts'
 import { auditModel, composition, explainEntity, auditCsv } from './bim-audit.ts'
+import { meshBoxes, detectClashes, geometryTakeoff, clashCsv, type ClashBox } from './ifc-clash.ts'
 import { buildZoning, insetPolygon, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
@@ -1588,6 +1589,30 @@ section('ifc-model')
 }
 
 // ── ifc-geometry (real web-ifc tessellation of the bundled sample) ──────────────
+// ── ifc-clash (geometric clash detection on real tessellated boxes) ──────────────
+section('ifc-clash')
+{
+  const B = (id: number, type: string, disc: string, min: [number, number, number], max: [number, number, number]): ClashBox => ({ id, type, discipline: disc, min, max })
+  // a column punching through a duct: genuine clash
+  const col = B(1, 'IFCCOLUMN', 'struct', [0, 0, 0], [0.4, 3, 0.4])
+  const duct = B(2, 'IFCDUCTSEGMENT', 'mep', [-1, 2.4, 0.1], [1.5, 2.8, 0.35])
+  const far = B(3, 'IFCDUCTSEGMENT', 'mep', [5, 0, 5], [6, 0.4, 6])
+  const r1 = detectClashes([col, duct, far])
+  ok('a real penetration is detected with depth + volume + severity', r1.clashes.length === 1 && r1.clashes[0].a.id + r1.clashes[0].b.id === 3 && r1.clashes[0].depth > 0.2 && r1.clashes[0].volume > 0 && ['Major', 'Critical'].includes(r1.clashes[0].severity))
+  ok('non-overlapping elements never clash', detectClashes([col, far]).clashes.length === 0)
+  ok('grazing contact within tolerance is not a clash', detectClashes([col, B(4, 'IFCDUCTSEGMENT', 'mep', [0.4, 0, 0], [1, 3, 0.4])]).clashes.length === 0)
+  ok('by-design fits are suppressed (window in wall), and counted', (() => { const w = B(5, 'IFCWALL', 'arch', [0, 0, 0], [4, 3, 0.25]); const win = B(6, 'IFCWINDOW', 'arch', [1, 1, -0.02], [2, 2.2, 0.3]); const r = detectClashes([w, win]); return r.clashes.length === 0 && r.suppressed === 1 })())
+  ok('discipline pairs roll up with worst volume', (() => { const r = detectClashes([col, duct, B(7, 'IFCPIPESEGMENT', 'mep', [0.1, 1, 0.05], [0.3, 2, 0.6])]); const p = r.pairs.find((x) => x.a === 'mep' && x.b === 'struct'); return !!p && p.count === r.clashes.length && p.worst >= r.clashes[r.clashes.length - 1].volume })())
+  ok('the headline reads clear when nothing truly clashes', /coordinated/i.test(detectClashes([col, far]).headline))
+  // meshBoxes: world AABB honours the placement matrix (translate +10 in X)
+  const tri = new Float32Array([0, 0, 0, 1, 0, 0, 0, 2, 1])
+  const M = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 10, 0, 0, 1]
+  const mb = meshBoxes([{ expressID: 9, ifcTypeName: 'IFCBEAM', discipline: 'struct', positions: tri, matrix: M }])
+  ok('meshBoxes transforms vertices into world space', mb.length === 1 && near(mb[0].min[0], 10, 1e-6) && near(mb[0].max[0], 11, 1e-6) && near(mb[0].max[1], 2, 1e-6))
+  ok('geometryTakeoff counts + measures per class', (() => { const t = geometryTakeoff([col, duct, far]); const d = t.find((x) => x.type === 'IFCDUCTSEGMENT'); return t.length === 2 && d?.count === 2 && d.volume > 0 })())
+  ok('clash CSV lists every hit with coordinates', (() => { const c = clashCsv(r1); return c.split('\n').length === r1.clashes.length + 2 && c.includes('IFCCOLUMN') })())
+}
+
 // ── bim-audit (plain-language IFC translation + the model-health QA pass) ───────
 section('bim-audit')
 {
@@ -1641,6 +1666,12 @@ section('ifc-geometry')
     ['IFCSLAB', 'IFCCOLUMN', 'IFCBEAM', 'IFCWALL', 'IFCWINDOW', 'IFCDOOR', 'IFCSTAIRFLIGHT', 'IFCRAILING', 'IFCCOVERING', 'IFCFOOTING', 'IFCBUILDINGELEMENTPROXY'].every((t) => names.has(t)), [...names])
   ok('bbox spans the four storeys vertically (~14m + parapet, Y-up)', !!res.bbox && res.bbox.max[1] - res.bbox.min[1] > 12 && res.bbox.max[1] - res.bbox.min[1] < 18, res.bbox)
   ok('the substructure digs below ground (footings under level 0)', !!res.bbox && res.bbox.min[1] < -0.5, res.bbox?.min)
+  // run the REAL clash pass over the tessellated sample: a clean generated model
+  // has zero true intersections once by-design fits are suppressed
+  const geoBoxes = meshBoxes(solids)
+  const geo = detectClashes(geoBoxes)
+  ok('the generated structure is geometrically coordinated (0 real clashes)', geo.clashes.length === 0 && geo.suppressed > 50, { clashes: geo.clashes.slice(0, 3).map((c) => `${c.a.type}×${c.b.type}@${c.depth}`), suppressed: geo.suppressed })
+  ok('the geometry takeoff measures the full anatomy', (() => { const t = geometryTakeoff(geoBoxes); return t.length >= 9 && (t.find((x) => x.type === 'IFCSLAB')?.count ?? 0) >= 12 })())
   // Robustness: garbage / empty bytes never throw, just yield an empty result.
   const junk = await extractGeometry(new TextEncoder().encode('not an ifc file'))
   ok('invalid input → empty result, no throw', junk.meshes.length === 0 && junk.bbox === null)

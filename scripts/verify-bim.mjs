@@ -49,6 +49,51 @@ try {
   const solids = await page.evaluate(() => { const m = document.body.innerText.match(/Tessellated geometry · ([\d,]+) solids/); return m ? Number(m[1].replace(/,/g, '')) : 0 })
   ok('web-ifc tessellates a complete structure (hundreds of solids, not a mock-up)', solids > 250, solids)
 
+  // ── the geometry workbench on the real model ──
+  const viewer = () => page.evaluate(() => document.querySelector('[data-bim-viewer] [role="application"]')?.parentElement ? (document.querySelector('[data-bim-viewer] [role="application"]')).__viewer ?? null : null)
+  const meshCount = async () => (await viewer())?.meshCount ?? 0
+  const base = await meshCount()
+  ok('the viewer reports its mesh count via the state hook', base > 250, base)
+  // visual style
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => (x.textContent || '').trim() === 'xray'); b?.click() })
+  await wait(500)
+  ok('visual styles apply to the real geometry (x-ray)', (await viewer())?.style === 'xray')
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => (x.textContent || '').trim() === 'realistic'); b?.click() })
+  await wait(300)
+  // storey isolation
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /^Level 2$/.test((x.textContent || '').trim())); b?.click() })
+  await wait(700)
+  const iso = await meshCount()
+  ok('storey chips isolate one level (mesh count drops)', iso > 20 && iso < base, { base, iso })
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => (x.textContent || '').trim() === 'All'); b?.click() })
+  await wait(600)
+  // class layer toggle
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /^window \d+$/.test((x.textContent || '').trim().replace(/\s+/g, ' '))); b?.click() })
+  await wait(600)
+  const noWin = await meshCount()
+  ok('class chips hide a layer (windows off)', noWin < base, { base, noWin })
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /^window \d+$/.test((x.textContent || '').trim().replace(/\s+/g, ' '))); b?.click() })
+  await wait(400)
+  // fly-through
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /Fly-through/.test(x.textContent || '')); b?.click() })
+  await wait(800)
+  const w0 = (await viewer())?.walk
+  ok('the fly-through enters at eye height inside the model', !!w0 && w0.active === true && w0.y > 0.5, w0)
+  await page.keyboard.down('w'); await wait(700); await page.keyboard.up('w')
+  const w1 = (await viewer())?.walk
+  ok('WASD moves the walker through the structure', !!w1 && (Math.abs(w1.x - w0.x) > 0.05 || Math.abs(w1.z - w0.z) > 0.05), { w0, w1 })
+  await page.keyboard.press('e'); await wait(400)
+  ok('E rides up a floor', ((await viewer())?.walk?.floor ?? 0) === 1)
+  await page.keyboard.press('Escape'); await wait(500)
+  ok('Esc exits the fly-through', ((await viewer())?.walk?.active ?? true) === false)
+  // takeoff + clash cards
+  const take = await text('[data-bim-takeoff]')
+  ok('the geometry takeoff measures the anatomy per class', /Slab/.test(take) && /Column/.test(take) && /Window/.test(take) && /CSV/.test(take))
+  const clash = await text('[data-bim-clash]')
+  ok('the geometric clash check runs on the real meshes (clean model = clear)', /Geometric clash check/.test(clash) && /coordinated|clear/i.test(clash) && /suppressed/i.test(clash))
+  // render PNG hook exists
+  ok('a render snapshot is available from the viewer', await page.evaluate(() => typeof document.querySelector('[data-bim-viewer] [role="application"]')?.__snapshot === 'function'))
+
   // composition
   const compT = await text('[data-bim-composition]')
   ok('records translate into relatable groups', /Geometry plumbing/i.test(compT) && /Building elements/i.test(compT) && /Relationships/i.test(compT))
