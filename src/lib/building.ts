@@ -65,6 +65,7 @@ const off = (p: Pt, n: Pt, d: number): Pt => ({ x: p.x + n.x * d, z: p.z + n.z *
  *  spacing, beam depth) and the core. */
 export function buildBuilding(m: Massing, opts?: {
   columnSpacing?: number; coreRatio?: number; bayWidth?: number; wwr?: number; beamDepth?: number; mullions?: boolean
+  roomSize?: number; corridorWidth?: number
 }): BuildingModel {
   const spacing = Math.max(0.5, opts?.columnSpacing ?? 3.2)
   const coreRatio = Math.max(0, Math.min(0.6, opts?.coreRatio ?? 0.16))
@@ -150,10 +151,11 @@ export function buildBuilding(m: Massing, opts?: {
   const rooms: Room[] = []
   const partitions: Quad[] = []
   const interiorDoors: Quad[] = []
+  const layout = { core: coreBox, roomSize: opts?.roomSize, corridorWidth: opts?.corridorWidth }
   for (const f of m.floors) {
-    rooms.push(...floorRooms(f.polygon, { level: f.index, core: coreBox }))
+    rooms.push(...floorRooms(f.polygon, { level: f.index, ...layout }))
     const base = f.y - f.height / 2
-    const fp = floorPartitions(f.polygon, { level: f.index, core: coreBox, base: base + slabT, height: f.height - slabT })
+    const fp = floorPartitions(f.polygon, { level: f.index, ...layout, base: base + slabT, height: f.height - slabT })
     partitions.push(...fp.partitions); interiorDoors.push(...fp.doors)
   }
   // a half-turn stair per storey, climbing inside the core

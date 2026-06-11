@@ -1,12 +1,15 @@
-/* Interior partition walls — pure, unit-tested. Derives the walls that separate the
- * rooms (and screen them from the circulation core) from the very same floor grid that
- * lays out the rooms (building-rooms → floorGrid). Each interior grid line that borders
- * at least one room becomes a wall segment, merged along its run and clipped to the
- * floor outline, so what encloses a room in plan, in 3D, in the schedule and in the IFC
- * all agree. Perimeter is left to the façade walls. Scene units; no DOM, no Three.js. */
+/* Interior partition walls — pure, unit-tested. Derives the walls from the same
+ * banded floor grid that lays out the rooms and corridors (building-rooms →
+ * floorGrid), so plan, 3D, schedules and egress agree:
+ *   · room ↔ room and room ↔ corridor edges get a wall,
+ *   · each room's entrance edge (its BFS doorTo) gets a doorway carved in — one
+ *     door per room, opening onto the corridor (or chaining through a suite),
+ *   · corridor ↔ corridor and corridor ↔ core edges stay open (that's the lobby),
+ *   · room ↔ core edges are solid.
+ * Perimeter is left to the façade. Scene units; no DOM, no Three.js. */
 
 import { type Pt } from './zoning'
-import { floorGrid, type GridOpts } from './building-rooms'
+import { floorGrid, type GridOpts, type GridCell } from './building-rooms'
 import { SCENE_LEN_TO_M } from './massing'
 import type { Quad } from './building'
 
@@ -52,9 +55,8 @@ export function clipSegment(a: Pt, b: Pt, poly: Pt[]): [Pt, Pt][] {
   return out
 }
 
-/** Interior partition walls for a floor — vertical panels (Quad) at base y, height h,
- *  on every interior grid line bordering a room. `base`/`height` place them between the
- *  slab and the floor above (matching the façade walls). */
+/** Interior partition walls + entrance doors for a floor — vertical panels (Quad) at
+ *  base y, height h. One doorway per room, on its assigned entrance edge. */
 export function floorPartitions(poly: Pt[], opts: GridOpts & { base?: number; height?: number; doorHeight?: number } = {}): { partitions: Quad[]; doors: Quad[] } {
   const g = floorGrid(poly, opts)
   if (!g) return { partitions: [], doors: [] }
@@ -63,41 +65,50 @@ export function floorPartitions(poly: Pt[], opts: GridOpts & { base?: number; he
   const height = opts.height ?? 1
   const doorH = Math.min(opts.doorHeight ?? height * 0.62, height) // ~2.1 m clear for a 3.6 m storey
   const doorW = 0.9 / LEN // 0.9 m leaf
-  const minRun = 1.8 / LEN // only cut a doorway into runs ≥ 1.8 m
-  const occ = (i: number, j: number) => i >= 0 && i < g.cols && j >= 0 && j < g.rows && g.cells[j * g.cols + i].room
+  const at = (i: number, j: number): GridCell | null => (i >= 0 && i < g.cols && j >= 0 && j < g.rows ? g.cells[j * g.cols + i] : null)
   const partitions: Quad[] = []
   const doors: Quad[] = []
   let pn = 0, dn = 0
   const wall = (s: Pt, e: Pt) => { if (dist(s, e) > 0.05) partitions.push({ a: s, b: e, y: base, h: height, level, id: `part-${level}-${pn++}` }) }
-  // emit a wall run, carving a centred doorway (a real gap + a door leaf) into long runs
-  const push = (a: Pt, b: Pt) => {
+  // emit one wall run, optionally carving a centred doorway (gap + a door leaf)
+  const push = (a: Pt, b: Pt, withDoor: boolean) => {
     for (const [s, e] of clipSegment(a, b, poly)) {
       const L = dist(s, e)
       if (L < 0.05) continue
-      if (L >= minRun) {
-        const half = doorW / 2 / L
+      if (withDoor && L >= doorW * 1.6) {
+        const half = Math.min(doorW, L * 0.5) / 2 / L
         const p0 = lerp(s, e, 0.5 - half), p1 = lerp(s, e, 0.5 + half)
         wall(s, p0); wall(p1, e)
         doors.push({ a: p0, b: p1, y: base, h: doorH, level, id: `idoor-${level}-${dn++}` })
+        withDoor = false // one doorway per run
       } else wall(s, e)
     }
   }
-  // one wall segment per adjacent cell pair, so every room pair sharing a wall gets
-  // its own doorway — the egress door-graph stays fully connected, like a real plan
-  // vertical interior grid lines (constant x) between columns i and i+1
+  // does the shared edge between cell c (room) and its neighbour carry c's door?
+  const doorOnEdge = (c: GridCell, dir: 'N' | 'S' | 'E' | 'W', nb: GridCell) =>
+    (c.kind === 'room' && c.doorTo === dir) ||
+    (nb.kind === 'room' && nb.doorTo === (dir === 'N' ? 'S' : dir === 'S' ? 'N' : dir === 'E' ? 'W' : 'E'))
+  const solidPair = (a: GridCell, b: GridCell) => {
+    const k = `${a.kind}|${b.kind}`
+    // walls wherever a room meets anything; corridors stay open to each other & the core
+    return k === 'room|room' || k === 'room|corridor' || k === 'corridor|room' || k === 'room|core' || k === 'core|room'
+  }
+  // vertical edges (between i and i+1)
   for (let i = 0; i < g.cols - 1; i++) {
-    const x = g.minX + (i + 1) * g.cw
+    const x = g.xs[i + 1]
     for (let j = 0; j < g.rows; j++) {
-      if (!(occ(i, j) || occ(i + 1, j))) continue
-      push({ x, z: g.minZ + j * g.cd }, { x, z: g.minZ + (j + 1) * g.cd })
+      const a = at(i, j)!, b = at(i + 1, j)!
+      if (!solidPair(a, b)) continue
+      push({ x, z: g.zs[j] }, { x, z: g.zs[j + 1] }, doorOnEdge(a, 'E', b))
     }
   }
-  // horizontal interior grid lines (constant z) between rows j and j+1
+  // horizontal edges (between j and j+1)
   for (let j = 0; j < g.rows - 1; j++) {
-    const z = g.minZ + (j + 1) * g.cd
+    const z = g.zs[j + 1]
     for (let i = 0; i < g.cols; i++) {
-      if (!(occ(i, j) || occ(i, j + 1))) continue
-      push({ x: g.minX + i * g.cw, z }, { x: g.minX + (i + 1) * g.cw, z })
+      const a = at(i, j)!, b = at(i, j + 1)!
+      if (!solidPair(a, b)) continue
+      push({ x: g.xs[i], z }, { x: g.xs[i + 1], z }, doorOnEdge(a, 'N', b))
     }
   }
   return { partitions, doors }

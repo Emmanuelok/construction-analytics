@@ -92,9 +92,9 @@ export function buildingServices(m: BuildingModel, opts: { storeyHeight?: number
 
     // lighting @ ~1/12 m² (storage/plant sparser); diffusers @ ~1/16 m²; sprinklers @ ~1/12 m²
     const lit = use === 'storage' || use === 'plant' ? 24 : 12
-    for (const p of grid(lit, 24)) { push('luminaire', 'lighting', p, lum.id === 'linear' ? 1.2 : 0.6, 0.06, lum.id === 'linear' ? 0.16 : 0.6, '#f1f5fb'); L.luminaires++ }
-    for (const p of grid(16, 16)) { push('diffuser', 'hvac', p, 0.6, 0.1, 0.6, '#c4cfdb'); L.diffusers++ }
-    for (const p of grid(12, 24)) { push('sprinkler', 'fire', p, 0.09, 0.12, 0.09, '#b3543e'); L.sprinklers++ }
+    for (const p of grid(lit, 64)) { push('luminaire', 'lighting', p, lum.id === 'linear' ? 1.2 : 0.6, 0.06, lum.id === 'linear' ? 0.16 : 0.6, '#f1f5fb'); L.luminaires++ }
+    for (const p of grid(16, 48)) { push('diffuser', 'hvac', p, 0.6, 0.1, 0.6, '#c4cfdb'); L.diffusers++ }
+    for (const p of grid(12, 64)) { push('sprinkler', 'fire', p, 0.09, 0.12, 0.09, '#b3543e'); L.sprinklers++ }
     const det = room.area > 80 ? 2 : 1
     for (const p of grid(room.area / det + 1, det)) { push('detector', 'fire', p, 0.14, 0.05, 0.14, '#dde3ec'); L.detectors++ }
     // small power: counted (not drawn) — 4 per cellular office/meeting, 1 per 8 m² open/retail/class, 2 elsewhere
