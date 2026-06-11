@@ -558,7 +558,8 @@ function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: strin
       .then(({ extractGeometry }) => extractGeometry(new TextEncoder().encode(source), { locateFile: locateWasm }))
       .then((res) => {
         if (cancelled) return
-        if (res.meshes.length) { setMeshes(res.meshes); setGeoState('real') }
+        const solids = res.meshes.filter((m) => m.ifcTypeName !== 'IFCSPACE') // rooms are data, not fabric
+        if (solids.length) { setMeshes(solids); setGeoState('real') }
         else { setMeshes(null); setGeoState('recon') }
       })
       .catch(() => { if (!cancelled) { setMeshes(null); setGeoState('recon') } })

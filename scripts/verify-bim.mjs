@@ -40,8 +40,14 @@ try {
   const health = await text('[data-bim-health]')
   ok('the model-health check grades the file', /Model health — \d+\/100/.test(health) && /Grade [A-E]/.test(health))
   ok('findings pass the good checks on the fixed sample', /Spatial structure present/i.test(health) && /placed in storeys/i.test(health) && /real 3D geometry/i.test(health))
-  ok('and honestly flag what to tighten, with plain “why it matters” copy', /No element types|No property sets/i.test(health) && /Why it matters:/.test(health))
+  ok('types, psets and spaces pass on the generated sample', /follow named types/i.test(health) && /Property sets attached/i.test(health) && /spaces/i.test(health))
+  ok('what it lacks is reported honestly, with plain “why it matters” copy', /No embedded quantities|No materials/i.test(health) && /Why it matters:/.test(health))
   ok('the audit CSV export is offered', await page.evaluate(() => !!document.querySelector('[data-bim-health] button')))
+
+  // the 3D model is a real structure now — wait for web-ifc to tessellate it
+  await page.waitForFunction(() => /Tessellated geometry/.test(document.body.innerText), { timeout: 90000 })
+  const solids = await page.evaluate(() => { const m = document.body.innerText.match(/Tessellated geometry · ([\d,]+) solids/); return m ? Number(m[1].replace(/,/g, '')) : 0 })
+  ok('web-ifc tessellates a complete structure (hundreds of solids, not a mock-up)', solids > 250, solids)
 
   // composition
   const compT = await text('[data-bim-composition]')

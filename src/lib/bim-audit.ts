@@ -36,6 +36,7 @@ export const GROUP_META: Record<EntityGroup, { label: string; blurb: string }> =
 }
 
 const CATALOG: [RegExp, string, EntityGroup][] = [
+  [/TYPE$/, 'Element types (families)', 'data'], // before the element rules: IFCWALLTYPE is a type, not a wall
   [/^IFCWALL/, 'Walls', 'elements'],
   [/^IFCSLAB/, 'Floor slabs', 'elements'],
   [/^IFCCOLUMN/, 'Columns', 'elements'],
@@ -80,7 +81,6 @@ const CATALOG: [RegExp, string, EntityGroup][] = [
   [/^IFCPROPERTYSET/, 'Property sets', 'data'],
   [/^IFCPROPERTYSINGLEVALUE/, 'Property values', 'data'],
   [/^IFCELEMENTQUANTITY|^IFCQUANTITY/, 'Quantities (takeoff)', 'data'],
-  [/TYPE\(?$|TYPE$/, 'Element types (families)', 'data'],
   [/^IFCMATERIAL/, 'Materials', 'data'],
   [/^IFCSIUNIT|^IFCUNITASSIGNMENT|^IFCCONVERSIONBASEDUNIT|^IFCMEASUREWITHUNIT/, 'Units', 'other'],
   [/^IFCOWNERHISTORY|^IFCPERSON|^IFCORGANIZATION|^IFCAPPLICATION/, 'Authorship stamps', 'other'],
