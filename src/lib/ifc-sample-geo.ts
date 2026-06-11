@@ -34,7 +34,11 @@ function build(): string {
   const areaUnit = add('IFCSIUNIT(*,.AREAUNIT.,$,.SQUARE_METRE.)')
   const volUnit = add('IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.)')
   const units = add(`IFCUNITASSIGNMENT((#${lenUnit},#${areaUnit},#${volUnit}))`)
-  add(`IFCPROJECT('1Meridian00000000000001',$,'Meridian Tower',$,$,$,$,(#${ctx}),#${units})`)
+  const project = add(`IFCPROJECT('1Meridian00000000000001',$,'Meridian Tower',$,$,$,$,(#${ctx}),#${units})`)
+  // full spatial structure: project → site → building → storeys, so the file
+  // organises by level in any receiving tool (and passes the model-health audit)
+  const site = add(`IFCSITE('1MeridianSite0000000001',$,'Meridian Plaza',$,$,$,$,$,.ELEMENT.,$,$,$,$,$)`)
+  const bldg = add(`IFCBUILDING('1MeridianBldg0000000001',$,'Meridian Tower',$,$,$,$,$,.ELEMENT.,$,$,$)`)
 
   // An axis-aligned box, centred at plan (cx,cy), rising from elevation z0 by
   // height h. IFC is Z-up: the W×D profile lies in the XY (plan) plane and is
@@ -61,21 +65,29 @@ function build(): string {
   const W = 16, D = 11 // plan extents (X × Y)
   const cols: [number, number][] = [[-6, -4], [0, -4], [6, -4], [-6, 4], [0, 4], [6, 4]]
 
+  const storeyIds: number[] = []
   for (let s = 0; s < STOREYS; s++) {
     const z0 = s * SH // floor elevation
+    const storey = add(`IFCBUILDINGSTOREY(${guid()},$,'${s === 0 ? 'Ground' : `Level ${s}`}',$,$,$,$,$,.ELEMENT.,${r(z0)})`)
+    storeyIds.push(storey)
+    const inStorey: number[] = []
     // floor slab (full footprint, 0.3 thick)
-    add(`IFCSLAB(${guid()},$,'Slab L${s}',$,$,$,#${boxShape(0, 0, z0, W, D, 0.3)},$,.FLOOR.)`)
+    inStorey.push(add(`IFCSLAB(${guid()},$,'Slab L${s}',$,$,$,#${boxShape(0, 0, z0, W, D, 0.3)},$,.FLOOR.)`))
     // columns rise from the slab top to the next floor
-    for (const [x, y] of cols) add(`IFCCOLUMN(${guid()},$,'Column',$,$,$,#${boxShape(x, y, z0 + 0.3, 0.6, 0.6, SH - 0.3)},$)`)
+    for (const [x, y] of cols) inStorey.push(add(`IFCCOLUMN(${guid()},$,'Column',$,$,$,#${boxShape(x, y, z0 + 0.3, 0.6, 0.6, SH - 0.3)},$)`))
     // perimeter walls on the two long (X-running) faces — skip the roof for openness
     if (s < STOREYS - 1) {
-      add(`IFCWALLSTANDARDCASE(${guid()},$,'Wall N',$,$,$,#${boxShape(0, -D / 2, z0 + 0.3, W, 0.25, SH - 0.6)},$)`)
-      add(`IFCWALLSTANDARDCASE(${guid()},$,'Wall S',$,$,$,#${boxShape(0, D / 2, z0 + 0.3, W, 0.25, SH - 0.6)},$)`)
+      inStorey.push(add(`IFCWALLSTANDARDCASE(${guid()},$,'Wall N',$,$,$,#${boxShape(0, -D / 2, z0 + 0.3, W, 0.25, SH - 0.6)},$)`))
+      inStorey.push(add(`IFCWALLSTANDARDCASE(${guid()},$,'Wall S',$,$,$,#${boxShape(0, D / 2, z0 + 0.3, W, 0.25, SH - 0.6)},$)`))
     }
     // two beams running along X just under the next slab
-    add(`IFCBEAM(${guid()},$,'Beam',$,$,$,#${boxShape(0, -4, z0 + SH - 0.4, W, 0.3, 0.4)},$)`)
-    add(`IFCBEAM(${guid()},$,'Beam',$,$,$,#${boxShape(0, 4, z0 + SH - 0.4, W, 0.3, 0.4)},$)`)
+    inStorey.push(add(`IFCBEAM(${guid()},$,'Beam',$,$,$,#${boxShape(0, -4, z0 + SH - 0.4, W, 0.3, 0.4)},$)`))
+    inStorey.push(add(`IFCBEAM(${guid()},$,'Beam',$,$,$,#${boxShape(0, 4, z0 + SH - 0.4, W, 0.3, 0.4)},$)`))
+    add(`IFCRELCONTAINEDINSPATIALSTRUCTURE(${guid()},$,$,$,(${inStorey.map((i) => `#${i}`).join(',')}),#${storey})`)
   }
+  add(`IFCRELAGGREGATES(${guid()},$,$,$,#${project},(#${site}))`)
+  add(`IFCRELAGGREGATES(${guid()},$,$,$,#${site},(#${bldg}))`)
+  add(`IFCRELAGGREGATES(${guid()},$,$,$,#${bldg},(${storeyIds.map((i) => `#${i}`).join(',')}))`)
 
   L.push('ENDSEC;', 'END-ISO-10303-21;')
   return L.join('\n')

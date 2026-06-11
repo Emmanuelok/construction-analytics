@@ -56,6 +56,9 @@ import { unitShape, holeFor, scaleToArea, scaleAbout, rotatePolygon, shapeExtent
 import { buildIfcScene, gridFor, kindOf, DISCIPLINE_COLOR, describeSelection, type SelectedElement } from './ifc-model.ts'
 import { extractGeometry } from './ifc-geometry.ts'
 import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
+import { SAMPLE_IFC } from './ifc-sample.ts'
+import { parseIfc } from './ifc.ts'
+import { auditModel, composition, explainEntity, auditCsv } from './bim-audit.ts'
 import { buildZoning, insetPolygon, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
@@ -1585,6 +1588,32 @@ section('ifc-model')
 }
 
 // ── ifc-geometry (real web-ifc tessellation of the bundled sample) ──────────────
+// ── bim-audit (plain-language IFC translation + the model-health QA pass) ───────
+section('bim-audit')
+{
+  const geo = parseIfc(SAMPLE_IFC_GEO, 'geo.ifc')
+  ok('the geometry sample now carries a full spatial structure (4 storeys)', geo.storeys.length === 4 && geo.project === 'Meridian Tower')
+  // plain-language translation
+  ok('explainEntity translates plumbing → relatable labels', explainEntity('IFCCARTESIANPOINT').label === 'Points (coordinates)' && explainEntity('IFCCARTESIANPOINT').group === 'geometry' && explainEntity('IFCWALLSTANDARDCASE').label === 'Walls' && explainEntity('IFCRELCONTAINEDINSPATIALSTRUCTURE').group === 'relationships')
+  ok('unknown classes fall back gracefully into “other”', explainEntity('IFCWIDGETFRAMMIS').group === 'other' && explainEntity('IFCWIDGETFRAMMIS').label.length > 0)
+  const comp = composition(geo.entityCounts)
+  ok('composition rolls every record into the six groups (counts reconcile)', comp.reduce((s, g) => s + g.count, 0) === geo.entityCounts.reduce((s, e) => s + e.count, 0))
+  ok('geometry plumbing dominates a real IFC (that is normal, and said so)', (() => { const g = comp.find((x) => x.group === 'geometry')!; return g.pct >= 40 && /normal/i.test(g.blurb) })())
+  ok('building elements group carries the physical parts with top chips', (() => { const g = comp.find((x) => x.group === 'elements')!; return g.count === geo.elementCount && g.top.length > 0 && g.top.some((t) => t.label === 'Columns') })())
+  // the QA pass
+  const audit = auditModel(geo)
+  ok('the fixed sample passes the spatial checks (storeys + containment + geometry + units)', ['spatial', 'contain', 'geometry', 'units'].every((id) => audit.findings.find((f) => f.id === id)?.severity === 'good'))
+  ok('and is honestly told what to tighten (no types, no psets → warnings)', audit.findings.find((f) => f.id === 'types')?.severity === 'warning' && audit.findings.find((f) => f.id === 'psets')?.severity === 'warning')
+  ok('every finding explains itself in plain language (detail + why)', audit.findings.every((f) => f.detail.length > 10 && f.why.length > 20))
+  ok('score + grade reflect the findings; headline names the first fix', audit.score > 40 && audit.score < 95 && /tighten|fix/i.test(audit.headline))
+  ok('findings are ordered critical → warning → good → info', (() => { const r = { critical: 0, warning: 1, good: 2, info: 3 } as const; const xs = audit.findings.map((f) => r[f.severity]); return xs.every((v, i) => i === 0 || v >= xs[i - 1]) })())
+  // a structureless file audits worse
+  const bare = auditModel({ schema: 'IFC4', totalInstances: 50, elementCount: 10, distinctTypes: 4, storeys: [], entityCounts: [{ type: 'IFCWALL', count: 10 }, { type: 'IFCCARTESIANPOINT', count: 40 }] })
+  ok('no storeys → a blocking finding, and a clearly lower score', bare.findings.find((f) => f.id === 'spatial')?.severity === 'critical' && bare.score < audit.score && /fix first/i.test(bare.headline))
+  ok('the richer metadata sample audits at least as well as the bare one', auditModel(parseIfc(SAMPLE_IFC, 's.ifc')).score >= bare.score)
+  ok('audit CSV carries the score, the findings and the composition', (() => { const c = auditCsv(geo); return c.includes('Model health') && c.includes('Why it matters') && c.includes('Group,Share,Records') && c.split('\n').length > audit.findings.length + 3 })())
+}
+
 // Exercises the production extraction wrapper against SAMPLE_IFC_GEO end-to-end:
 // proves the WASM kernel tessellates our generated IFC into real meshes. The
 // WASM lives in node_modules; in CI the cwd is the repo root so this resolves.

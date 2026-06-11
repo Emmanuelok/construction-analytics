@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Boxes,
   Upload,
@@ -18,6 +19,9 @@ import {
   Wrench,
   Activity,
   Download,
+  ShieldCheck,
+  BookOpen,
+  Pencil,
 } from 'lucide-react'
 import {
   PageHeader,
@@ -42,6 +46,7 @@ import { downloadText } from '@/lib/download'
 import { sampleObj, type ModelStats } from '@/lib/model-stats'
 import type { KPI } from '@/lib/scenarios'
 import { parseIfc, type ParsedIfc } from '@/lib/ifc'
+import { auditModel, composition, auditCsv, type AuditSeverity } from '@/lib/bim-audit'
 import { buildIfcScene, DISCIPLINE_COLOR, DISCIPLINE_LABEL, describeSelection, type Discipline, type SelectedElement } from '@/lib/ifc-model'
 import type { IfcMesh } from '@/lib/ifc-geometry'
 import { locateWasm } from '@/lib/ifc-wasm-url'
@@ -187,7 +192,7 @@ export default function Bim() {
         accent={ACC}
         eyebrow="Intelligence"
         title="BIM Intelligence"
-        description="Parse real IFC models in your browser, then coordinate them live: edit inter-discipline clash counts, mark resolutions and set severity, and watch open clashes, resolution rate, clash density and a weighted model-health score recompute instantly. Real coordination math, not a static matrix."
+        description="Drop in an IFC file — the universal BIM format every authoring tool exports (Revit, ArchiCAD, Tekla…) — and the studio reads it right here in your browser: what's inside in plain language, a graded model-health check (the QA pass a BIM manager runs), the real 3D geometry, quantities and data. Then coordinate the federated picture below: clashes, resolutions, severity and a live health score."
         actions={
           <>
             <button onClick={() => fileRef.current?.click()} className="btn-ghost">
@@ -510,20 +515,27 @@ const KIND_VARIANT: Record<string, 'cyan' | 'violet' | 'warn' | 'success' | 'neu
 }
 const KIND_RATE: Record<string, number> = { Volume: 165, Weight: 1.28, Area: 85, Length: 70, Count: 0 }
 
-function MiniStat({ label, value, accent }: { label: string; value: string; accent: Accent }) {
+function MiniStat({ label, value, accent, sub }: { label: string; value: string; accent: Accent; sub?: string }) {
   const a = ACCENT[accent]
   return (
     <div className={cn('rounded-xl p-3 ring-1', a.bg, a.ring)}>
       <div className="text-[11px] text-slate-400">{label}</div>
       <div className={cn('data-mono text-lg font-semibold', a.text)}>{value}</div>
+      {sub && <div className="mt-0.5 text-[10px] leading-snug text-slate-500">{sub}</div>}
     </div>
   )
 }
 
 const DISCIPLINES: Discipline[] = ['struct', 'arch', 'mep', 'other']
 
+const SEV_DOT: Record<AuditSeverity, string> = { critical: 'bg-rose-400', warning: 'bg-amber-400', good: 'bg-emerald-400', info: 'bg-sky-400' }
+const AUDIT_GRADE_ACCENT: Record<string, Accent> = { A: 'emerald', B: 'lime', C: 'amber', D: 'rose', E: 'rose' }
+
 function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: string; onClear: () => void }) {
   const maxEntity = data.entityCounts[0]?.count ?? 1
+  const audit = useMemo(() => auditModel(data), [data])
+  const comp = useMemo(() => composition(data.entityCounts), [data])
+  const [showRaw, setShowRaw] = useState(false)
   const indicativeTotal = data.quantities.reduce((s, q) => s + q.total * (KIND_RATE[q.kind] ?? 0), 0)
   const [hidden, setHidden] = useState<Partial<Record<Discipline, boolean>>>({})
   const sceneInput = { entityCounts: data.entityCounts, storeys: Math.max(1, data.storeys.length) }
@@ -574,10 +586,54 @@ function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: strin
       />
       <div className="space-y-6 border-t border-edge/60 p-5">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <MiniStat label="Total instances" value={formatNumber(data.totalInstances)} accent="blue" />
-          <MiniStat label="Physical elements" value={formatNumber(data.elementCount)} accent="cyan" />
-          <MiniStat label="Distinct types" value={formatNumber(data.distinctTypes)} accent="violet" />
-          <MiniStat label="Storeys" value={formatNumber(data.storeys.length)} accent="teal" />
+          <MiniStat label="Records in the file" value={formatNumber(data.totalInstances)} accent="blue" sub="Every numbered line — elements, geometry, links and data" />
+          <MiniStat label="Building elements" value={formatNumber(data.elementCount)} accent="cyan" sub="The physical things: walls, slabs, columns, doors…" />
+          <MiniStat label="Kinds of record" value={formatNumber(data.distinctTypes)} accent="violet" sub="Distinct IFC classes used by this file" />
+          <MiniStat label="Storeys" value={data.storeys.length > 0 ? formatNumber(data.storeys.length) : '—'} accent={data.storeys.length > 0 ? 'teal' : 'rose'} sub={data.storeys.length > 0 ? 'Levels organising the elements' : 'None defined — see the health check'} />
+        </div>
+
+        {/* how to read an IFC — four-second literacy */}
+        <div data-bim-explainer className="grid gap-2 rounded-xl border border-edge/60 bg-elevated/20 p-3 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            ['An IFC is a database, not a picture', 'Every line is a record with an id. Viewers rebuild the model by following the references between records.'],
+            ['Elements vs plumbing', 'A handful of records are real building parts; most are the points, axes and profiles that position and shape them. High plumbing counts are normal.'],
+            ['The spatial tree', 'Project → site → building → storeys → spaces. Containment links hang every element on this tree — it is how “show me Level 3” works.'],
+            ['Data rides on elements', 'Property sets, quantities and types attach to elements through link records — that data is what schedules, costing and FM consume.'],
+          ].map(([t, b]) => (
+            <div key={t} className="flex gap-2">
+              <BookOpen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-400" />
+              <div><div className="text-xs font-medium text-slate-200">{t}</div><div className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{b}</div></div>
+            </div>
+          ))}
+        </div>
+
+        {/* model health — the QA pass a BIM manager runs, in plain language */}
+        <div data-bim-health className="overflow-hidden rounded-xl border border-edge/60">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-edge/60 bg-elevated/30 px-4 py-2.5">
+            <span className="flex items-center gap-2 text-sm font-medium text-slate-200">
+              <ShieldCheck className={cn('h-4 w-4', ACCENT[AUDIT_GRADE_ACCENT[audit.grade]].text)} />
+              Model health — {audit.score}/100
+              <Badge variant={audit.grade <= 'B' ? 'success' : audit.grade === 'C' ? 'warn' : 'danger'}>Grade {audit.grade}</Badge>
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-500">{audit.counts.good} pass · {audit.counts.warning} to tighten · {audit.counts.critical} blocking</span>
+              <button onClick={() => downloadText(`${data.fileName.replace(/\.ifc$/i, '')}-audit.csv`, auditCsv(data), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>
+            </div>
+          </div>
+          <p className="border-b border-edge/50 bg-elevated/10 px-4 py-2 text-xs text-slate-400">{audit.headline}</p>
+          <ul className="divide-y divide-edge/40">
+            {audit.findings.map((x) => (
+              <li key={x.id} className="px-4 py-2.5">
+                <div className="flex items-start gap-2.5">
+                  <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', SEV_DOT[x.severity])} aria-hidden />
+                  <div className="min-w-0">
+                    <div className="text-sm text-slate-100">{x.title} <span className="ml-1 text-xs text-slate-400">{x.detail}</span></div>
+                    <div className="mt-0.5 text-[11px] leading-relaxed text-slate-500">Why it matters: {x.why}</div>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
 
         {/* 3D model — real web-ifc tessellation when the file carries geometry,
@@ -695,21 +751,44 @@ function ParsedModel({ data, source, onClear }: { data: ParsedIfc; source: strin
           </div>
         </div>
 
-        <div>
-          <h4 className="mb-3 text-sm font-medium text-slate-300">
-            Entity breakdown <span className="text-slate-500">· top {Math.min(12, data.entityCounts.length)} of {data.entityCounts.length}</span>
-          </h4>
-          <div className="space-y-3">
-            {data.entityCounts.slice(0, 12).map((e, i) => (
-              <div key={e.type}>
-                <div className="mb-1 flex items-center justify-between text-sm">
-                  <span className="data-mono text-slate-300">{e.type}</span>
-                  <span className="data-mono text-slate-400">{formatNumber(e.count)}</span>
+        <div data-bim-composition>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-sm font-medium text-slate-300">What's inside this file <span className="text-slate-500">· {formatNumber(data.totalInstances)} records translated into plain language</span></h4>
+            <button onClick={() => setShowRaw((v) => !v)} aria-pressed={showRaw} className="text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline">{showRaw ? 'Hide raw IFC class names' : 'Show raw IFC class names'}</button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {comp.map((g, i) => (
+              <div key={g.group} className="rounded-xl border border-edge/60 bg-elevated/20 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium text-slate-200">{g.label}</span>
+                  <span className="data-mono text-xs text-slate-400">{formatNumber(g.count)} · {g.pct}%</span>
                 </div>
-                <ProgressBar value={(e.count / maxEntity) * 100} accent={PALETTE[i % PALETTE.length]} />
+                <ProgressBar value={g.pct} accent={PALETTE[i % PALETTE.length]} className="mt-1.5" />
+                <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">{g.blurb}</p>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {g.top.map((t) => (
+                    <span key={t.label} title={t.type} className="inline-flex items-center gap-1 rounded-md bg-base/60 px-1.5 py-0.5 text-[10px] text-slate-300 ring-1 ring-inset ring-edge/50">{t.label} <span className="data-mono text-slate-500">{formatNumber(t.count)}</span></span>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
+          {showRaw && (
+            <div className="mt-4 space-y-3">
+              {data.entityCounts.slice(0, 16).map((e, i) => (
+                <div key={e.type}>
+                  <div className="mb-1 flex items-center justify-between text-sm">
+                    <span className="data-mono text-slate-300">{e.type}</span>
+                    <span className="data-mono text-slate-400">{formatNumber(e.count)}</span>
+                  </div>
+                  <ProgressBar value={(e.count / maxEntity) * 100} accent={PALETTE[i % PALETTE.length]} />
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-500">
+            <Pencil className="h-3.5 w-3.5 shrink-0" /> Want to edit this building — move walls, re-type elements, re-run every engine on it? <Link to="/building-explorer" className="text-blue-300 underline-offset-2 hover:underline">Open Building Explorer</Link> and upload the same file under the “IFC / Revit” tab: it rebuilds into a fully editable model with schedules, egress, energy, cost and the walkthrough.
+          </p>
         </div>
 
         <div>
