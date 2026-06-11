@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame, Gauge, Sun, CalendarClock, Sparkles, Wand2, Camera, EyeOff, LayoutGrid, Ruler, Users, Maximize2, Minimize2, X, Footprints, Armchair, Hammer, Library, Lamp, PaintRoller } from 'lucide-react'
+import { lazy, Suspense, Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Boxes, Layers, Building2, Download, FileJson, Table2, MousePointerClick, Eye, Columns3, SquareStack, Box as BoxIcon, Rows3, Frame, DoorOpen, Square, Pencil, Trash2, Copy, Plus, RotateCcw, Move, Undo2, Redo2, Share2, Check, ShieldCheck, Flame, Gauge, Sun, CalendarClock, Sparkles, Wand2, Camera, EyeOff, LayoutGrid, Ruler, Users, Maximize2, Minimize2, X, Footprints, Armchair, Hammer, Library, Lamp, PaintRoller, Wallet } from 'lucide-react'
 import { PageHeader, Card, CardHeader, StatTile, Badge, Tabs } from '@/components/ui'
 import { ScrollableTable } from '@/components/ScrollableTable'
 const ComponentBuildingViewer = lazy(() => import('@/components/ComponentBuildingViewer').then((m) => ({ default: m.ComponentBuildingViewer })))
@@ -14,7 +14,8 @@ import { applyEdits, emptyEdits, nudge, rescale, removeElement, addColumnAt, add
 import { roomReport, floorReport, finishSchedule, finishCsv } from '@/lib/room-studio'
 import { SPACE_TYPES, FINISHES } from '@/lib/room-types'
 import { furnitureFor, ffeCsv, FFE_CATALOG, FFE_ALTERNATES } from '@/lib/building-furniture'
-import { FAMILIES, DEFAULT_TYPES, familyType, familyCount, engineeringFor, familiesCsv, type TypeSelections } from '@/lib/families'
+import { FAMILIES, DEFAULT_TYPES, familyType, familyCount, familyOfElement, familyCategory, engineeringFor, familiesCsv, type TypeSelections } from '@/lib/families'
+import { costPlan, costPlanCsv } from '@/lib/cost-plan'
 import { buildingServices, servicesCsv, SVC_TYPES, type SvcSelections } from '@/lib/building-services'
 import { fastenerTakeoff, fastenersCsv } from '@/lib/fasteners'
 import { toObj } from '@/lib/building-export'
@@ -71,6 +72,7 @@ const FAMILY_TO_CATS: Record<string, string[]> = {
   lift: ['core'], wallFinish: ['partitions'], ironmongery: ['interiorDoors'], // nearest host elements
 }
 const ALL_CAT_KEYS = [...CATS.map((c) => c.key), 'furniture', 'lighting', 'hvac', 'fire', 'sanitary']
+const COST_COLORS = ['#64748b', '#3b82f6', '#22d3ee', '#34d399', '#a78bfa', '#fbbf24', '#f472b6']
 const CAT_ICON: Record<string, typeof Columns3> = { Floor: SquareStack, Column: Columns3, Beam: Rows3, Window: Frame, Door: DoorOpen, 'Interior Door': DoorOpen, Wall: Square, Partition: Square, Room: Square, Stair: Rows3, Core: BoxIcon, Roof: SquareStack }
 
 const fmtCell = (v: number | string) => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v)
@@ -83,7 +85,7 @@ function csvFor(s: Schedule): string {
 }
 
 // the persisted building design (params + manual edits), per project
-type Cfg = { storeys: number; shape: ShapeKind; aspect: number; storeyHeight: number; slabThickness: number; wwr: number; bayWidth: number; mullions: boolean; code: CodeKey; edits: BuildingEdits; types?: TypeSelections; ffe?: Record<string, string>; svc?: SvcSelections }
+type Cfg = { storeys: number; shape: ShapeKind; aspect: number; storeyHeight: number; slabThickness: number; wwr: number; bayWidth: number; mullions: boolean; code: CodeKey; edits: BuildingEdits; types?: TypeSelections; ffe?: Record<string, string>; svc?: SvcSelections; overrides?: Record<string, string> }
 const cfgKey = (id: string) => `aec-bld-${id}`
 const loadCfg = (id: string): Partial<Cfg> | null => { try { return JSON.parse(localStorage.getItem(cfgKey(id)) || 'null') } catch { return null } }
 
@@ -126,6 +128,7 @@ export default function BuildingExplorer() {
   const [types, setTypes] = useState<TypeSelections>(() => ({ ...DEFAULT_TYPES, ...(init0?.types ?? {}) }))
   const [ffeSel, setFfeSel] = useState<Record<string, string>>(() => init0?.ffe ?? {})
   const [svcSel, setSvcSel] = useState<SvcSelections>(() => init0?.svc ?? {})
+  const [overrides, setOverrides] = useState<Record<string, string>>(() => init0?.overrides ?? {}) // per-element type overrides
   // "Preview in 3D": isolate one family's elements in the viewer to see its render
   const [famPreview, setFamPreview] = useState<string | null>(null)
   const prevCatsRef = useRef<Record<string, boolean> | null>(null)
@@ -143,8 +146,8 @@ export default function BuildingExplorer() {
   // auto-save the generated design (params + edits) per project; imported models are in-memory only
   useEffect(() => {
     if (imported) return
-    try { localStorage.setItem(cfgKey(projectId), JSON.stringify({ storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, code, edits, types, ffe: ffeSel, svc: svcSel })) } catch { /* ignore */ }
-  }, [imported, projectId, storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, code, edits, types, ffeSel, svcSel])
+    try { localStorage.setItem(cfgKey(projectId), JSON.stringify({ storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, code, edits, types, ffe: ffeSel, svc: svcSel, overrides })) } catch { /* ignore */ }
+  }, [imported, projectId, storeys, shape, aspect, storeyHeight, slabThickness, wwr, bayWidth, mullions, code, edits, types, ffeSel, svcSel, overrides])
   // bring an uploaded IFC into the editor; rebuild the editing state around it + persist
   const importIfcModel = (m: BuildingModel, sh: number, name: string, labels: IfcLabels) => {
     const h = Math.round(sh * 10) / 10
@@ -174,7 +177,7 @@ export default function BuildingExplorer() {
     setStoreyHeight(c.storeyHeight ?? 3.6); setSlabThickness(c.slabThickness ?? 0.3)
     setWwr(c.wwr ?? 0.55); setBayWidth(c.bayWidth ?? 3.4); setMullions(c.mullions ?? true); setCode(c.code ?? 'IBC')
     setEdits(c.edits ?? emptyEdits()); setPast([]); setFuture([]); setSelectedId(null)
-    setTypes({ ...DEFAULT_TYPES, ...(c.types ?? {}) }); setFfeSel(c.ffe ?? {}); setSvcSel(c.svc ?? {})
+    setTypes({ ...DEFAULT_TYPES, ...(c.types ?? {}) }); setFfeSel(c.ffe ?? {}); setSvcSel(c.svc ?? {}); setOverrides(c.overrides ?? {})
   }
   const switchProject = (id: string) => { setProjectId(id); const p = PROJECTS.find((x) => x.id === id) ?? PROJECTS[0]; applyCfg(loadCfg(id) ?? {}, p.gfa) }
   const ex = useMemo(() => explodeBuilding(model, { storeyHeight, slabThickness, code }), [model, storeyHeight, slabThickness, code])
@@ -204,6 +207,7 @@ export default function BuildingExplorer() {
   const fixings = useMemo(() => fastenerTakeoff(model, { storeyHeight }), [model, storeyHeight])
   const services = useMemo(() => buildingServices(model, { storeyHeight, types: svcSel }), [model, storeyHeight, svcSel])
   const finSched = useMemo(() => finishSchedule(model, { storeyHeight }), [model, storeyHeight])
+  const costs = useMemo(() => costPlan(model, { types, overrides, storeyHeight, ffeCost: furniture.total.cost, mepCost: services.totals.cost, fixingsCost: Math.round(fixings.totals.massKg * 4.5) }), [model, types, overrides, storeyHeight, furniture.total.cost, services.totals.cost, fixings.totals.massKg])
   // first-person walkthrough: spawn inside a real room on a level (clear of the core)
   const walkTo = (level: number, at?: { x: number; z: number }) => {
     const lvl = Math.max(0, Math.min(model.counts.storeys - 1, level))
@@ -278,7 +282,7 @@ export default function BuildingExplorer() {
 
   const exportAll = () => downloadText(`${slug(project.name)}-building-model.json`, JSON.stringify({ project: project.name, parameters: ex.opts, summary: ex.summary, levels: ex.levels, schedules: ex.schedules.map((s) => ({ group: s.group, rows: s.rows, totals: s.totals })) }, null, 2), 'JSON')
   const exportObj = () => downloadText(`${slug(project.name)}-building.obj`, toObj(model, project.name), 'OBJ')
-  const exportIfc = () => downloadText(`${slug(project.name)}-building.ifc`, toIfc(model, { name: project.name, storeyHeight }), 'IFC')
+  const exportIfc = () => downloadText(`${slug(project.name)}-building.ifc`, toIfc(model, { name: project.name, storeyHeight, types }), 'IFC')
   const [gltfBusy, setGltfBusy] = useState(false)
   const exportGltf = async () => { setGltfBusy(true); try { const { exportGlb } = await import('@/lib/building-gltf'); await exportGlb(model, `${slug(project.name)}-building.glb`) } catch { /* ignore */ } setGltfBusy(false) }
 
@@ -458,6 +462,56 @@ export default function BuildingExplorer() {
         <p className="border-t border-edge/50 px-5 py-2.5 text-[11px] text-slate-500">Active envelope: wall U {eng.uWall} · window U {eng.uWindow} · roof U {eng.uRoof} W/m²K → the Energy card. Column strength {eng.fcColumn} MPa-eq → the Structure card. Selections persist with the design and land in the families CSV schedule.</p>
       </Card>
 
+      {/* elemental cost plan — model quantities × family rates (NRM-style) */}
+      <Card data-costplan>
+        <CardHeader
+          icon={Wallet} accent="emerald" title="Elemental cost plan"
+          subtitle="Every family's measured quantity (column lm, slab/wall/finish m², door/stair counts, foundation m³ …) priced at its selected type rate — honouring per-element overrides, so re-typing a few columns to steel splits them onto their own line — grouped NRM-style with a $/m² GFA rate. MEP, FF&E and fixings totals fold in from their engines. Indicative design-stage cost, not a tender."
+          action={<button onClick={() => downloadText(`${slug(project.name)}-cost-plan.csv`, costPlanCsv(costs), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-4">
+          <StatTile label="Total construction" value={`$${formatNumber(costs.total)}`} accent="emerald" />
+          <StatTile label="Cost / m² GFA" value={`$${formatNumber(costs.perM2)}`} accent="cyan" />
+          <StatTile label="Shell & core" value={`$${formatNumber(costs.shellCost)}`} accent="violet" />
+          <StatTile label="GFA priced" value={`${formatNumber(costs.gfa)} m²`} accent="blue" />
+        </div>
+        {/* group split bar */}
+        <div className="border-t border-edge/50 px-5 pt-4">
+          <div className="flex h-3 w-full overflow-hidden rounded-full ring-1 ring-inset ring-edge/40">
+            {costs.groups.map((g, i) => <div key={g.key} title={`${g.label}: $${formatNumber(g.cost)} (${Math.round((g.cost / costs.total) * 100)}%)`} style={{ width: `${(g.cost / costs.total) * 100}%`, background: COST_COLORS[i % COST_COLORS.length] }} />)}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+            {costs.groups.map((g, i) => <span key={g.key} className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: COST_COLORS[i % COST_COLORS.length] }} /> {g.label} · {Math.round((g.cost / costs.total) * 100)}%</span>)}
+          </div>
+        </div>
+        <div className="border-t border-edge/50 p-4">
+          <ScrollableTable label="Elemental cost plan">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Element', 'Type', 'Quantity', 'Rate ($)', 'Cost ($)', '$/m²'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 2 && 'text-right')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {costs.groups.map((g) => (
+                  <Fragment key={g.key}>
+                    <tr className="border-b border-edge/50 bg-elevated/30"><td colSpan={4} className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-300">{g.label}</td><td className="data-mono px-3 py-1.5 text-right text-sm font-semibold text-emerald-300">{formatNumber(g.cost)}</td><td className="data-mono px-3 py-1.5 text-right text-[11px] text-slate-400">{g.perM2}</td></tr>
+                    {g.lines.map((l, j) => (
+                      <tr key={`${g.key}-${j}`} className="border-b border-edge/30">
+                        <td className="px-3 py-1.5 text-slate-300">{l.familyLabel}{l.overridden && <span title="includes per-element overrides" className="ml-1 text-sky-300">*</span>}</td>
+                        <td className="px-3 py-1.5 text-slate-400">{l.typeLabel}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(l.qty)} {l.unit}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(l.rate)}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(l.cost)}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-500">{costs.gfa > 0 ? Math.round((l.cost / costs.gfa) * 10) / 10 : 0}</td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))}
+              </tbody>
+              <tfoot><tr className="border-t border-edge/60 text-sm font-semibold text-slate-200"><td className="px-3 py-2" colSpan={4}>Total construction cost</td><td className="data-mono px-3 py-2 text-right text-emerald-300">{formatNumber(costs.total)}</td><td className="data-mono px-3 py-2 text-right text-slate-400">{costs.perM2}</td></tr></tfoot>
+            </table>
+          </ScrollableTable>
+          <p className="mt-3 text-[11px] text-slate-500">A <span className="text-sky-300">*</span> marks an element line that includes per-element type overrides (set one in the Element inspector). Change any family type above and every line, group split and the $/m² rate re-price live.</p>
+        </div>
+      </Card>
+
       {/* 3D model + level navigator */}
       <div className="grid gap-6 lg:grid-cols-[1.55fr_1fr]">
         <Card className="overflow-hidden">
@@ -498,7 +552,7 @@ export default function BuildingExplorer() {
           </div>
           <div className="border-t border-edge/50" data-main-viewer>
             <Suspense fallback={<div style={{ height: 560 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-              <ComponentBuildingViewer model={model} cats={cats} style={style} clipY={clipY} sun={sun} furniture={furniture} services={services} types={types} walk={walk} onWalkEnd={() => setWalk(null)} isolateLevel={isolate ? activeLevel : null} selected={selectedId} onSelect={selectEl} height={560} />
+              <ComponentBuildingViewer model={model} cats={cats} style={style} clipY={clipY} sun={sun} furniture={furniture} services={services} types={types} overrides={overrides} walk={walk} onWalkEnd={() => setWalk(null)} isolateLevel={isolate ? activeLevel : null} selected={selectedId} onSelect={selectEl} height={560} />
             </Suspense>
           </div>
         </Card>
@@ -592,7 +646,7 @@ export default function BuildingExplorer() {
               </div>
               <div data-studio-preview className="border-t border-edge/50">
                 <Suspense fallback={<div style={{ height: 420 }} className="grid place-items-center text-sm text-slate-500">Loading preview…</div>}>
-                  <ComponentBuildingViewer model={model} cats={cats} style={studioStyle} focus={studioFocus} furniture={furniture} services={services} types={types} selected={selectedId} onSelect={selectEl} height={420} />
+                  <ComponentBuildingViewer model={model} cats={cats} style={studioStyle} focus={studioFocus} furniture={furniture} services={services} types={types} overrides={overrides} selected={selectedId} onSelect={selectEl} height={420} />
                 </Suspense>
               </div>
             </div>
@@ -768,6 +822,29 @@ export default function BuildingExplorer() {
                     </div>
                   ))}
                 </dl>
+                {selectedId && (() => {
+                  const famKey = familyOfElement(selectedId)
+                  const cat = famKey ? familyCategory(famKey) : null
+                  if (!cat || !famKey) return null
+                  const eff = overrides[selectedId] ?? types[famKey] ?? cat.types[0].id
+                  const isOv = !!overrides[selectedId]
+                  const t = familyType(famKey, eff)
+                  return (
+                    <div className="mt-3 rounded-lg border border-sky-500/25 bg-sky-500/[0.06] p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2"><span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-sky-300/90"><Library className="h-3.5 w-3.5" /> Type — {cat.label}</span>{isOv && <Badge variant="cyan">Overridden</Badge>}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="shrink-0"><TypeSwatch family={famKey} type={t} /></span>
+                        <select value={eff} onChange={(e) => setOverrides((o) => ({ ...o, [selectedId]: e.target.value }))} aria-label="Element type" className="w-full rounded-lg border border-edge/60 bg-base/60 px-2 py-1.5 text-sm text-slate-100 focus:border-sky-500/50 focus:outline-none">
+                          {cat.types.map((ty) => <option key={ty.id} value={ty.id}>{ty.label}</option>)}
+                        </select>
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-slate-500">{t.material} · ${formatNumber(t.cost)}/{t.unit}</p>
+                      {isOv
+                        ? <button onClick={() => setOverrides((o) => { const n = { ...o }; delete n[selectedId]; return n })} className="mt-1 text-[11px] text-sky-300 underline-offset-2 hover:underline">Reset to the global {cat.label} type ({familyType(famKey, types[famKey]).label})</button>
+                        : <p className="mt-1 text-[11px] text-slate-500">Re-typing this one element overrides the global selection — the model recolours and the cost plan re-prices.</p>}
+                    </div>
+                  )
+                })()}
                 {editMode && selectedId && (
                   <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] p-3">
                     <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-amber-300/90"><Move className="h-3.5 w-3.5" /> Edit element</div>

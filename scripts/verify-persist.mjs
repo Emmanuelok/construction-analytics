@@ -30,7 +30,9 @@ try {
   await click(/^Edit$/); await new Promise((r) => setTimeout(r, 250))
   await page.evaluate(() => [...document.querySelectorAll('button')].find((x) => /^Columns \(/.test((x.textContent || '').trim()))?.click())
   await new Promise((r) => setTimeout(r, 250))
-  await page.evaluate(() => document.querySelector('tbody tr')?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+  // click the first row of the Columns *schedule* table specifically (scoped by its
+  // ScrollableTable region label — other cards now have tables higher in the DOM)
+  await page.evaluate(() => (document.querySelector('[aria-label^="Columns schedule"] tbody tr') || document.querySelector('tbody tr'))?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
   await new Promise((r) => setTimeout(r, 250))
   await click(/Delete/); await new Promise((r) => setTimeout(r, 350))
   ok('delete drops a column', (await cols()) === N - 1)

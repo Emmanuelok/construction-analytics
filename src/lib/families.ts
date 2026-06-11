@@ -225,6 +225,22 @@ export function familyType(key: string, id?: string): FamilyType {
 }
 export const familyCount = (): number => FAMILIES.reduce((s, f) => s + f.types.length, 0)
 
+// Map a model element id → the family it belongs to (by id prefix), so a single
+// element can be re-typed, costed and exported against the right catalog.
+const ID_PREFIX: [RegExp, string][] = [
+  [/^col-/, 'column'], [/^add-col-/, 'column'], [/^beam-/, 'beam'], [/^gb-/, 'groundBeam'],
+  [/^wall-/, 'facade'], [/^pan-/, 'glazing'], [/^door-/, 'door'], [/^add-idoor-/, 'interiorDoor'],
+  [/^idoor-/, 'interiorDoor'], [/^part-/, 'partition'], [/^floor-/, 'slab'], [/^fin-/, 'floorFinish'],
+  [/^ceil-/, 'ceiling'], [/^fdn-/, 'foundation'], [/^mull-/, 'mullion'], [/^par-/, 'balustrade'],
+  [/^add-stair-/, 'stair'], [/^stair-/, 'stair'],
+]
+export function familyOfElement(id: string): string | null {
+  if (id === 'core') return 'core'
+  if (id === 'roof') return 'roof'
+  for (const [re, key] of ID_PREFIX) if (re.test(id)) return key
+  return null
+}
+
 /** Engineering hooks derived from a selection set (feeds energy + structure). */
 export function engineeringFor(sel: TypeSelections): { uWall: number; uWindow: number; uRoof: number; fcColumn: number; fcBeam: number; colSizeFactor: number } {
   const fac = familyType('facade', sel.facade), gla = familyType('glazing', sel.glazing), roof = familyType('roof', sel.roof)
