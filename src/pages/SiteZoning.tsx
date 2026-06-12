@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
@@ -15,7 +15,8 @@ import {
 import { analyzeSite, siteSurvey, compass, type LatLng, type SiteSurvey } from '@/lib/geo'
 import { ZONING_PRESETS, presetById, type ProgrammeMix } from '@/lib/zoning-presets'
 import { maximizeScheme } from '@/lib/zoning-optimize'
-import { feasibility, feasibilityWaterfall, feasibilityCsv, DEFAULT_RATES, type Use } from '@/lib/feasibility'
+import { feasibility, feasibilityWaterfall, feasibilityCsv, DEFAULT_RATES, type Use, type Feasibility } from '@/lib/feasibility'
+import { shadowStudy } from '@/lib/shadow'
 import { formatCurrency } from '@/lib/format'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
@@ -56,6 +57,12 @@ export default function SiteZoning() {
   const [mix, setMix] = useState<ProgrammeMix>({ residential: 0.6, office: 0.25, retail: 0.15 })
   const [targetMargin, setTargetMargin] = useState(18)
   const [investYield, setInvestYield] = useState(6)
+  const [perEdge, setPerEdge] = useState(false)
+  const [frontSb, setFrontSb] = useState(6)
+  const [sideSb, setSideSb] = useState(4)
+  const [rearSb, setRearSb] = useState(8)
+  const [shadowMonth, setShadowMonth] = useState(6)
+  const [schemeA, setSchemeA] = useState<null | { label: string; gfa: number; storeys: number; height: number; compliant: boolean; gdv: number; rlv: number; margin: number }>(null)
   // apply a zoning district: load its rules + programme split
   const applyPreset = (id: string) => {
     const p = presetById(id); if (!p) return
@@ -65,8 +72,8 @@ export default function SiteZoning() {
   }
 
   const z: Zoning = useMemo(
-    () => buildZoning({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback, skyBase, skyStep }),
-    [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback, skyBase, skyStep],
+    () => buildZoning({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback, skyBase, skyStep, setbacks: perEdge ? { front: frontSb, side: sideSb, rear: rearSb } : undefined }),
+    [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback, skyBase, skyStep, perEdge, frontSb, sideSb, rearSb],
   )
   const geo = useMemo(() => analyzeSite(boundary, anchor), [boundary, anchor])
   const survey = useMemo(() => siteSurvey(boundary, anchor), [boundary, anchor])
@@ -82,17 +89,20 @@ export default function SiteZoning() {
   }, [z.buildable, z.proposed.footprint, boundary])
 
   // as-of-right maximiser: the GFA-maximal compliant scheme + binding constraint
-  const optimum = useMemo(() => maximizeScheme({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep }), [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep])
+  const optimum = useMemo(() => maximizeScheme({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, setbacks: perEdge ? { front: frontSb, side: sideSb, rear: rearSb } : undefined }), [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, perEdge, frontSb, sideSb, rearSb])
   const maximize = () => { setProposedGFA(optimum.proposedGFA); setProposedStoreys(optimum.proposedStoreys) }
   // development feasibility / residual-land pro forma
   const feas = useMemo(() => feasibility({ gfa: proposedGFA, mix, siteArea: z.siteArea, buildableArea: z.buildableArea, investmentYield: investYield / 100, targetMarginPct: targetMargin }), [proposedGFA, mix, z.siteArea, z.buildableArea, investYield, targetMargin])
+  const shadow = useMemo(() => (footprintPoly.length >= 3 ? shadowStudy(footprintPoly, z.proposed.height, { lat: anchor.lat, lng: anchor.lng, month: shadowMonth }) : null), [footprintPoly, z.proposed.height, anchor.lat, anchor.lng, shadowMonth])
+  const pinA = () => setSchemeA({ label: 'A', gfa: Math.round(proposedGFA), storeys: proposedStoreys, height: Math.round(z.proposed.height), compliant: z.compliance.overall, gdv: feas.gdv, rlv: feas.residualLandValue, margin: feas.marginOnCost })
+  const schemeB = { label: 'B', gfa: Math.round(proposedGFA), storeys: proposedStoreys, height: Math.round(z.proposed.height), compliant: z.compliance.overall, gdv: feas.gdv, rlv: feas.residualLandValue, margin: feas.marginOnCost }
 
   const reset = () => {
     applyBoundary(PRESETS[0].pts); setFar(DEFAULTS.far); setHeightLimit(DEFAULTS.heightLimit); setSetback(DEFAULTS.setback)
     setMaxCoverage(DEFAULTS.maxCoverage); setStoreyHeight(DEFAULTS.storeyHeight); setProposedGFA(DEFAULTS.proposedGFA)
     setProposedStoreys(DEFAULTS.proposedStoreys); setPodium(DEFAULTS.podium); setTowerSetback(DEFAULTS.towerSetback)
     setSkyBase(DEFAULTS.skyBase); setSkyStep(DEFAULTS.skyStep); setGeoText(''); setGeoError(null)
-    setPresetId(''); setMix({ residential: 0.6, office: 0.25, retail: 0.15 }); setTargetMargin(18); setInvestYield(6)
+    setPresetId(''); setMix({ residential: 0.6, office: 0.25, retail: 0.15 }); setTargetMargin(18); setInvestYield(6); setPerEdge(false); setFrontSb(6); setSideSb(4); setRearSb(8); setShadowMonth(6); setSchemeA(null)
   }
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
@@ -198,7 +208,22 @@ export default function SiteZoning() {
             </div>
             <Range label="FAR (floor area ratio)" value={far} min={0.5} max={15} step={0.1} onChange={setFar} fmt={(v) => v.toFixed(1)} />
             <Range label="Height limit" unit="m" value={heightLimit} min={10} max={300} step={1} onChange={setHeightLimit} />
-            <Range label="Setback" unit="m" value={setback} min={0} max={20} step={0.5} onChange={setSetback} fmt={(v) => v.toFixed(1)} />
+            <div data-peredge>
+              <label className="mb-1 flex items-center justify-between text-sm">
+                <span className="text-slate-300">Setback</span>
+                <button onClick={() => setPerEdge((v) => !v)} aria-pressed={perEdge} className={cn('rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset transition-colors', perEdge ? 'bg-teal-500/20 text-teal-100 ring-teal-500/40' : 'text-slate-400 ring-edge/60 hover:bg-elevated/50')}>{perEdge ? 'Per-edge (front/side/rear)' : 'Uniform'}</button>
+              </label>
+              {perEdge ? (
+                <div className="space-y-2.5 rounded-lg bg-elevated/20 p-2.5 ring-1 ring-inset ring-edge/40">
+                  <Range label="Front (frontage)" unit="m" value={frontSb} min={0} max={20} step={0.5} onChange={setFrontSb} fmt={(v) => v.toFixed(1)} />
+                  <Range label="Sides" unit="m" value={sideSb} min={0} max={20} step={0.5} onChange={setSideSb} fmt={(v) => v.toFixed(1)} />
+                  <Range label="Rear" unit="m" value={rearSb} min={0} max={20} step={0.5} onChange={setRearSb} fmt={(v) => v.toFixed(1)} />
+                  <p className="text-[11px] text-slate-500">The longest edge is the frontage; the most-opposite edge is the rear. The buildable envelope insets each edge by its own setback.</p>
+                </div>
+              ) : (
+                <input type="range" min={0} max={20} step={0.5} value={setback} onChange={(e) => setSetback(Number(e.target.value))} className="h-1 w-full cursor-pointer accent-teal-500" aria-label="Setback" />
+              )}
+            </div>
             <Range label="Max site coverage" unit="%" value={maxCoverage} min={10} max={100} step={1} onChange={setMaxCoverage} />
             <div className="grid grid-cols-2 gap-3 border-t border-edge/40 pt-4">
               <Num label="Proposed GFA" unit="m²" value={proposedGFA} step={1000} onChange={(v) => setProposedGFA(Math.max(0, v))} />
@@ -461,6 +486,84 @@ export default function SiteZoning() {
         </div>
       </Card>
 
+      {/* shadow / right-to-light study */}
+      {shadow && (
+        <Card data-shadow>
+          <CardHeader
+            icon={Sun} accent="amber" title="Shadow study — right to light"
+            subtitle={`Where the proposed mass casts shadow through the day at this latitude. Reaches up to ${formatNumber(shadow.maxReach)} m and shades ~${formatNumber(shadow.netShadowArea)} m² beyond its own footprint at the worst moment. Indicative — true overshadowing needs neighbouring context.`}
+            action={
+              <label className="flex items-center gap-2 text-xs text-slate-400">Month
+                <select value={shadowMonth} onChange={(e) => setShadowMonth(Number(e.target.value))} aria-label="Shadow study month" className="rounded-lg border border-edge/60 bg-elevated/50 px-2 py-1 text-xs text-slate-100 focus:border-amber-500/50 focus:outline-none">
+                  {[['Jun (summer)', 6], ['Mar/Sep (equinox)', 3], ['Dec (winter)', 12]].map(([l, v]) => <option key={v as number} value={v as number}>{l}</option>)}
+                </select>
+              </label>
+            }
+          />
+          <div className="grid gap-4 border-t border-edge/50 p-5 lg:grid-cols-3">
+            {shadow.moments.map((m) => (
+              <div key={m.label} className="rounded-xl border border-edge/60 bg-base/40 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-sm font-medium text-slate-200">{m.label}</span>
+                  <span className="data-mono text-[11px] text-slate-500">alt {m.altitude}° · {compass(m.azimuth)}</span>
+                </div>
+                <ShadowDiagram footprint={footprintPoly} shadow={m.shadow.polygon} />
+                <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
+                  <span>Reach <span className="data-mono text-slate-300">{formatNumber(m.shadow.reach)} m</span></span>
+                  <span>Shadow <span className="data-mono text-slate-300">{formatNumber(m.shadow.area)} m²</span></span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* A/B scheme comparison */}
+      <Card data-compare>
+        <CardHeader
+          icon={GitCompare} accent="violet" title="Scheme comparison — A / B"
+          subtitle="Pin the current scheme as A, then change the rules or proposal to explore B. Compliance, capacity and the feasibility return are compared side by side."
+          action={<button onClick={pinA} className="inline-flex items-center gap-1.5 rounded-lg bg-violet-500/15 px-2.5 py-1 text-xs font-medium text-violet-200 ring-1 ring-inset ring-violet-500/40 hover:bg-violet-500/25"><Pin className="h-3.5 w-3.5" /> Pin current as A</button>}
+        />
+        <div className="border-t border-edge/50 p-4">
+          {schemeA ? (
+            <ScrollableTable label="Scheme A vs B">
+              <table className="w-full min-w-[520px] text-left text-sm">
+                <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500"><th className="px-3 py-2 font-medium">Metric</th><th className="px-3 py-2 text-right font-medium">A (pinned)</th><th className="px-3 py-2 text-right font-medium">B (current)</th><th className="px-3 py-2 text-right font-medium">Δ</th></tr></thead>
+                <tbody>
+                  {([
+                    ['GFA (m²)', schemeA.gfa, schemeB.gfa, true],
+                    ['Storeys', schemeA.storeys, schemeB.storeys, true],
+                    ['Height (m)', schemeA.height, schemeB.height, true],
+                    ['GDV', schemeA.gdv, schemeB.gdv, true],
+                    ['Residual land', schemeA.rlv, schemeB.rlv, true],
+                    ['Margin (land-free) %', schemeA.margin, schemeB.margin, true],
+                  ] as [string, number, number, boolean][]).map(([k, a, b]) => {
+                    const d = b - a
+                    return (
+                      <tr key={k} className="border-b border-edge/30">
+                        <td className="px-3 py-1.5 text-slate-300">{k}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-400">{formatNumber(a)}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-200">{formatNumber(b)}</td>
+                        <td className={cn('data-mono px-3 py-1.5 text-right', d > 0 ? 'text-emerald-300' : d < 0 ? 'text-rose-300' : 'text-slate-500')}>{d > 0 ? '+' : ''}{formatNumber(d)}</td>
+                      </tr>
+                    )
+                  })}
+                  <tr>
+                    <td className="px-3 py-1.5 text-slate-300">Compliant</td>
+                    <td className="px-3 py-1.5 text-right">{schemeA.compliant ? <span className="text-emerald-300">Yes</span> : <span className="text-rose-300">No</span>}</td>
+                    <td className="px-3 py-1.5 text-right">{schemeB.compliant ? <span className="text-emerald-300">Yes</span> : <span className="text-rose-300">No</span>}</td>
+                    <td className="px-3 py-1.5 text-right text-slate-500">—</td>
+                  </tr>
+                </tbody>
+              </table>
+            </ScrollableTable>
+          ) : (
+            <p className="grid h-24 place-items-center text-sm text-slate-500">Pin the current scheme as <span className="mx-1 text-slate-300">A</span>, then adjust the rules or proposal to compare a <span className="mx-1 text-slate-300">B</span> against it.</p>
+          )}
+        </div>
+      </Card>
+
       {/* tier schedule + data export */}
       <Card>
         <CardHeader
@@ -559,6 +662,23 @@ function PlanDiagram({ z, boundary }: { z: Zoning; boundary: Pt[] }) {
         <text x={12} y={H - 28}>■ <tspan fill="#e2e8f0">Site</tspan></text>
         <text x={12} y={H - 14}>▦ <tspan fill="#fbbf24">Setback</tspan> · <tspan fill={z.compliance.overall ? '#22c55e' : '#ef4444'}>Proposed footprint</tspan></text>
       </g>
+    </svg>
+  )
+}
+
+function ShadowDiagram({ footprint, shadow }: { footprint: Pt[]; shadow: Pt[] }) {
+  const all = [...footprint, ...shadow]
+  if (all.length < 3) return <div className="grid h-28 place-items-center text-[11px] text-slate-600">no shadow</div>
+  const xs = all.map((p) => p.x), zs = all.map((p) => p.z)
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs)
+  const W = 200, H = 120, pad = 10
+  const s = Math.min((W - pad * 2) / Math.max(1, maxX - minX), (H - pad * 2) / Math.max(1, maxZ - minZ))
+  const ox = (W - (maxX - minX) * s) / 2, oz = (H - (maxZ - minZ) * s) / 2
+  const map = (p: Pt) => `${(ox + (p.x - minX) * s).toFixed(1)},${(oz + (maxZ - p.z) * s).toFixed(1)}`
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-28 w-full rounded-lg bg-[#0a0f1c]" role="img" aria-label="Shadow cast diagram">
+      <polygon points={shadow.map(map).join(' ')} fill="#1e293b" stroke="#475569" strokeWidth={1} />
+      <polygon points={footprint.map(map).join(' ')} fill="#f59e0b55" stroke="#f59e0b" strokeWidth={1.2} />
     </svg>
   )
 }

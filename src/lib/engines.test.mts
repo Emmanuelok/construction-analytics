@@ -61,7 +61,9 @@ import { parseIfc } from './ifc.ts'
 import { auditModel, composition, explainEntity, auditCsv } from './bim-audit.ts'
 import { meshBoxes, detectClashes, detectClashesMeshes, meshHitsBox, geometryTakeoff, clashCsv, type ClashBox } from './ifc-clash.ts'
 import { buildBcf, makeZip, bcfTopicCount } from './bcf.ts'
-import { buildZoning, insetPolygon, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
+import { buildZoning, insetPolygon, insetPolygonEdges, classifyEdges, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
+import { castShadow, shadowStudy, convexHull } from './shadow.ts'
+import { sunDirection } from './sun.ts'
 import { ZONING_PRESETS, presetById, normaliseMix } from './zoning-presets.ts'
 import { maximizeScheme } from './zoning-optimize.ts'
 import { feasibility, feasibilityWaterfall, feasibilityCsv, DEFAULT_RATES } from './feasibility.ts'
@@ -1825,6 +1827,35 @@ section('feasibility')
   ok('an unviable scheme (cost > value) reports a negative profit pool + an underwater headline', (() => { const u = feasibility({ gfa: 10000, mix: { residential: 1, office: 0, retail: 0 }, siteArea: 2400, rates: { residential: { salePrice: 500 } } }); return u.profitAtZeroLand < 0 && u.residualLandValue === 0 && /underwater|doesn/i.test(u.headline) })())
   ok('the waterfall + CSV expose the stack', feasibilityWaterfall(f).some((r) => r.label === 'GDV' && r.kind === 'value') && feasibilityCsv(f).includes('Residual land value'))
   ok('land value reports per site m²', f.landPerSiteM2 > 0 && near(f.landPerSiteM2, f.residualLandValue / 2400, 1))
+}
+
+// ── per-edge setbacks (front / side / rear) ─────────────────────────────────────
+section('zoning-setbacks')
+{
+  const site = rectSite(60, 40) // 60 wide (X), 40 deep (Z) → long edges run along X
+  const roles = classifyEdges(site)
+  ok('the frontage is the longest edge; the rear is opposite it; rest are sides', roles.filter((r) => r === 'front').length === 1 && roles.filter((r) => r === 'rear').length === 1 && roles.filter((r) => r === 'side').length === 2)
+  ok('per-edge inset shrinks more than a tiny uniform inset on the deep sides', (() => { const big = insetPolygonEdges(site, (r) => (r === 'side' ? 10 : 1)); const small = insetPolygon(site, 1); return big.length >= 3 && polygonArea(big) < polygonArea(small) })())
+  ok('buildZoning uses per-edge setbacks when supplied (area differs from uniform)', (() => { const u = buildZoning({ boundary: site, far: 4, heightLimit: 60, setback: 5, maxCoverage: 80, storeyHeight: 3.5, proposedGFA: 5000, proposedStoreys: 10 }); const pe = buildZoning({ boundary: site, far: 4, heightLimit: 60, setback: 5, maxCoverage: 80, storeyHeight: 3.5, proposedGFA: 5000, proposedStoreys: 10, setbacks: { front: 8, side: 4, rear: 12 } }); return !!pe.edgeClasses && pe.edgeClasses.length === 4 && Math.abs(pe.buildableArea - u.buildableArea) > 1 })())
+  ok('an over-large per-edge setback collapses the buildable, like the uniform case', buildZoning({ boundary: site, far: 4, heightLimit: 60, setback: 5, maxCoverage: 80, storeyHeight: 3.5, proposedGFA: 1000, proposedStoreys: 6, setbacks: { front: 40, side: 40, rear: 40 } }).buildableArea === 0)
+}
+
+// ── shadow study (right-to-light) ───────────────────────────────────────────────
+section('shadow')
+{
+  const fp = rectSite(20, 14) // 280 m² footprint
+  // sun low in the SE → a long shadow to the NW; sun overhead → ~no shadow
+  const low = castShadow(fp, 40, sunDirection(135, 20))
+  ok('a low sun casts a long ground shadow beyond the footprint', low.area > polygonArea(fp) && low.reach > 40, { area: low.area, reach: low.reach })
+  ok('the shadow falls away from the sun (SE sun → NW offset)', low.offset.x < 0 && low.offset.z > 0)
+  const high = castShadow(fp, 40, sunDirection(180, 80))
+  ok('a high sun casts a much shorter shadow than a low one', high.reach < low.reach)
+  ok('the sun below the horizon casts no shadow (footprint only)', castShadow(fp, 40, sunDirection(180, -5)).reach === 0)
+  ok('a taller building casts a proportionally longer shadow', castShadow(fp, 80, sunDirection(135, 20)).reach > low.reach * 1.8)
+  ok('convexHull wraps a point cloud (square → 4 corners)', convexHull([{ x: 0, z: 0 }, { x: 1, z: 0 }, { x: 1, z: 1 }, { x: 0, z: 1 }, { x: 0.5, z: 0.5 }]).length === 4)
+  const study = shadowStudy(fp, 50, { lat: 40.7, lng: -74, month: 12 })
+  ok('the study runs three solar moments with a worst-case reach + net area', study.moments.length === 3 && study.maxReach > 0 && study.netShadowArea > 0 && study.moments.every((m) => m.shadow.polygon.length >= 3))
+  ok('winter shadows are longer than summer (lower sun)', shadowStudy(fp, 50, { lat: 40.7, lng: -74, month: 12 }).maxReach > shadowStudy(fp, 50, { lat: 40.7, lng: -74, month: 6 }).maxReach)
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────

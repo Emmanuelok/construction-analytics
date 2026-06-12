@@ -62,6 +62,35 @@ try {
   ok('the feasibility headline reads as an underwriting verdict', /support|margin|underwater|stack/i.test(feas))
   ok('the feasibility CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-feasibility] button')].some((b) => /CSV/.test(b.textContent || ''))))
 
+  // ── per-edge setbacks ──
+  await page.evaluate(() => { const b = [...document.querySelectorAll('[data-peredge] button')].find((x) => /Uniform|Per-edge/.test(x.textContent || '')); b?.click() })
+  await wait(600)
+  const hasFront = await page.evaluate(() => !!document.querySelector('input[aria-label="Front (frontage)"]'))
+  ok('per-edge setbacks expose front / side / rear controls', hasFront)
+  if (hasFront) {
+    const ba0 = num(await page.evaluate(() => document.body.innerText), /buildable ([\d,]+) m/)
+    await setRange('Rear', 16)
+    await wait(600)
+    const ba1 = num(await page.evaluate(() => document.body.innerText), /buildable ([\d,]+) m/)
+    ok('raising the rear setback shrinks the buildable area', ba1 < ba0, { ba0, ba1 })
+  }
+
+  // ── shadow study ──
+  const shadow = await text('[data-shadow]')
+  ok('the shadow study renders three moments with reach + area', /Shadow study/i.test(shadow) && /09:00/.test(shadow) && /noon/i.test(shadow) && /Reach/.test(shadow))
+  const svgs = await page.evaluate(() => document.querySelectorAll('[data-shadow] svg[aria-label="Shadow cast diagram"]').length)
+  ok('each moment draws a shadow-cast diagram', svgs === 3, svgs)
+  await setSelect('Shadow study month', '12')
+  await wait(600)
+  ok('changing the month recomputes the study (winter)', /Shadow study/i.test(await text('[data-shadow]')))
+
+  // ── A/B compare ──
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /Pin current as A/.test(x.textContent || '')); b?.click() })
+  await wait(500)
+  const cmp0 = await text('[data-compare]')
+  ok('pinning A populates the comparison table', /A \(pinned\)/i.test(cmp0) && /B \(current\)/i.test(cmp0) && /Residual land/.test(cmp0))
+  ok('the comparison reports the feasibility return for both schemes', /Margin \(land-free\)/.test(cmp0) && /GDV/.test(cmp0))
+
   // existing compliance still works
   ok('the live compliance KPI still renders', /Compliant|Non-compliant/.test(await page.evaluate(() => document.body.innerText)))
 
