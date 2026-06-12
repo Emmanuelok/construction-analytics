@@ -39,6 +39,19 @@ export function downloadText(filename: string, content: string, format = 'TXT') 
   setTimeout(() => URL.revokeObjectURL(url), 1500)
 }
 
+/** Download raw bytes (e.g. a generated .bcfzip archive). */
+export function downloadBytes(filename: string, bytes: Uint8Array, mime = 'application/octet-stream') {
+  const blob = new Blob([bytes as BlobPart], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1500)
+}
+
 /** Download a dataset file: generated/cached content locally, or — for
  *  cloud-stored seller files — via a license-checked signed URL. */
 export async function downloadDatasetFile(

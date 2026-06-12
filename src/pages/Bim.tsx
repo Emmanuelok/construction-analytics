@@ -45,14 +45,15 @@ import { ScrollableTable } from '@/components/ScrollableTable'
 import { ExportMenu } from '@/components/ExportMenu'
 import { CollabBar } from '@/components/CollabBar'
 import { kpiToItem, tableToCsv, type ReportSpec, type ReportTable } from '@/lib/report'
-import { downloadText } from '@/lib/download'
+import { downloadText, downloadBytes } from '@/lib/download'
 import { sampleObj, type ModelStats } from '@/lib/model-stats'
 import type { KPI } from '@/lib/scenarios'
 import { parseIfc, type ParsedIfc } from '@/lib/ifc'
 import { auditModel, composition, auditCsv, type AuditSeverity } from '@/lib/bim-audit'
 import { buildIfcScene, DISCIPLINE_COLOR, DISCIPLINE_LABEL, describeSelection, type Discipline, type SelectedElement } from '@/lib/ifc-model'
 import type { IfcMesh, IfcStorey } from '@/lib/ifc-geometry'
-import { meshBoxes, detectClashes, geometryTakeoff, clashCsv } from '@/lib/ifc-clash'
+import { meshBoxes, detectClashesMeshes, geometryTakeoff, clashCsv } from '@/lib/ifc-clash'
+import { buildBcf, bcfTopicCount } from '@/lib/bcf'
 import type { IfcViewerStyle } from '@/components/IfcModelViewer'
 import { locateWasm } from '@/lib/ifc-wasm-url'
 const IfcModelViewer = lazy(() => import('@/components/IfcModelViewer').then((m) => ({ default: m.IfcModelViewer })))
@@ -584,7 +585,7 @@ function ParsedModel({ data, source, onClear, onAdoptClashes }: { data: ParsedIf
 
   // geometry intelligence: world boxes → real clash pass + per-class takeoff
   const boxes = useMemo(() => (meshes ? meshBoxes(meshes) : []), [meshes])
-  const geoClash = useMemo(() => (boxes.length ? detectClashes(boxes) : null), [boxes])
+  const geoClash = useMemo(() => (meshes && meshes.length ? detectClashesMeshes(meshes) : null), [meshes])
   const takeoff = useMemo(() => (boxes.length ? geometryTakeoff(boxes) : []), [boxes])
   const typeCounts = useMemo(() => {
     const m = new Map<string, number>()
@@ -813,19 +814,21 @@ function ParsedModel({ data, source, onClear, onAdoptClashes }: { data: ParsedIf
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {geoClash.clashes.length > 0 && <button onClick={() => downloadText(`${data.fileName.replace(/\.ifc$/i, '')}-clashes.csv`, clashCsv(geoClash), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+                  {geoClash.clashes.length > 0 && <button onClick={() => downloadBytes(`${data.fileName.replace(/\.ifc$/i, '')}-clashes.bcfzip`, buildBcf(geoClash, { project: data.project ?? data.fileName, author: 'AEC Studio' }))} title="Open in Revit / Navisworks / Solibri / BIMcollab" className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-xs font-medium text-sky-200 hover:bg-sky-500/20"><Download className="h-3.5 w-3.5" /> BCF ({bcfTopicCount(geoClash)})</button>}
                   {onAdoptClashes && geoClash.clashes.length > 0 && (
                     <button onClick={() => onAdoptClashes(adoptRows(), boxes.length)} className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/15 px-2.5 py-1 text-xs font-medium text-rose-200 ring-1 ring-inset ring-rose-500/40 hover:bg-rose-500/25"><GitCompare className="h-3.5 w-3.5" /> Send to coordination</button>
                   )}
                 </div>
               </div>
-              <p className="border-b border-edge/50 bg-elevated/10 px-4 py-2 text-xs text-slate-400">{geoClash.headline} <span className="text-slate-500">AABB pass on every solid; by-design fits (windows in walls, bearings, finishes, the core) are suppressed.</span></p>
+              <p className="border-b border-edge/50 bg-elevated/10 px-4 py-2 text-xs text-slate-400">{geoClash.headline} <span className="text-slate-500">AABB broad phase → triangle-accurate narrow phase; by-design fits (windows in walls, bearings, finishes, the core) are suppressed.</span></p>
               {geoClash.clashes.length > 0 ? (
                 <table className="w-full text-left text-sm">
-                  <thead><tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500"><th className="px-4 py-2 font-medium">A × B</th><th className="px-3 py-2 text-center font-medium">Severity</th><th className="px-3 py-2 text-right font-medium">Depth (m)</th><th className="px-3 py-2 text-right font-medium">Vol (m³)</th></tr></thead>
+                  <thead><tr className="border-b border-edge/50 text-[11px] uppercase tracking-wide text-slate-500"><th className="px-4 py-2 font-medium">A × B</th><th className="px-3 py-2 text-center font-medium">Kind</th><th className="px-3 py-2 text-center font-medium">Severity</th><th className="px-3 py-2 text-right font-medium">Depth (m)</th><th className="px-3 py-2 text-right font-medium">Vol (m³)</th></tr></thead>
                   <tbody className="divide-y divide-edge/40">
                     {geoClash.clashes.slice(0, 8).map((c, i) => (
                       <tr key={i} onClick={() => setClashSel([c.a.id, c.b.id])} className={cn('cursor-pointer transition-colors', clashSel?.includes(c.a.id) ? 'bg-amber-500/10' : 'hover:bg-elevated/30')}>
                         <td className="px-4 py-1.5 text-slate-200"><span className="data-mono">{c.a.type.replace(/^IFC/, '')}</span> <span className="text-slate-600">×</span> <span className="data-mono">{c.b.type.replace(/^IFC/, '')}</span></td>
+                        <td className="px-3 py-1.5 text-center"><Badge variant={c.confirmed === false ? 'neutral' : 'danger'}>{c.confirmed === false ? 'Soft' : 'Hard'}</Badge></td>
                         <td className="px-3 py-1.5 text-center"><Badge variant={c.severity === 'Critical' ? 'danger' : c.severity === 'Major' ? 'warn' : 'neutral'}>{c.severity}</Badge></td>
                         <td className="data-mono px-3 py-1.5 text-right text-slate-300">{c.depth}</td>
                         <td className="data-mono px-3 py-1.5 text-right text-slate-300">{c.volume}</td>
@@ -836,7 +839,7 @@ function ParsedModel({ data, source, onClear, onAdoptClashes }: { data: ParsedIf
               ) : (
                 <p className="grid h-32 place-items-center px-4 text-sm text-emerald-300">No real intersections — the structure is geometrically coordinated.</p>
               )}
-              <p className="border-t border-edge/60 px-4 py-2 text-[11px] text-slate-500">Click a clash to highlight both elements in the 3D model. “Send to coordination” loads the measured pairs into the workbench below — real numbers, not estimates.</p>
+              <p className="border-t border-edge/60 px-4 py-2 text-[11px] text-slate-500"><span className="text-slate-400">Hard</span> = solids truly interpenetrate; <span className="text-slate-400">Soft</span> = bounding boxes graze but triangles miss. Click a clash to highlight both elements in 3D · <span className="text-sky-300">BCF</span> opens the issue list in Revit/Navisworks/Solibri · “Send to coordination” loads the measured pairs into the workbench below.</p>
             </div>
           </div>
         )}

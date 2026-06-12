@@ -59,7 +59,8 @@ import { SAMPLE_IFC_GEO } from './ifc-sample-geo.ts'
 import { SAMPLE_IFC } from './ifc-sample.ts'
 import { parseIfc } from './ifc.ts'
 import { auditModel, composition, explainEntity, auditCsv } from './bim-audit.ts'
-import { meshBoxes, detectClashes, geometryTakeoff, clashCsv, type ClashBox } from './ifc-clash.ts'
+import { meshBoxes, detectClashes, detectClashesMeshes, meshHitsBox, geometryTakeoff, clashCsv, type ClashBox } from './ifc-clash.ts'
+import { buildBcf, makeZip, bcfTopicCount } from './bcf.ts'
 import { buildZoning, insetPolygon, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
@@ -1611,7 +1612,52 @@ section('ifc-clash')
   ok('meshBoxes transforms vertices into world space', mb.length === 1 && near(mb[0].min[0], 10, 1e-6) && near(mb[0].max[0], 11, 1e-6) && near(mb[0].max[1], 2, 1e-6))
   ok('geometryTakeoff counts + measures per class', (() => { const t = geometryTakeoff([col, duct, far]); const d = t.find((x) => x.type === 'IFCDUCTSEGMENT'); return t.length === 2 && d?.count === 2 && d.volume > 0 })())
   ok('clash CSV lists every hit with coordinates', (() => { const c = clashCsv(r1); return c.split('\n').length === r1.clashes.length + 2 && c.includes('IFCCOLUMN') })())
+
+  // triangle-accurate narrow phase. A reusable closed-box mesh builder:
+  const ID = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+  const boxFaces = [[0, 1, 2], [0, 2, 3], [4, 6, 5], [4, 7, 6], [0, 4, 5], [0, 5, 1], [1, 5, 6], [1, 6, 2], [2, 6, 7], [2, 7, 3], [3, 7, 4], [3, 4, 0]]
+  const boxVerts = (a: number[], b: number[]) => [[a[0], a[1], a[2]], [b[0], a[1], a[2]], [b[0], b[1], a[2]], [a[0], b[1], a[2]], [a[0], a[1], b[2]], [b[0], a[1], b[2]], [b[0], b[1], b[2]], [a[0], b[1], b[2]]]
+  const meshOf = (id: number, type: string, disc: string, arms: [number[], number[]][]) => {
+    const v: number[] = [], idx: number[] = []
+    for (const [a, b] of arms) { const base = v.length / 3; boxVerts(a, b).forEach((p) => v.push(...p)); boxFaces.forEach((f) => idx.push(...f.map((k) => k + base))) }
+    return { expressID: id, ifcTypeName: type, discipline: disc, positions: new Float32Array(v), indices: new Uint32Array(idx), matrix: ID }
+  }
+  const cube = (id: number, type: string, disc: string, a: number[], b: number[]) => meshOf(id, type, disc, [[a, b]])
+  ok('meshHitsBox confirms a triangle crossing the box (straddling a face)', meshHitsBox(cube(0, 'IFCDUCTSEGMENT', 'mep', [0, 0, 0], [1, 1, 1]), [0.8, 0.2, 0.2], [1.2, 0.8, 0.8]))
+  ok('meshHitsBox rejects a box the solid does not reach', meshHitsBox(cube(0, 'IFCDUCTSEGMENT', 'mep', [0, 0, 0], [1, 1, 1]), [3, 3, 3], [3.5, 3.5, 3.5]) === false)
+  const overlap = detectClashesMeshes([cube(100, 'IFCDUCTSEGMENT', 'mep', [0, 0, 0], [1, 1, 1]), cube(101, 'IFCCOLUMN', 'struct', [0.6, 0, 0], [1.6, 1, 1])])
+  ok('overlapping solids → a hard (confirmed) clash', overlap.clashes.length === 1 && overlap.clashes[0].confirmed === true && overlap.confirmed === 1)
+  // an L (two arms) whose joint AABB [0,1]³-ish overlaps a probe sitting in the notch
+  const Lshape = meshOf(200, 'IFCDUCTSEGMENT', 'mep', [[[0, 0, 0], [1, 0.3, 0.3]], [[0, 0, 0], [0.3, 0.3, 1]]])
+  const probe = cube(201, 'IFCCOLUMN', 'struct', [0.5, 0, 0.5], [0.8, 0.3, 0.8]) // in the L's notch
+  const soft = detectClashesMeshes([Lshape, probe])
+  ok('boxes overlap but solids miss → a soft clash, flagged', soft.clashes.length === 1 && soft.clashes[0].confirmed === false && soft.confirmed === 0)
+  ok('narrow=false skips the triangle phase (AABB only)', detectClashesMeshes([Lshape, probe], { narrow: false }).clashes.every((c) => c.confirmed === undefined))
 }
+
+// ── bcf (BCF 2.1 export: store-only zip + markup/viewpoint per clash) ────────────
+section('bcf')
+{
+  // a tiny zip round-trips its central directory + file count
+  const enc = new TextEncoder()
+  const zip = makeZip([{ name: 'a.txt', data: enc.encode('hello') }, { name: 'd/b.txt', data: enc.encode('world!!') }])
+  ok('makeZip writes a valid store-only archive (PK header, EOCD, 2 entries)', zip[0] === 0x50 && zip[1] === 0x4b && zip.length > 60 && (() => { const eocd = zip.length - 22; return zip[eocd] === 0x50 && zip[eocd + 1] === 0x4b && zip[eocd + 10] === 2 })())
+  const dv = new DataView(zip.buffer)
+  ok('local header records the real CRC + sizes', dv.getUint32(18, true) === 5 && dv.getUint32(22, true) === 5)
+  // a clash result → a BCF with version, project + a folder per topic
+  const cr = detectClashesMeshes([
+    { expressID: 1, ifcTypeName: 'IFCDUCTSEGMENT', discipline: 'mep', guid: '2aBcDeFgHiJkLmNoPqRsT0', positions: new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1]), indices: new Uint32Array([0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2, 2, 6, 7, 2, 7, 3, 3, 7, 4, 3, 4, 0]), matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
+    { expressID: 2, ifcTypeName: 'IFCCOLUMN', discipline: 'struct', guid: '3xYzAbCdEfGhIjKlMnOpQ1', positions: new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1]), indices: new Uint32Array([0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2, 2, 6, 7, 2, 7, 3, 3, 7, 4, 3, 4, 0]), matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.5, 0, 0, 1] },
+  ])
+  ok('the synthetic pair is a hard clash', cr.clashes.length === 1 && cr.clashes[0].confirmed === true)
+  const bcf = buildBcf(cr, { project: 'Test', author: 'QA', date: '2026-06-12T00:00:00Z' })
+  const txt = new TextDecoder().decode(bcf)
+  ok('the BCF carries the 2.1 version, project, and a markup + viewpoint per topic', txt.includes('VersionId="2.1"') && txt.includes('ProjectExtension') && txt.includes('markup.bcf') && txt.includes('viewpoint.bcfv'))
+  ok('the topic markup is a Clash issue with a title + priority', txt.includes('TopicType="Clash"') && txt.includes('<Title>') && txt.includes('IFCDUCTSEGMENT'.replace('IFC', '')) && txt.includes('<Priority>'))
+  ok('the viewpoint selects both elements by IFC GlobalId + has a camera', txt.includes('IfcGuid="2aBcDeFgHiJkLmNoPqRsT0"') && txt.includes('IfcGuid="3xYzAbCdEfGhIjKlMnOpQ1"') && txt.includes('<PerspectiveCamera>'))
+  ok('topic count matches the clash count', bcfTopicCount(cr) === cr.clashes.length)
+}
+
 
 // ── bim-audit (plain-language IFC translation + the model-health QA pass) ───────
 section('bim-audit')
@@ -1671,6 +1717,7 @@ section('ifc-geometry')
   const geoBoxes = meshBoxes(solids)
   const geo = detectClashes(geoBoxes)
   ok('the generated structure is geometrically coordinated (0 real clashes)', geo.clashes.length === 0 && geo.suppressed > 50, { clashes: geo.clashes.slice(0, 3).map((c) => `${c.a.type}×${c.b.type}@${c.depth}`), suppressed: geo.suppressed })
+  ok('the triangle narrow phase confirms it too (no hard clashes on the clean model)', detectClashesMeshes(solids).confirmed === 0)
   ok('the geometry takeoff measures the full anatomy', (() => { const t = geometryTakeoff(geoBoxes); return t.length >= 9 && (t.find((x) => x.type === 'IFCSLAB')?.count ?? 0) >= 12 })())
   // Robustness: garbage / empty bytes never throw, just yield an empty result.
   const junk = await extractGeometry(new TextEncoder().encode('not an ifc file'))
