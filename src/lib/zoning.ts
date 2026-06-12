@@ -11,6 +11,7 @@ export type ZoningInput = {
   far: number // floor area ratio — max GFA ÷ site area
   heightLimit: number // metres
   setback: number // uniform setback from the boundary, metres
+  setbacks?: { front: number; side: number; rear: number } // per-edge setbacks (overrides the uniform value when present)
   maxCoverage: number // 0–100 %, share of the site the footprint may cover
   storeyHeight: number // metres
   proposedGFA: number // m²
@@ -30,6 +31,7 @@ export type Zoning = {
   siteArea: number
   sitePerimeter: number
   buildable: Pt[] // setback (inset) polygon — empty if the setback collapses the site
+  edgeClasses?: ('front' | 'side' | 'rear')[] // per-boundary-edge role (when per-edge setbacks are used)
   buildableArea: number
   maxGFA: number // far × siteArea
   maxFootprint: number // min(buildableArea, coverage cap)
@@ -85,6 +87,52 @@ export function polygonCentroid(pts: Pt[]): Pt {
 /** Uniformly inset a polygon by `d` (a setback). Edge-parallel offset with
  *  intersection of neighbours — exact for convex polygons. Returns [] if the
  *  inset collapses or inverts the polygon (setback larger than the site). */
+/** Classify each boundary edge as front / side / rear. Front = the longest edge
+ *  (the street frontage); rear = the edge whose outward normal most opposes the
+ *  front's; the rest are sides. Returns one role per edge (source winding order). */
+export function classifyEdges(pts: Pt[]): ('front' | 'side' | 'rear')[] {
+  const n = pts.length
+  if (n < 3) return []
+  const ccw = signedArea(pts) >= 0 ? pts : [...pts].reverse()
+  const flipped = ccw !== pts
+  const norm = ccw.map((p, i) => { const q = ccw[(i + 1) % n]; let nx = q.z - p.z, nz = -(q.x - p.x); const l = Math.hypot(nx, nz) || 1; return { nx: nx / l, nz: nz / l, len: Math.hypot(q.x - p.x, q.z - p.z) } }) // outward normal (CCW → right normal points out)
+  let front = 0; for (let i = 1; i < n; i++) if (norm[i].len > norm[front].len) front = i
+  let rear = -1, worst = 2; for (let i = 0; i < n; i++) { if (i === front) continue; const d = norm[i].nx * norm[front].nx + norm[i].nz * norm[front].nz; if (d < worst) { worst = d; rear = i } }
+  const roles: ('front' | 'side' | 'rear')[] = ccw.map((_, i) => (i === front ? 'front' : i === rear ? 'rear' : 'side'))
+  return flipped ? roles.slice().reverse() : roles
+}
+
+/** Inset a polygon by a per-edge distance (front/side/rear). Same offset-line
+ *  intersection as insetPolygon, but each edge is pushed in by its own setback. */
+export function insetPolygonEdges(pts: Pt[], dist: (role: 'front' | 'side' | 'rear', i: number) => number): Pt[] {
+  if (pts.length < 3) return []
+  const ccw = signedArea(pts) >= 0 ? pts : [...pts].reverse()
+  const n = ccw.length
+  const roles = classifyEdges(ccw)
+  const lines = ccw.map((p, i) => {
+    const q = ccw[(i + 1) % n]
+    let nx = -(q.z - p.z), nz = q.x - p.x
+    const len = Math.hypot(nx, nz) || 1
+    nx /= len; nz /= len
+    const d = Math.max(0, dist(roles[i], i))
+    return { ox: p.x + nx * d, oz: p.z + nz * d, dx: q.x - p.x, dz: q.z - p.z }
+  })
+  const out: Pt[] = []
+  for (let i = 0; i < n; i++) {
+    const a = lines[(i - 1 + n) % n], b = lines[i]
+    const denom = a.dx * b.dz - a.dz * b.dx
+    if (Math.abs(denom) < 1e-9) return []
+    const t = ((b.ox - a.ox) * b.dz - (b.oz - a.oz) * b.dx) / denom
+    out.push({ x: a.ox + a.dx * t, z: a.oz + a.dz * t })
+  }
+  if (polygonArea(out) < 1e-6) return []
+  for (let i = 0; i < n; i++) {
+    const e = { x: out[(i + 1) % n].x - out[i].x, z: out[(i + 1) % n].z - out[i].z }
+    if (e.x * lines[i].dx + e.z * lines[i].dz <= 0) return []
+  }
+  return out
+}
+
 export function insetPolygon(pts: Pt[], d: number): Pt[] {
   if (pts.length < 3) return []
   if (d <= 0) return pts.map((p) => ({ ...p }))
@@ -129,7 +177,11 @@ export function buildZoning(input: ZoningInput): Zoning {
   const siteArea = polygonArea(boundary)
   const sitePerimeter = polygonPerimeter(boundary)
   const setback = Math.max(0, input.setback)
-  const buildable = insetPolygon(boundary, setback)
+  const sb = input.setbacks
+  const edgeClasses = sb ? classifyEdges(boundary) : undefined
+  const buildable = sb
+    ? insetPolygonEdges(boundary, (role) => (role === 'front' ? sb.front : role === 'rear' ? sb.rear : sb.side))
+    : insetPolygon(boundary, setback)
   const buildableArea = buildable.length ? polygonArea(buildable) : 0
 
   const far = Math.max(0, input.far)
@@ -193,6 +245,7 @@ export function buildZoning(input: ZoningInput): Zoning {
     siteArea,
     sitePerimeter,
     buildable,
+    edgeClasses,
     buildableArea,
     maxGFA,
     maxFootprint,
