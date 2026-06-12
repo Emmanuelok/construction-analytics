@@ -91,6 +91,7 @@ try {
   ok('the geometry takeoff measures the anatomy per class', /Slab/.test(take) && /Column/.test(take) && /Window/.test(take) && /CSV/.test(take))
   const clash = await text('[data-bim-clash]')
   ok('the geometric clash check runs on the real meshes (clean model = clear)', /Geometric clash check/.test(clash) && /coordinated|clear/i.test(clash) && /suppressed/i.test(clash))
+  ok('the clash check uses the triangle-accurate narrow phase + offers BCF', /triangle-accurate narrow phase/i.test(clash) && /Hard\b/.test(clash) && /BCF opens the issue list/i.test(clash))
   // render PNG hook exists
   ok('a render snapshot is available from the viewer', await page.evaluate(() => typeof document.querySelector('[data-bim-viewer] [role="application"]')?.__snapshot === 'function'))
 

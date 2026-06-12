@@ -12,12 +12,15 @@ export type ClashBox = {
   id: number // expressID
   type: string // IFCCOLUMN, IFCWALL, …
   discipline: string // struct | arch | mep | other
+  guid?: string // IfcRoot.GlobalId, for BCF references
   min: [number, number, number]
   max: [number, number, number]
 }
 
+export type ClashMesh = { expressID?: number; ifcTypeName?: string; discipline: string; positions: Float32Array; indices?: Uint32Array | number[]; matrix: number[]; guid?: string }
+
 /** World AABB per mesh: transform each vertex by the 4×4 column-major matrix. */
-export function meshBoxes(meshes: { expressID?: number; ifcTypeName?: string; discipline: string; positions: Float32Array; matrix: number[] }[]): ClashBox[] {
+export function meshBoxes(meshes: ClashMesh[]): ClashBox[] {
   const out: ClashBox[] = []
   for (const m of meshes) {
     const p = m.positions, M = m.matrix
@@ -32,9 +35,64 @@ export function meshBoxes(meshes: { expressID?: number; ifcTypeName?: string; di
       if (wy < minY) minY = wy; if (wy > maxY) maxY = wy
       if (wz < minZ) minZ = wz; if (wz > maxZ) maxZ = wz
     }
-    out.push({ id: m.expressID ?? -1, type: (m.ifcTypeName ?? 'IFC?').toUpperCase(), discipline: m.discipline, min: [minX, minY, minZ], max: [maxX, maxY, maxZ] })
+    out.push({ id: m.expressID ?? -1, type: (m.ifcTypeName ?? 'IFC?').toUpperCase(), discipline: m.discipline, guid: m.guid, min: [minX, minY, minZ], max: [maxX, maxY, maxZ] })
   }
   return out
+}
+
+/* ---- triangle-accurate narrow phase (Akenine-Möller triangle vs AABB, SAT) ---- */
+type V3 = [number, number, number]
+const xf = (M: number[], x: number, y: number, z: number): V3 => [M[0] * x + M[4] * y + M[8] * z + M[12], M[1] * x + M[5] * y + M[9] * z + M[13], M[2] * x + M[6] * y + M[10] * z + M[14]]
+/** Triangle (a,b,c) vs AABB centred at `ctr` with half-extents `h`. */
+function triBox(a: V3, b: V3, c: V3, ctr: V3, h: V3): boolean {
+  const v0: V3 = [a[0] - ctr[0], a[1] - ctr[1], a[2] - ctr[2]]
+  const v1: V3 = [b[0] - ctr[0], b[1] - ctr[1], b[2] - ctr[2]]
+  const v2: V3 = [c[0] - ctr[0], c[1] - ctr[1], c[2] - ctr[2]]
+  const e0: V3 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]]
+  const e1: V3 = [v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2]]
+  const e2: V3 = [v0[0] - v2[0], v0[1] - v2[1], v0[2] - v2[2]]
+  // 9 edge cross-axis tests (edge × {X,Y,Z})
+  for (const e of [e0, e1, e2]) {
+    const fx = Math.abs(e[0]), fy = Math.abs(e[1]), fz = Math.abs(e[2])
+    const axes: [number, number, number, number][] = [
+      [0, -e[2], e[1], fz * h[1] + fy * h[2]],
+      [e[2], 0, -e[0], fz * h[0] + fx * h[2]],
+      [-e[1], e[0], 0, fy * h[0] + fx * h[1]],
+    ]
+    for (const [ax, ay, az, r] of axes) {
+      const p0 = v0[0] * ax + v0[1] * ay + v0[2] * az
+      const p1 = v1[0] * ax + v1[1] * ay + v1[2] * az
+      const p2 = v2[0] * ax + v2[1] * ay + v2[2] * az
+      if (Math.min(p0, p1, p2) > r + 1e-9 || Math.max(p0, p1, p2) < -r - 1e-9) return false
+    }
+  }
+  // 3 AABB face normals
+  for (let i = 0; i < 3; i++) {
+    if (Math.min(v0[i], v1[i], v2[i]) > h[i] || Math.max(v0[i], v1[i], v2[i]) < -h[i]) return false
+  }
+  // triangle face normal
+  const n: V3 = [e0[1] * e1[2] - e0[2] * e1[1], e0[2] * e1[0] - e0[0] * e1[2], e0[0] * e1[1] - e0[1] * e1[0]]
+  const d = n[0] * v0[0] + n[1] * v0[1] + n[2] * v0[2]
+  const rad = Math.abs(n[0]) * h[0] + Math.abs(n[1]) * h[1] + Math.abs(n[2]) * h[2]
+  return Math.abs(d) <= rad + 1e-9
+}
+/** Does any world triangle of `mesh` overlap the box [min,max]? (caps triangles) */
+export function meshHitsBox(mesh: ClashMesh, min: V3, max: V3, cap = 6000): boolean {
+  const idx = mesh.indices, p = mesh.positions, M = mesh.matrix
+  const ctr: V3 = [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2]
+  const h: V3 = [(max[0] - min[0]) / 2, (max[1] - min[1]) / 2, (max[2] - min[2]) / 2]
+  if (idx && idx.length >= 3) {
+    const n = Math.min(idx.length, cap * 3)
+    for (let i = 0; i < n; i += 3) {
+      const a = xf(M, p[idx[i] * 3], p[idx[i] * 3 + 1], p[idx[i] * 3 + 2])
+      const b = xf(M, p[idx[i + 1] * 3], p[idx[i + 1] * 3 + 1], p[idx[i + 1] * 3 + 2])
+      const c = xf(M, p[idx[i + 2] * 3], p[idx[i + 2] * 3 + 1], p[idx[i + 2] * 3 + 2])
+      if (triBox(a, b, c, ctr, h)) return true
+    }
+    return false
+  }
+  for (let i = 0; i < p.length; i += 3) { const w = xf(M, p[i], p[i + 1], p[i + 2]); if (Math.abs(w[0] - ctr[0]) <= h[0] && Math.abs(w[1] - ctr[1]) <= h[1] && Math.abs(w[2] - ctr[2]) <= h[2]) return true }
+  return false
 }
 
 const baseType = (t: string) => t.replace(/^IFC/, '').replace(/STANDARDCASE$/, '').replace(/ELEMENTPROXY$/, 'PROXY')
@@ -61,12 +119,14 @@ export type GeoClash = {
   depth: number // smallest penetration dimension (m)
   center: [number, number, number]
   severity: 'Minor' | 'Major' | 'Critical'
+  confirmed?: boolean // true = triangles actually intersect (hard clash); false = boxes touch but solids miss (soft)
 }
 export type GeoClashResult = {
   clashes: GeoClash[]
   pairs: { a: string; b: string; count: number; worst: number }[] // by discipline pair
   checked: number
   suppressed: number
+  confirmed: number // hard clashes (triangle-verified)
   headline: string
 }
 
@@ -108,10 +168,36 @@ export function detectClashes(boxes: ClashBox[], opts: { tol?: number } = {}): G
     pairMap.set(k, cur)
   }
   const pairs = [...pairMap.values()].sort((x, y) => y.count - x.count)
+  const confirmed = clashes.filter((c) => c.confirmed !== false).length
   const headline = clashes.length === 0
     ? `Geometry coordinated — ${boxes.length} elements checked, no real clashes (by-design fits suppressed: ${suppressed}).`
     : `${clashes.length} geometric clash${clashes.length > 1 ? 'es' : ''} found across ${pairs.length} discipline pair${pairs.length > 1 ? 's' : ''}; worst penetration ${clashes[0].depth} m.`
-  return { clashes, pairs, checked, suppressed, headline }
+  return { clashes, pairs, checked, suppressed, confirmed, headline }
+}
+
+/** Full pass on real meshes: AABB broad phase → triangle narrow phase. A box-overlap
+ *  whose solids actually interpenetrate is a hard clash (confirmed); one whose boxes
+ *  graze but triangles miss is kept as a soft clash, flagged. */
+export function detectClashesMeshes(meshes: ClashMesh[], opts: { tol?: number; narrow?: boolean } = {}): GeoClashResult {
+  const boxes = meshBoxes(meshes)
+  const byId = new Map<number, ClashMesh>()
+  for (const m of meshes) if (m.expressID != null) byId.set(m.expressID, m)
+  const r = detectClashes(boxes, opts)
+  if (opts.narrow === false) return r
+  for (const c of r.clashes) {
+    const ma = byId.get(c.a.id), mb = byId.get(c.b.id)
+    if (!ma || !mb) { c.confirmed = true; continue } // no mesh → trust the box
+    // overlap region box
+    const min: V3 = [Math.max(c.a.min[0], c.b.min[0]), Math.max(c.a.min[1], c.b.min[1]), Math.max(c.a.min[2], c.b.min[2])]
+    const max: V3 = [Math.min(c.a.max[0], c.b.max[0]), Math.min(c.a.max[1], c.b.max[1]), Math.min(c.a.max[2], c.b.max[2])]
+    c.confirmed = meshHitsBox(ma, min, max) && meshHitsBox(mb, min, max)
+  }
+  // hard clashes first, then by volume
+  r.clashes.sort((x, y) => (x.confirmed === y.confirmed ? y.volume - x.volume : x.confirmed ? -1 : 1))
+  const confirmed = r.clashes.filter((c) => c.confirmed).length
+  const head = r.clashes.length === 0 ? r.headline
+    : `${confirmed} hard clash${confirmed === 1 ? '' : 'es'} (solids interpenetrate)${r.clashes.length > confirmed ? ` + ${r.clashes.length - confirmed} soft (boxes graze)` : ''}; worst penetration ${r.clashes[0].depth} m.`
+  return { ...r, confirmed, headline: head }
 }
 
 /** Per-class takeoff from the same world boxes: count + bounding volume (m³). */

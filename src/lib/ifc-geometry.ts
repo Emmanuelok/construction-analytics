@@ -19,6 +19,7 @@ export type IfcMesh = {
   color: { r: number; g: number; b: number; a: number }
   storey?: number // expressID of the containing IfcBuildingStorey (spatial structure)
   name?: string // IfcRoot.Name / Tag, if present
+  guid?: string // IfcRoot.GlobalId (22-char IFC GUID) — for BCF component references
 }
 
 export type IfcStorey = { expressID: number; name: string; elevation: number }
@@ -214,6 +215,8 @@ export async function extractGeometry(bytes: Uint8Array, opts: ExtractOptions = 
         }
         const c = pg.color
         const ifcType = api.GetLineType(modelID, mesh.expressID)
+        let guid: string | undefined
+        try { const g = api.GetLine(modelID, mesh.expressID)?.GlobalId?.value; if (g != null) guid = String(g) } catch { /* no guid */ }
         meshes.push({
           expressID: mesh.expressID,
           ifcType,
@@ -224,6 +227,7 @@ export async function extractGeometry(bytes: Uint8Array, opts: ExtractOptions = 
           indices: new Uint32Array(idx),
           matrix: Array.from(pg.flatTransformation as ArrayLike<number>),
           color: { r: c.x, g: c.y, b: c.z, a: c.w },
+          guid,
         })
         vertexCount += n
         triangleCount += idx.length / 3
