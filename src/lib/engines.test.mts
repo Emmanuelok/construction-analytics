@@ -62,6 +62,9 @@ import { auditModel, composition, explainEntity, auditCsv } from './bim-audit.ts
 import { meshBoxes, detectClashes, detectClashesMeshes, meshHitsBox, geometryTakeoff, clashCsv, type ClashBox } from './ifc-clash.ts'
 import { buildBcf, makeZip, bcfTopicCount } from './bcf.ts'
 import { buildZoning, insetPolygon, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
+import { ZONING_PRESETS, presetById, normaliseMix } from './zoning-presets.ts'
+import { maximizeScheme } from './zoning-optimize.ts'
+import { feasibility, feasibilityWaterfall, feasibilityCsv, DEFAULT_RATES } from './feasibility.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -1785,6 +1788,43 @@ section('zoning')
   const ll = parseGeoBoundary('[[-0.0005,-0.0005],[0.0005,-0.0005],[0.0005,0.0005],[-0.0005,0.0005]]')
   ok('projects a lon/lat ring to metres (~12,300 m²)', !!ll && polygonArea(ll!) > 11000 && polygonArea(ll!) < 13500, ll && polygonArea(ll))
   ok('rejects non-JSON input', parseGeoBoundary('not json') === null)
+}
+
+// ── zoning-presets + maximise + feasibility (the site feasibility studio) ────────
+section('zoning-presets')
+{
+  ok('every district preset carries a full rule set + programme mix', ZONING_PRESETS.length >= 6 && ZONING_PRESETS.every((p) => p.far > 0 && p.heightLimit > 0 && p.maxCoverage > 0 && p.mix && (p.mix.residential + p.mix.office + p.mix.retail) >= 0))
+  ok('presetById finds a district; downtown is the densest, low-rise the loosest', presetById('downtown-hd')!.far === 10 && presetById('residential-low')!.far < presetById('urban-mixed')!.far)
+  ok('normaliseMix sums to 1', (() => { const m = normaliseMix({ residential: 2, office: 1, retail: 1 }); return near(m.residential + m.office + m.retail, 1, 1e-9) && near(m.residential, 0.5, 1e-9) })())
+}
+
+section('zoning-optimize')
+{
+  const site = rectSite(60, 40) // 2400 m²
+  const rules = { boundary: site, far: 4, heightLimit: 60, setback: 5, maxCoverage: 60, storeyHeight: 3.5, podium: 0, towerSetback: 0, skyBase: 0, skyStep: 0 }
+  const opt = maximizeScheme(rules)
+  ok('the maximiser returns a compliant scheme', opt.proposedGFA > 0 && opt.zoning.compliance.overall)
+  ok('it pushes utilisation to (near) 100% of the binding cap', opt.utilisation >= 92, opt.utilisation)
+  ok('a generous FAR with a tight height/coverage binds on geometry, not FAR', (() => { const o = maximizeScheme({ ...rules, far: 20, heightLimit: 24, maxCoverage: 50 }); return o.binding !== 'FAR' && o.zoning.compliance.overall })())
+  ok('a low FAR with loads of height binds on FAR', (() => { const o = maximizeScheme({ ...rules, far: 2, heightLimit: 200, maxCoverage: 90 }); return o.binding === 'FAR' && near(o.proposedGFA, 2 * 2400, 50) })())
+  ok('a collapsing setback yields no scheme, flagged', (() => { const o = maximizeScheme({ ...rules, setback: 40 }); return o.proposedGFA === 0 })())
+  ok('the optimum never exceeds the height limit', opt.height <= rules.heightLimit + 1e-6)
+}
+
+section('feasibility')
+{
+  const f = feasibility({ gfa: 10000, mix: { residential: 0.6, office: 0.25, retail: 0.15 }, siteArea: 2400, buildableArea: 1500, investmentYield: 0.06, targetMarginPct: 18 })
+  ok('programme splits GFA by mix and nets it down to saleable area', f.lines.length === 3 && near(f.lines[0].gfa, 6000, 1) && f.lines[0].net < f.lines[0].gfa && f.netArea < 10000)
+  ok('residential units are counted from net ÷ unit size', f.lines[0].units === Math.round(f.lines[0].net / DEFAULT_RATES.residential.unitSize) && f.units > 0)
+  ok('for-sale revenue uses sale price; investment uses capitalised rent (rent ÷ yield)', (() => { const resi = f.lines.find((l) => l.use === 'residential')!; const off = f.lines.find((l) => l.use === 'office')!; return near(resi.revenue, resi.net * DEFAULT_RATES.residential.salePrice, 2) && near(off.revenue, (DEFAULT_RATES.office.rent * off.net) / 0.06, 2) })())
+  ok('the cost stack sums construction + fees + contingency + parking + finance', near(f.totalCostExLand, f.construction + f.fees + f.contingency + f.parking + f.demolition + f.siteWorks + f.finance, 2) && f.construction > 0)
+  ok('parking bays are derived from the programme', f.parkingBays > 0 && f.parking === f.parkingBays * 35000)
+  ok('GDV, margin and yield-on-cost are reported', f.gdv > 0 && f.marginOnCost > 0 && f.yieldOnCost > 0 && f.noi > 0)
+  ok('residual land value solves the target-margin identity (profit = margin × (cost+land))', (() => { const land = f.residualLandValue; const profit = f.gdv - f.totalCostExLand - land; return near(profit, 0.18 * (f.totalCostExLand + land), 5) })())
+  ok('a richer mix or higher prices raises the residual land value', feasibility({ gfa: 10000, mix: { residential: 1, office: 0, retail: 0 }, siteArea: 2400, rates: { residential: { salePrice: 9000 } } }).residualLandValue > f.residualLandValue)
+  ok('an unviable scheme (cost > value) reports a negative profit pool + an underwater headline', (() => { const u = feasibility({ gfa: 10000, mix: { residential: 1, office: 0, retail: 0 }, siteArea: 2400, rates: { residential: { salePrice: 500 } } }); return u.profitAtZeroLand < 0 && u.residualLandValue === 0 && /underwater|doesn/i.test(u.headline) })())
+  ok('the waterfall + CSV expose the stack', feasibilityWaterfall(f).some((r) => r.label === 'GDV' && r.kind === 'value') && feasibilityCsv(f).includes('Residual land value'))
+  ok('land value reports per site m²', f.landPerSiteM2 > 0 && near(f.landPerSiteM2, f.residualLandValue / 2400, 1))
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────
