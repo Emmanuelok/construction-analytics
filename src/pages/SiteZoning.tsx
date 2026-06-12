@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
@@ -13,6 +13,10 @@ import {
   type Pt, type Zoning,
 } from '@/lib/zoning'
 import { analyzeSite, siteSurvey, compass, type LatLng, type SiteSurvey } from '@/lib/geo'
+import { ZONING_PRESETS, presetById, type ProgrammeMix } from '@/lib/zoning-presets'
+import { maximizeScheme } from '@/lib/zoning-optimize'
+import { feasibility, feasibilityWaterfall, feasibilityCsv, DEFAULT_RATES, type Use } from '@/lib/feasibility'
+import { formatCurrency } from '@/lib/format'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
 const SiteZoningViewer = lazy(() => import('@/components/SiteZoningViewer').then((m) => ({ default: m.SiteZoningViewer })))
@@ -48,6 +52,17 @@ export default function SiteZoning() {
   // preset / import / reset; plain drags keep the same key (no jump).
   const [boundaryKey, setBoundaryKey] = useState(0)
   const applyBoundary = (pts: Pt[]) => { setBoundary(pts); setBoundaryKey((k) => k + 1) }
+  const [presetId, setPresetId] = useState<string>('')
+  const [mix, setMix] = useState<ProgrammeMix>({ residential: 0.6, office: 0.25, retail: 0.15 })
+  const [targetMargin, setTargetMargin] = useState(18)
+  const [investYield, setInvestYield] = useState(6)
+  // apply a zoning district: load its rules + programme split
+  const applyPreset = (id: string) => {
+    const p = presetById(id); if (!p) return
+    setPresetId(id)
+    setFar(p.far); setHeightLimit(p.heightLimit); setSetback(p.setback); setMaxCoverage(p.maxCoverage); setSkyBase(p.skyBase); setSkyStep(p.skyStep)
+    setMix({ residential: p.mix.residential, office: p.mix.office, retail: p.mix.retail })
+  }
 
   const z: Zoning = useMemo(
     () => buildZoning({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, proposedGFA, proposedStoreys, podium, towerSetback, skyBase, skyStep }),
@@ -66,11 +81,18 @@ export default function SiteZoning() {
     return k > 0 ? scalePolygon(base, k, polygonCentroid(base)) : []
   }, [z.buildable, z.proposed.footprint, boundary])
 
+  // as-of-right maximiser: the GFA-maximal compliant scheme + binding constraint
+  const optimum = useMemo(() => maximizeScheme({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep }), [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep])
+  const maximize = () => { setProposedGFA(optimum.proposedGFA); setProposedStoreys(optimum.proposedStoreys) }
+  // development feasibility / residual-land pro forma
+  const feas = useMemo(() => feasibility({ gfa: proposedGFA, mix, siteArea: z.siteArea, buildableArea: z.buildableArea, investmentYield: investYield / 100, targetMarginPct: targetMargin }), [proposedGFA, mix, z.siteArea, z.buildableArea, investYield, targetMargin])
+
   const reset = () => {
     applyBoundary(PRESETS[0].pts); setFar(DEFAULTS.far); setHeightLimit(DEFAULTS.heightLimit); setSetback(DEFAULTS.setback)
     setMaxCoverage(DEFAULTS.maxCoverage); setStoreyHeight(DEFAULTS.storeyHeight); setProposedGFA(DEFAULTS.proposedGFA)
     setProposedStoreys(DEFAULTS.proposedStoreys); setPodium(DEFAULTS.podium); setTowerSetback(DEFAULTS.towerSetback)
     setSkyBase(DEFAULTS.skyBase); setSkyStep(DEFAULTS.skyStep); setGeoText(''); setGeoError(null)
+    setPresetId(''); setMix({ residential: 0.6, office: 0.25, retail: 0.15 }); setTargetMargin(18); setInvestYield(6)
   }
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
@@ -116,7 +138,7 @@ export default function SiteZoning() {
         accent={ACC}
         eyebrow="Intelligence"
         title="Site & Zoning"
-        description="Draw or import a site boundary, set the zoning rules — FAR, height limit, setback and coverage — and the buildable area, the legal massing envelope and a live compliance check recompute instantly. A 3D envelope and a top-down plan show whether your proposed scheme fits the entitlement. Real planning math, not a static diagram."
+        description="A site feasibility studio: draw or import a boundary, load a zoning district (or set FAR / height / setback / coverage / sky-plane by hand), and the buildable area, legal massing envelope and live compliance recompute instantly. One click maximizes the as-of-right scheme; a development pro forma turns the GFA into revenue, costs and the residual land value the site supports. Real planning + feasibility math, not a static diagram."
         actions={<button onClick={reset} className="btn-ghost"><RotateCcw className="h-4 w-4" /> Reset</button>}
       />
 
@@ -145,6 +167,21 @@ export default function SiteZoning() {
         <Card className="lg:col-span-2">
           <CardHeader icon={Building2} accent="blue" title="Zoning & scheme — editable" subtitle="Tune the rules and the proposal; everything recomputes live" />
           <div className="space-y-4 border-t border-edge/50 p-5">
+            <div data-zoning-district>
+              <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500"><Landmark className="h-3.5 w-3.5" /> Zoning district — load a rulebook</div>
+              <select value={presetId} onChange={(e) => applyPreset(e.target.value)} aria-label="Zoning district preset" className="w-full rounded-lg border border-edge/60 bg-elevated/50 px-2.5 py-1.5 text-sm text-slate-100 focus:border-teal-500/50 focus:outline-none">
+                <option value="">Custom rules…</option>
+                {ZONING_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              </select>
+              {presetId && <p className="mt-1 text-[11px] text-slate-500">{presetById(presetId)?.blurb}</p>}
+            </div>
+            <div data-zoning-maximize className="flex items-center justify-between gap-2 rounded-lg border border-teal-500/25 bg-teal-500/[0.06] px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-teal-100">As-of-right maximum</div>
+                <div className="truncate text-[11px] text-slate-400">{formatNumber(optimum.proposedGFA)} m² · {optimum.proposedStoreys} storeys · binds on <span className="text-teal-200">{optimum.binding}</span></div>
+              </div>
+              <button onClick={maximize} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-teal-500/20 px-2.5 py-1 text-xs font-medium text-teal-100 ring-1 ring-inset ring-teal-500/40 hover:bg-teal-500/30"><Wand2 className="h-3.5 w-3.5" /> Maximize</button>
+            </div>
             <div>
               <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">Site boundary — draw your own</div>
               <div className="mb-2 flex flex-wrap gap-1.5">
@@ -354,6 +391,73 @@ export default function SiteZoning() {
             )}
           </ScrollableTable>
           <p className="mt-2 text-[11px] text-slate-500">★ = frontage (longest edge). Local coordinates are metres about the parcel origin; lat/lng appear once a map location is set.</p>
+        </div>
+      </Card>
+
+      {/* development feasibility — residual-land pro forma */}
+      <Card data-feasibility>
+        <CardHeader
+          icon={DollarSign} accent="emerald" title="Development feasibility — residual land value"
+          subtitle="The proposed GFA, split by programme, run as a developer's pro forma: net saleable/lettable area and unit counts, revenue (sales + capitalised rent), the construction/fees/finance/parking cost stack, and the land value the scheme supports at your target margin. Indicative design-stage rates — a feasibility model, not an appraisal."
+          action={<button onClick={() => downloadText('site-feasibility.csv', feasibilityCsv(feas), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-6">
+          <Metric label="GDV (value)" value={formatCurrency(feas.gdv, { compact: true })} sub={`$${formatNumber(feas.perM2.gdv)}/m²`} />
+          <Metric label="Total cost (ex land)" value={formatCurrency(feas.totalCostExLand, { compact: true })} sub={`$${formatNumber(feas.perM2.cost)}/m²`} />
+          <Metric label="Residual land value" value={formatCurrency(feas.residualLandValue, { compact: true })} sub={`at ${targetMargin}% margin`} />
+          <Metric label="Land $/site m²" value={formatCurrency(feas.landPerSiteM2, { compact: true })} sub={`${formatNumber(Math.round(z.siteArea))} m² site`} />
+          <Metric label="Margin (land-free)" value={`${feas.marginOnCost}%`} sub="profit ÷ cost" />
+          <Metric label="Net area · units" value={`${formatNumber(feas.netArea)} m²`} sub={`${formatNumber(feas.units)} units · ${formatNumber(feas.parkingBays)} bays`} />
+        </div>
+        {/* programme mix sliders */}
+        <div className="grid gap-4 border-t border-edge/50 p-5 lg:grid-cols-2">
+          <div className="space-y-3">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Programme mix</div>
+            {(['residential', 'office', 'retail'] as Use[]).map((u) => (
+              <Range key={u} label={u.charAt(0).toUpperCase() + u.slice(1)} value={mix[u]} min={0} max={1} step={0.05} onChange={(v) => setMix((m) => ({ ...m, [u]: v }))} fmt={(v) => `${Math.round(v * 100)}%`} />
+            ))}
+            <Range label="Target margin" unit="%" value={targetMargin} min={5} max={35} step={1} onChange={setTargetMargin} />
+            <Range label="Investment yield (cap rate)" unit="%" value={investYield} min={3} max={10} step={0.25} onChange={setInvestYield} fmt={(v) => v.toFixed(2)} />
+          </div>
+          {/* cost / value waterfall */}
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Cost stack vs value</div>
+            <div className="space-y-1.5">
+              {feasibilityWaterfall(feas).map((row) => {
+                const max = Math.max(feas.gdv, feas.totalCostExLand + feas.residualLandValue, 1)
+                const col = row.kind === 'value' ? 'bg-emerald-500/70' : row.label === 'Residual land' ? 'bg-teal-500/60' : 'bg-slate-500/60'
+                return (
+                  <div key={row.label} className="flex items-center gap-2 text-xs">
+                    <span className="w-24 shrink-0 truncate text-slate-400">{row.label}</span>
+                    <div className="relative h-3 flex-1 overflow-hidden rounded bg-base/60 ring-1 ring-inset ring-edge/40"><div className={cn('h-3 rounded', col)} style={{ width: `${(row.value / max) * 100}%` }} /></div>
+                    <span className="data-mono w-16 shrink-0 text-right text-slate-300">{formatCurrency(row.value, { compact: true })}</span>
+                  </div>
+                )
+              })}
+            </div>
+            <p className={cn('mt-3 rounded-lg px-3 py-2 text-[13px] leading-relaxed ring-1 ring-inset', feas.profitAtZeroLand > 0 ? 'bg-emerald-500/[0.06] text-slate-300 ring-emerald-500/25' : 'bg-rose-500/[0.06] text-rose-200 ring-rose-500/30')}>{feas.headline}</p>
+          </div>
+        </div>
+        <div className="border-t border-edge/50 p-4">
+          <ScrollableTable label="Programme by use">
+            <table className="w-full min-w-[560px] text-left text-sm">
+              <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Use', 'GFA (m²)', 'Net (m²)', 'Units', 'Tenure', 'Build cost', 'Revenue'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && i !== 4 && 'text-right')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {feas.lines.filter((l) => l.gfa > 0).map((l) => (
+                  <tr key={l.use} className="border-b border-edge/30 hover:bg-elevated/40">
+                    <td className="px-3 py-1.5 font-medium capitalize text-slate-200">{l.use}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(l.gfa)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(l.net)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(l.units)}</td>
+                    <td className="px-3 py-1.5"><Badge variant={l.tenure === 'sale' ? 'success' : 'cyan'}>{l.tenure}</Badge></td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-400">{formatCurrency(l.buildCost, { compact: true })}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatCurrency(l.revenue, { compact: true })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollableTable>
+          <p className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-500"><Car className="h-3.5 w-3.5 shrink-0" /> {formatNumber(feas.parkingBays)} parking bays required from the programme ({formatCurrency(feas.parking, { compact: true })}). Default rates: resi ${DEFAULT_RATES.residential.buildCost}/m² build · ${DEFAULT_RATES.residential.salePrice}/m² sale; office/retail capitalised at {investYield}%. Tune the mix, margin and yield above.</p>
         </div>
       </Card>
 
