@@ -68,6 +68,7 @@ import { ZONING_PRESETS, presetById, normaliseMix } from './zoning-presets.ts'
 import { maximizeScheme, maximizeValue } from './zoning-optimize.ts'
 import { feasibility, feasibilityWaterfall, feasibilityCsv, DEFAULT_RATES } from './feasibility.ts'
 import { appraise, quarterly, appraisalCsv, irr } from './appraisal.ts'
+import { evaluate as evalScenario, tornado, dataTable, scenarios, sensitivityCsv, FACTORS } from './sensitivity.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -1935,6 +1936,42 @@ section('appraisal')
   // irr helper edge cases
   ok('irr returns NaN when there is no sign change', Number.isNaN(irr([-1, -2, -3])) && Number.isNaN(irr([1, 2, 3])))
   ok('irr solves a simple two-flow case (−100 now, +121 in 2 periods ⇒ 10%/period)', near(irr([-100, 0, 121]), 0.1, 1e-3))
+}
+
+// ── sensitivity & scenarios (risk lens on the appraisal) ─────────────────────────
+section('sensitivity')
+{
+  const base = {
+    gfa: 12_000, mix: { residential: 0.6, office: 0.25, retail: 0.15 }, siteArea: 2000, buildableArea: 1400,
+    investmentYield: 0.06, targetMarginPct: 18, programme: { preMonths: 6, constructionMonths: 24, saleMonths: 12 },
+    annualInterest: 0.075, discountRate: 0.1, landMode: 'fixed' as const, land: 10_000_000,
+  }
+  const r = evalScenario(base)
+  ok('evaluate runs the full pipeline and returns headline metrics', r.gdv > 0 && r.totalCost > 0 && typeof r.profit === 'number' && typeof r.margin === 'number')
+  ok('on fixed land, a higher sale price lifts profit', evalScenario(base, { salePriceMult: 1.1 }).profit > r.profit)
+  ok('a higher build cost erodes profit', evalScenario(base, { buildCostMult: 1.1 }).profit < r.profit)
+  ok('a dearer facility erodes profit', evalScenario(base, { interestMult: 1.5 }).profit < r.profit)
+  ok('a higher cap rate (yield) cuts investment value → lower profit', evalScenario(base, { yieldMult: 1.2 }).profit < r.profit)
+  ok('on residual land, sale-price upside flows to the residual land value', (() => { const rb = { ...base, landMode: 'residual' as const }; return evalScenario(rb, { salePriceMult: 1.1 }).rlv > evalScenario(rb).rlv })())
+  // tornado
+  const t = tornado(base, 'profit', 0.1)
+  ok('tornado returns a bar per driver', t.length === FACTORS.length)
+  ok('tornado bars are sorted by impact (descending)', t.every((b, i) => i === 0 || t[i - 1].impact >= b.impact))
+  ok('every tornado bar carries low / base / high / impact', t.every((b) => Number.isFinite(b.low) && Number.isFinite(b.high) && Number.isFinite(b.base) && b.impact >= 0))
+  ok('sale price and build cost are among the biggest profit drivers', (() => { const top3 = t.slice(0, 3).map((b) => b.key); return top3.includes('sale') && top3.includes('build') })())
+  ok('the build-cost bar shows the right sign (up cost → lower profit)', (() => { const b = t.find((x) => x.key === 'build'); return !!b && b.high < b.low })())
+  // data table
+  const dt = dataTable(base, 'salePriceMult', [0.9, 1.0, 1.1], 'buildCostMult', [0.95, 1.0, 1.05], 'profit')
+  ok('data table has rows × cols matching the value vectors', dt.cells.length === 3 && dt.cells.every((row) => row.length === 3))
+  ok('profit rises across the sale-price axis (left→right)', dt.cells.every((row) => row[0] < row[1] && row[1] < row[2]))
+  ok('profit falls down the build-cost axis (top→bottom)', dt.cells[0][1] > dt.cells[1][1] && dt.cells[1][1] > dt.cells[2][1])
+  // scenarios
+  const sc = scenarios(base, 0.1)
+  ok('three scenarios: downside / base / upside', sc.length === 3 && sc[0].name === 'Downside' && sc[2].name === 'Upside')
+  ok('downside profit < base < upside (the cone of outcomes)', sc[0].result.profit < sc[1].result.profit && sc[1].result.profit < sc[2].result.profit)
+  ok('the base scenario matches a plain evaluate()', sc[1].result.profit === r.profit && sc[1].result.gdv === r.gdv)
+  // csv
+  ok('sensitivity CSV carries the tornado + scenario blocks', (() => { const c = sensitivityCsv(base, 'profit', 0.1); return /Sensitivity of Profit/.test(c) && /Driver,Low/.test(c) && /Scenario,GDV/.test(c) && /Downside/.test(c) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────

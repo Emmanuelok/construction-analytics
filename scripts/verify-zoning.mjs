@@ -118,6 +118,20 @@ try {
   const period1 = await page.evaluate(() => document.querySelector('[data-appraisal]')?.innerText || '')
   ok('a longer construction programme lengthens the cashflow', period1 !== period0)
 
+  // ── sensitivity & scenarios ──
+  const sens = await text('[data-sensitivity]')
+  ok('a sensitivity & scenarios card is present', /Sensitivity & scenarios/i.test(sens) && /Tornado/i.test(sens))
+  ok('a sensitivity metric + swing selector exist', await page.evaluate(() => !!document.querySelector('select[aria-label="Sensitivity metric"]') && !!document.querySelector('select[aria-label="Sensitivity swing"]')))
+  ok('the tornado chart is drawn', await page.evaluate(() => !!document.querySelector('[data-sensitivity] svg[aria-label^="Tornado sensitivity"]')))
+  ok('the two-way data grid renders (sale price × build cost)', /price/i.test(sens) && /cost/i.test(sens))
+  ok('the scenario table shows downside / base / upside', /Downside/i.test(sens) && /Base/i.test(sens) && /Upside/i.test(sens))
+  ok('a sensitivity CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-sensitivity] button')].some((b) => /CSV/.test(b.textContent || ''))))
+  const sens0 = await page.evaluate(() => { const s = document.querySelector('[data-sensitivity] svg[aria-label^="Tornado sensitivity"]'); return s?.getAttribute('aria-label') || '' })
+  await setSelect('Sensitivity metric', 'irr')
+  await wait(700)
+  const sens1 = await page.evaluate(() => { const s = document.querySelector('[data-sensitivity] svg[aria-label^="Tornado sensitivity"]'); return s?.getAttribute('aria-label') || '' })
+  ok('switching the metric re-runs the tornado', /IRR/i.test(sens1) && sens1 !== sens0, { sens0, sens1 })
+
   // ── context & overshadowing ──
   await page.evaluate(() => { const b = [...document.querySelectorAll('[data-context] button')].find((x) => /Add context/.test(x.textContent || '')); b?.click() })
   await wait(900)

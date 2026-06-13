@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
@@ -19,6 +19,7 @@ import { feasibility, feasibilityWaterfall, feasibilityCsv, DEFAULT_RATES, type 
 import { shadowStudy } from '@/lib/shadow'
 import { defaultNeighbours, overshadowing, overshadowingCsv, type Neighbour, type ContextStudy } from '@/lib/context-shadow'
 import { appraise, quarterly, appraisalCsv } from '@/lib/appraisal'
+import { tornado, dataTable, scenarios, sensitivityCsv, METRIC_LABEL, type Metric, type ScenarioBase, type TornadoBar, type DataTable as SensDataTable } from '@/lib/sensitivity'
 import { LineTrend } from '@/components/charts'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
@@ -75,6 +76,8 @@ export default function SiteZoning() {
   const [discountRate, setDiscountRate] = useState(10)
   const [useResidualLand, setUseResidualLand] = useState(true)
   const [landPrice, setLandPrice] = useState(12_000_000)
+  const [sensMetric, setSensMetric] = useState<Metric>('profit')
+  const [sensSwing, setSensSwing] = useState(0.1)
   // apply a zoning district: load its rules + programme split
   const applyPreset = (id: string) => {
     const p = presetById(id); if (!p) return
@@ -114,6 +117,12 @@ export default function SiteZoning() {
     costs: { construction: feas.construction, fees: feas.fees, contingency: feas.contingency, parking: feas.parking, demolition: feas.demolition, siteWorks: feas.siteWorks },
     land: appraisalLand, programme: { preMonths, constructionMonths, saleMonths }, annualInterest: facilityRate / 100, discountRate: discountRate / 100,
   }), [saleRevenue, investmentRevenue, feas.construction, feas.fees, feas.contingency, feas.parking, feas.demolition, feas.siteWorks, appraisalLand, preMonths, constructionMonths, saleMonths, facilityRate, discountRate])
+  // sensitivity & scenarios — the risk lens on the appraisal (land held fixed so revenue/cost swings hit profit)
+  const sensBase = useMemo<ScenarioBase>(() => ({ gfa: proposedGFA, mix, siteArea: z.siteArea, buildableArea: z.buildableArea, investmentYield: investYield / 100, targetMarginPct: targetMargin, programme: { preMonths, constructionMonths, saleMonths }, annualInterest: facilityRate / 100, discountRate: discountRate / 100, landMode: 'fixed', land: appraisalLand }), [proposedGFA, mix, z.siteArea, z.buildableArea, investYield, targetMargin, preMonths, constructionMonths, saleMonths, facilityRate, discountRate, appraisalLand])
+  const sensValues = useMemo(() => [0.9, 0.95, 1, 1.05, 1.1], [])
+  const torn = useMemo(() => tornado(sensBase, sensMetric, sensSwing), [sensBase, sensMetric, sensSwing])
+  const dtable = useMemo(() => dataTable(sensBase, 'salePriceMult', sensValues, 'buildCostMult', sensValues, sensMetric), [sensBase, sensValues, sensMetric])
+  const scen = useMemo(() => scenarios(sensBase, sensSwing), [sensBase, sensSwing])
   const shadow = useMemo(() => (footprintPoly.length >= 3 ? shadowStudy(footprintPoly, z.proposed.height, { lat: anchor.lat, lng: anchor.lng, month: shadowMonth }) : null), [footprintPoly, z.proposed.height, anchor.lat, anchor.lng, shadowMonth])
   const nbList = useMemo(() => neighbours ?? defaultNeighbours(boundary, 8, 24), [neighbours, boundary])
   const context = useMemo(() => (contextOn && footprintPoly.length >= 3 ? overshadowing(footprintPoly, z.proposed.height, nbList, { lat: anchor.lat, lng: anchor.lng, month: shadowMonth }) : null), [contextOn, footprintPoly, z.proposed.height, nbList, anchor.lat, anchor.lng, shadowMonth])
@@ -130,6 +139,7 @@ export default function SiteZoning() {
     setSkyBase(DEFAULTS.skyBase); setSkyStep(DEFAULTS.skyStep); setGeoText(''); setGeoError(null)
     setPresetId(''); setMix({ residential: 0.6, office: 0.25, retail: 0.15 }); setTargetMargin(18); setInvestYield(6); setPerEdge(false); setFrontSb(6); setSideSb(4); setRearSb(8); setShadowMonth(6); setSchemeA(null); setNeighbours(null); setContextOn(false)
     setPreMonths(6); setConstructionMonths(24); setSaleMonths(12); setFacilityRate(7.5); setDiscountRate(10); setUseResidualLand(true); setLandPrice(12_000_000)
+    setSensMetric('profit'); setSensSwing(0.1)
   }
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
@@ -594,6 +604,61 @@ export default function SiteZoning() {
         </div>
       </Card>
 
+      {/* sensitivity & scenarios — risk lens on the appraisal */}
+      <Card data-sensitivity>
+        <CardHeader
+          icon={Activity} accent="fuchsia" title="Sensitivity & scenarios"
+          subtitle="The risk lens on the appraisal: swing each driver on its own to rank what moves the return most (the tornado), read a two-way sale-price × build-cost grid, and compare combined downside / base / upside cases. Land is held at the current price, so revenue and cost swings flow straight to profit."
+          action={<button onClick={() => downloadText('site-sensitivity.csv', sensitivityCsv(sensBase, sensMetric, sensSwing), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="flex flex-wrap items-center gap-4 border-t border-edge/50 p-4">
+          <label className="flex items-center gap-2 text-xs text-slate-400">Metric
+            <select value={sensMetric} onChange={(e) => setSensMetric(e.target.value as Metric)} aria-label="Sensitivity metric" className="rounded-lg border border-edge/60 bg-elevated/50 px-2 py-1 text-xs text-slate-100 focus:border-fuchsia-500/50 focus:outline-none">
+              {(['profit', 'npv', 'irr', 'margin', 'rlv', 'peakDebt'] as Metric[]).map((m) => <option key={m} value={m}>{METRIC_LABEL[m]}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-400">Swing
+            <select value={sensSwing} onChange={(e) => setSensSwing(Number(e.target.value))} aria-label="Sensitivity swing" className="rounded-lg border border-edge/60 bg-elevated/50 px-2 py-1 text-xs text-slate-100 focus:border-fuchsia-500/50 focus:outline-none">
+              {[0.05, 0.1, 0.15, 0.2].map((s) => <option key={s} value={s}>±{Math.round(s * 100)}%</option>)}
+            </select>
+          </label>
+          <span className="text-[11px] text-slate-500">vs base {METRIC_LABEL[sensMetric]} <span className="data-mono text-slate-300">{fmtMetric(torn[0]?.base ?? 0, sensMetric)}</span></span>
+        </div>
+        <div className="grid gap-5 border-t border-edge/50 p-5 lg:grid-cols-2">
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Tornado — drivers of {METRIC_LABEL[sensMetric]} (±{Math.round(sensSwing * 100)}%)</div>
+            <TornadoChart bars={torn} metric={sensMetric} />
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">Each bar swings one driver ±{Math.round(sensSwing * 100)}% with all else held. The widest bars are the assumptions to firm up first — the return lives or dies on them.</p>
+          </div>
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Sale price × build cost → {METRIC_LABEL[sensMetric]}</div>
+            <DataGrid table={dtable} metric={sensMetric} values={sensValues} />
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">Rows = build cost, columns = sale price (both ±10% about base). Green is stronger, red is weaker; the outlined cell is today's assumption.</p>
+          </div>
+        </div>
+        <div className="border-t border-edge/50 p-4">
+          <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Scenario cases (revenue, cost, finance &amp; yield move together ±{Math.round(sensSwing * 100)}%)</div>
+          <ScrollableTable label="Scenario cases">
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Scenario', 'Profit', 'Margin', 'IRR', 'NPV', 'Peak debt', 'Residual land'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && 'text-right')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {scen.map((s) => (
+                  <tr key={s.name} className="border-b border-edge/30 hover:bg-elevated/40">
+                    <td className="px-3 py-1.5"><Badge variant={s.name === 'Downside' ? 'danger' : s.name === 'Upside' ? 'success' : 'neutral'}>{s.name}</Badge></td>
+                    <td className={cn('data-mono px-3 py-1.5 text-right', s.result.profit >= 0 ? 'text-slate-200' : 'text-rose-300')}>{formatCurrency(s.result.profit, { compact: true })}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{s.result.margin}%</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{Number.isFinite(s.result.irr) ? `${s.result.irr}%` : 'n/a'}</td>
+                    <td className={cn('data-mono px-3 py-1.5 text-right', s.result.npv >= 0 ? 'text-emerald-300/90' : 'text-rose-300')}>{formatCurrency(s.result.npv, { compact: true })}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-rose-300/80">{formatCurrency(s.result.peakDebt, { compact: true })}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-400">{formatCurrency(s.result.rlv, { compact: true })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollableTable>
+        </div>
+      </Card>
+
       {/* shadow / right-to-light study */}
       {shadow && (
         <Card data-shadow>
@@ -895,6 +960,79 @@ function ContextDiagram({ boundary, footprint, neighbours, study, shadows }: { b
         <text x={12} y={H - 10}>Neighbour shading: <tspan fill="#64748b">minor</tspan> · <tspan fill="#f59e0b">moderate</tspan> · <tspan fill="#ef4444">significant</tspan></text>
       </g>
     </svg>
+  )
+}
+
+function fmtMetric(v: number, m: Metric): string {
+  if (m === 'margin' || m === 'irr') return Number.isFinite(v) ? `${Math.round(v)}%` : 'n/a'
+  return formatCurrency(v, { compact: true })
+}
+
+/* Horizontal diverging tornado: one bar per driver, split at the base value
+ * (worse side rose, better side emerald), with the absolute impact at the end. */
+function TornadoChart({ bars, metric }: { bars: TornadoBar[]; metric: Metric }) {
+  if (!bars.length) return <div className="grid h-40 place-items-center rounded-xl bg-[#0a0f1c] text-[11px] text-slate-600">no data</div>
+  const base = bars[0].base
+  const vals = bars.flatMap((b) => [b.low, b.high, base]).filter((v) => Number.isFinite(v))
+  let lo = Math.min(...vals), hi = Math.max(...vals)
+  if (lo === hi) { lo -= 1; hi += 1 }
+  const span = hi - lo; lo -= span * 0.06; hi += span * 0.06
+  const W = 460, labelW = 102, rightGutter = 60, rowH = 30, padTop = 6
+  const chartW = W - labelW - rightGutter
+  const H = bars.length * rowH + padTop + 16
+  const X = (v: number) => labelW + ((v - lo) / (hi - lo)) * chartW
+  const baseX = X(base)
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full rounded-xl bg-[#0a0f1c]" role="img" aria-label={`Tornado sensitivity of ${METRIC_LABEL[metric]}`}>
+      <line x1={baseX} y1={padTop} x2={baseX} y2={H - 16} stroke="#64748b" strokeWidth={1} strokeDasharray="3 3" />
+      {bars.map((b, i) => {
+        const y = padTop + i * rowH
+        const left = Math.min(b.low, b.high), right = Math.max(b.low, b.high)
+        const xl = X(left), xr = X(right)
+        return (
+          <g key={b.key}>
+            <text x={6} y={y + rowH / 2} fontSize={11} fill="#cbd5e1" dominantBaseline="middle">{b.label}</text>
+            <rect x={xl} y={y + 5} width={Math.max(0, baseX - xl)} height={rowH - 12} fill="#f43f5e" fillOpacity={0.5} rx={1.5} />
+            <rect x={baseX} y={y + 5} width={Math.max(0, xr - baseX)} height={rowH - 12} fill="#10b981" fillOpacity={0.6} rx={1.5} />
+            <text x={W - 6} y={y + rowH / 2} fontSize={9.5} fill="#e2e8f0" textAnchor="end" dominantBaseline="middle">{fmtMetric(b.impact, metric)}</text>
+          </g>
+        )
+      })}
+      <text x={baseX} y={H - 4} fontSize={9} fill="#64748b" textAnchor="middle">base {fmtMetric(base, metric)}</text>
+    </svg>
+  )
+}
+
+/* Two-way data table: a metric across sale price (columns) × build cost (rows),
+ * cells heat-mapped (green strong / red weak) with the base assumption outlined. */
+function DataGrid({ table, metric, values }: { table: SensDataTable; metric: Metric; values: number[] }) {
+  const flat = table.cells.flat().filter((v) => Number.isFinite(v))
+  const lo = Math.min(...flat), hi = Math.max(...flat)
+  const color = (v: number) => {
+    if (!Number.isFinite(v) || hi === lo) return 'transparent'
+    const t = (v - lo) / (hi - lo)
+    return t >= 0.5 ? `rgba(16,185,129,${(t - 0.5) * 2 * 0.5 + 0.04})` : `rgba(244,63,94,${(0.5 - t) * 2 * 0.5 + 0.04})`
+  }
+  const pct = (m: number) => `${m > 1 ? '+' : ''}${Math.round((m - 1) * 100)}%`
+  const baseXi = values.indexOf(1), baseYi = values.indexOf(1)
+  return (
+    <div className="overflow-x-auto rounded-xl border border-edge/50">
+      <table className="w-full min-w-[340px] border-collapse text-center text-[11px]">
+        <thead>
+          <tr className="bg-base/40 text-slate-500"><th className="p-1.5 text-left font-medium">cost↓ price→</th>{table.xVals.map((xv) => <th key={xv} className="p-1.5 font-medium text-slate-400">{pct(xv)}</th>)}</tr>
+        </thead>
+        <tbody>
+          {table.cells.map((row, yi) => (
+            <tr key={yi}>
+              <td className="p-1.5 text-right font-medium text-slate-400">{pct(table.yVals[yi])}</td>
+              {row.map((v, xi) => (
+                <td key={xi} className={cn('data-mono p-1.5 text-slate-100', xi === baseXi && yi === baseYi && 'ring-2 ring-inset ring-fuchsia-400/80')} style={{ background: color(v) }}>{fmtMetric(v, metric)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 
