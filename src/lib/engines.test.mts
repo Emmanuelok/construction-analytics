@@ -70,6 +70,7 @@ import { feasibility, feasibilityWaterfall, feasibilityCsv, DEFAULT_RATES } from
 import { appraise, quarterly, appraisalCsv, irr } from './appraisal.ts'
 import { evaluate as evalScenario, tornado, dataTable, scenarios, sensitivityCsv, FACTORS } from './sensitivity.ts'
 import { accommodation, accommodationCsv, DEFAULT_UNIT_TYPES } from './unit-mix.ts'
+import { obligations, obligationsCsv, AFFORDABLE_TENURES } from './obligations.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -1995,6 +1996,30 @@ section('unit-mix')
   ok('an empty mix normalises rather than dividing by zero', (() => { const z2 = accommodation({ residentialNet: 10_000, mix: {}, basePricePerM2: 6500 }); return Number.isFinite(z2.totalUnits) && z2.totalUnits >= 0 })())
   ok('no site area → density is zero (not NaN)', accommodation({ residentialNet: 5000, mix: { '2b': 1 }, basePricePerM2: 6000 }).densityUnitsPerHa === 0)
   ok('accommodation CSV carries the schedule + totals + metrics', (() => { const c = accommodationCsv(a); return /Type,Beds,Size/.test(c) && /TOTAL/.test(c) && /Dwelling density/.test(c) })())
+}
+
+// ── affordable housing & planning obligations (viability) ────────────────────────
+section('obligations')
+{
+  const base = {
+    marketGdv: 60_000_000, residentialGdv: 45_000_000, totalUnits: 100, gfa: 12_000,
+    affordablePct: 0.3, cilPerM2: 120, s106PerUnit: 8000, totalCostExLand: 38_000_000,
+    benchmarkLandValue: 9_000_000, targetMarginPct: 18,
+  }
+  const o = obligations(base)
+  ok('affordable + market units split from the policy %', o.affordableUnits === 30 && o.marketUnits === 70 && o.affordableUnits + o.marketUnits === base.totalUnits)
+  ok('a tenure line per affordable tenure, summing to the affordable units', o.tenureLines.length === AFFORDABLE_TENURES.length && o.tenureLines.reduce((s, l) => s + l.units, 0) === o.affordableUnits)
+  ok('affordable homes are valued below market (discount applied)', o.tenureLines.every((l) => l.valueFactor < 1) && o.affordableGdv < o.affordableUnits * (base.residentialGdv / base.totalUnits))
+  ok('policy GDV is below the all-market GDV by the GDV forgone', o.policyGdv < base.marketGdv && o.gdvForgone > 0)
+  ok('CIL = GFA × rate, and S106 = units × rate', o.cil === base.gfa * base.cilPerM2 && o.s106 === base.totalUnits * base.s106PerUnit && o.obligationsTotal === o.cil + o.s106)
+  ok('a residual land value is struck after affordable + obligations', o.residualLandValue >= 0 && typeof o.viable === 'boolean')
+  ok('the benchmark surplus = residual − benchmark', o.surplusVsBenchmark === o.residualLandValue - base.benchmarkLandValue)
+  ok('more affordable housing lowers the residual land value', obligations({ ...base, affordablePct: 0.5 }).residualLandValue < o.residualLandValue)
+  ok('zero affordable + zero obligations gives the highest residual', (() => { const z2 = obligations({ ...base, affordablePct: 0, cilPerM2: 0, s106PerUnit: 0 }); return z2.residualLandValue > o.residualLandValue && z2.gdvForgone === 0 })())
+  ok('the viability-led max affordable % clears the benchmark but more would not', (() => { const m = obligations(base).maxAffordablePct; const atMax = obligations({ ...base, affordablePct: m }); const over = obligations({ ...base, affordablePct: Math.min(1, m + 0.05) }); return atMax.residualLandValue >= base.benchmarkLandValue && (m >= 1 || over.residualLandValue < base.benchmarkLandValue) })())
+  ok('a scheme below benchmark reads as unviable with a viability-led headline', (() => { const u = obligations({ ...base, affordablePct: 0.6, benchmarkLandValue: 20_000_000 }); return !u.viable && /unviable/i.test(u.headline) })())
+  ok('richer tenure (more shared ownership) lifts affordable GDV vs social rent', (() => { const so = obligations({ ...base, tenureSplit: { socialRent: 0, affordableRent: 0, sharedOwnership: 1 } }); const sr = obligations({ ...base, tenureSplit: { socialRent: 1, affordableRent: 0, sharedOwnership: 0 } }); return so.affordableGdv > sr.affordableGdv && so.residualLandValue > sr.residualLandValue })())
+  ok('obligations CSV carries tenure lines + the viability block', (() => { const c = obligationsCsv(o); return /Affordable tenure,Units/.test(c) && /Residual land value/.test(c) && /Viable,/.test(c) && /Viability-led max/.test(c) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────
