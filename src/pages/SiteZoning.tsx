@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
@@ -21,6 +21,7 @@ import { defaultNeighbours, overshadowing, overshadowingCsv, type Neighbour, typ
 import { appraise, quarterly, appraisalCsv } from '@/lib/appraisal'
 import { tornado, dataTable, scenarios, sensitivityCsv, METRIC_LABEL, type Metric, type ScenarioBase, type TornadoBar, type DataTable as SensDataTable } from '@/lib/sensitivity'
 import { accommodation, accommodationCsv, DEFAULT_UNIT_TYPES, type UnitMix } from '@/lib/unit-mix'
+import { obligations, obligationsCsv, AFFORDABLE_TENURES, TENURE_LABEL, type AffordableTenure } from '@/lib/obligations'
 import { LineTrend } from '@/components/charts'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
@@ -80,6 +81,11 @@ export default function SiteZoning() {
   const [sensMetric, setSensMetric] = useState<Metric>('profit')
   const [sensSwing, setSensSwing] = useState(0.1)
   const [unitMix, setUnitMix] = useState<UnitMix>({ studio: 0.1, '1b': 0.4, '2b': 0.4, '3b': 0.1 })
+  const [affordablePct, setAffordablePct] = useState(0.3)
+  const [tenureSplit, setTenureSplit] = useState<Record<AffordableTenure, number>>({ socialRent: 0.3, affordableRent: 0.3, sharedOwnership: 0.4 })
+  const [cilPerM2, setCilPerM2] = useState(120)
+  const [s106PerUnit, setS106PerUnit] = useState(8000)
+  const [benchmarkLand, setBenchmarkLand] = useState(8_000_000)
   // apply a zoning district: load its rules + programme split
   const applyPreset = (id: string) => {
     const p = presetById(id); if (!p) return
@@ -113,6 +119,9 @@ export default function SiteZoning() {
   // accommodation schedule — refine the residential line into a typed unit mix
   const residentialNet = useMemo(() => feas.lines.find((l) => l.use === 'residential')?.net ?? 0, [feas])
   const accom = useMemo(() => accommodation({ residentialNet, mix: unitMix, basePricePerM2: DEFAULT_RATES.residential.salePrice, siteAreaM2: z.siteArea }), [residentialNet, unitMix, z.siteArea])
+  // affordable housing & planning obligations — apply policy, re-strike residual, test viability
+  const residentialGdv = useMemo(() => feas.lines.find((l) => l.use === 'residential')?.revenue ?? 0, [feas])
+  const oblig = useMemo(() => obligations({ marketGdv: feas.gdv, residentialGdv, totalUnits: accom.totalUnits, gfa: proposedGFA, affordablePct, tenureSplit, cilPerM2, s106PerUnit, totalCostExLand: feas.totalCostExLand, benchmarkLandValue: benchmarkLand, targetMarginPct: targetMargin }), [feas.gdv, residentialGdv, accom.totalUnits, proposedGFA, affordablePct, tenureSplit, cilPerM2, s106PerUnit, feas.totalCostExLand, benchmarkLand, targetMargin])
   // development cashflow appraisal — phase the static pro forma over a programme
   const saleRevenue = useMemo(() => feas.lines.filter((l) => l.tenure === 'sale').reduce((s, l) => s + l.revenue, 0), [feas])
   const investmentRevenue = useMemo(() => feas.lines.filter((l) => l.tenure === 'investment').reduce((s, l) => s + l.revenue, 0), [feas])
@@ -145,6 +154,7 @@ export default function SiteZoning() {
     setPresetId(''); setMix({ residential: 0.6, office: 0.25, retail: 0.15 }); setTargetMargin(18); setInvestYield(6); setPerEdge(false); setFrontSb(6); setSideSb(4); setRearSb(8); setShadowMonth(6); setSchemeA(null); setNeighbours(null); setContextOn(false)
     setPreMonths(6); setConstructionMonths(24); setSaleMonths(12); setFacilityRate(7.5); setDiscountRate(10); setUseResidualLand(true); setLandPrice(12_000_000)
     setSensMetric('profit'); setSensSwing(0.1); setUnitMix({ studio: 0.1, '1b': 0.4, '2b': 0.4, '3b': 0.1 })
+    setAffordablePct(0.3); setTenureSplit({ socialRent: 0.3, affordableRent: 0.3, sharedOwnership: 0.4 }); setCilPerM2(120); setS106PerUnit(8000); setBenchmarkLand(8_000_000)
   }
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
@@ -598,6 +608,82 @@ export default function SiteZoning() {
               </table>
             </ScrollableTable>
           </div>
+        </div>
+      </Card>
+
+      {/* affordable housing & planning obligations (viability) */}
+      <Card data-obligations>
+        <CardHeader
+          icon={Scale} accent="violet" title="Affordable housing & viability"
+          subtitle="The policy layer: a share of the homes is delivered affordable (let/sold below market by tenure), and the scheme carries a community infrastructure levy and Section 106 contributions. Both shrink the residual land value — which is then tested against a benchmark (existing use + premium). If the policy-compliant scheme falls short, the viability-led affordable percentage the site can actually support is solved."
+          action={<button onClick={() => downloadText('site-viability.csv', obligationsCsv(oblig), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-6">
+          <div className={cn('rounded-lg p-2.5 ring-1 ring-inset', oblig.viable ? 'bg-emerald-500/[0.08] ring-emerald-500/30' : 'bg-rose-500/[0.08] ring-rose-500/30')}>
+            <div className="text-[11px] text-slate-400">Viability</div>
+            <div className={cn('text-sm font-semibold', oblig.viable ? 'text-emerald-300' : 'text-rose-300')}>{oblig.viable ? 'Viable' : 'Unviable'}</div>
+            <div className="text-[10px] text-slate-500">{Math.round(affordablePct * 100)}% affordable</div>
+          </div>
+          <Metric label="Residual (policy)" value={formatCurrency(oblig.residualLandValue, { compact: true })} sub="after affordable + obligations" />
+          <Metric label="Benchmark" value={formatCurrency(benchmarkLand, { compact: true })} sub="existing use + premium" />
+          <Metric label="Surplus" value={formatCurrency(oblig.surplusVsBenchmark, { compact: true })} sub={oblig.surplusVsBenchmark >= 0 ? 'headroom' : 'shortfall'} />
+          <Metric label="Affordable units" value={`${formatNumber(oblig.affordableUnits)} / ${formatNumber(oblig.affordableUnits + oblig.marketUnits)}`} sub={`${formatCurrency(oblig.gdvForgone, { compact: true })} GDV forgone`} />
+          <Metric label="Viability-led max" value={`${Math.round(oblig.maxAffordablePct * 100)}%`} sub="affordable supportable" />
+        </div>
+        <div className="grid gap-5 border-t border-edge/50 p-5 lg:grid-cols-2">
+          <div className="space-y-3">
+            <Range label="Affordable housing" unit="%" value={Math.round(affordablePct * 100)} min={0} max={60} step={5} onChange={(v) => setAffordablePct(v / 100)} />
+            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Tenure split (within affordable)</div>
+            {AFFORDABLE_TENURES.map((t) => (
+              <Range key={t} label={TENURE_LABEL[t]} value={tenureSplit[t]} min={0} max={1} step={0.05} onChange={(v) => setTenureSplit((s) => ({ ...s, [t]: v }))} fmt={(v) => `${Math.round(v * 100)}%`} />
+            ))}
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Num label="CIL" unit="$/m²" value={cilPerM2} step={10} onChange={setCilPerM2} />
+              <Num label="S106" unit="$/unit" value={s106PerUnit} step={1000} onChange={setS106PerUnit} />
+              <Num label="Benchmark land" unit="$" value={benchmarkLand} step={500_000} onChange={setBenchmarkLand} />
+            </div>
+          </div>
+          <div className="space-y-4">
+            <div>
+              <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Affordable tenure</div>
+              <ScrollableTable label="Affordable tenure breakdown">
+                <table className="w-full min-w-[360px] text-left text-sm">
+                  <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Tenure', 'Units', '% market', 'GDV'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && 'text-right')}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {oblig.tenureLines.map((l) => (
+                      <tr key={l.tenure} className="border-b border-edge/30">
+                        <td className="px-3 py-1.5 text-slate-200">{l.label}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-200">{formatNumber(l.units)}</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-400">{Math.round(l.valueFactor * 100)}%</td>
+                        <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatCurrency(l.gdv, { compact: true })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </ScrollableTable>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-lg bg-elevated/40 p-2"><div className="text-[10px] text-slate-400">CIL</div><div className="data-mono text-xs font-semibold text-slate-200">{formatCurrency(oblig.cil, { compact: true })}</div></div>
+              <div className="rounded-lg bg-elevated/40 p-2"><div className="text-[10px] text-slate-400">Section 106</div><div className="data-mono text-xs font-semibold text-slate-200">{formatCurrency(oblig.s106, { compact: true })}</div></div>
+              <div className="rounded-lg bg-elevated/40 p-2"><div className="text-[10px] text-slate-400">Obligations</div><div className="data-mono text-xs font-semibold text-slate-200">{formatCurrency(oblig.obligationsTotal, { compact: true })}</div></div>
+            </div>
+            {/* residual vs benchmark */}
+            <div className="space-y-1.5">
+              {([['Residual (policy)', oblig.residualLandValue, oblig.viable ? 'bg-emerald-500/70' : 'bg-rose-500/70'], ['Benchmark', benchmarkLand, 'bg-slate-500/60']] as [string, number, string][]).map(([label, val, col]) => {
+                const max = Math.max(oblig.residualLandValue, benchmarkLand, 1)
+                return (
+                  <div key={label} className="flex items-center gap-2 text-xs">
+                    <span className="w-28 shrink-0 truncate text-slate-400">{label}</span>
+                    <div className="relative h-3 flex-1 overflow-hidden rounded bg-base/60 ring-1 ring-inset ring-edge/40"><div className={cn('h-3 rounded', col)} style={{ width: `${(val / max) * 100}%` }} /></div>
+                    <span className="data-mono w-16 shrink-0 text-right text-slate-300">{formatCurrency(val, { compact: true })}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+        <div className="border-t border-edge/50 px-5 pb-5 pt-4">
+          <p className={cn('rounded-lg px-3 py-2 text-[13px] leading-relaxed ring-1 ring-inset', oblig.viable ? 'bg-emerald-500/[0.06] text-slate-300 ring-emerald-500/25' : 'bg-rose-500/[0.06] text-rose-200 ring-rose-500/30')}>{oblig.headline}</p>
         </div>
       </Card>
 

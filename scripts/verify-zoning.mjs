@@ -113,6 +113,18 @@ try {
   const dwell1 = num(await page.evaluate(() => document.querySelector('[data-accommodation]')?.innerText || ''), /Dwellings\s*\n?\s*([\d,]+)/i)
   ok('shifting the mix to studios raises the dwelling count', dwell1 > dwell0, { dwell0, dwell1 })
 
+  // ── affordable housing & viability ──
+  const via = await text('[data-obligations]')
+  ok('an affordable housing & viability card is present', /Affordable housing & viability/i.test(via) && /(Viable|Unviable)/.test(via) && /Benchmark/i.test(via))
+  ok('it breaks affordable homes down by tenure', /Social rent/i.test(via) && /Affordable rent/i.test(via) && /Shared ownership/i.test(via))
+  ok('it reports CIL, Section 106 and a viability-led max', /CIL/i.test(via) && /Section 106/i.test(via) && /Viability-led max/i.test(via))
+  ok('a viability CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-obligations] button')].some((b) => /CSV/.test(b.textContent || ''))))
+  const via0 = await page.evaluate(() => document.querySelector('[data-obligations]')?.innerText || '')
+  await setRange('Affordable housing', 60)
+  await wait(700)
+  const via1 = await page.evaluate(() => document.querySelector('[data-obligations]')?.innerText || '')
+  ok('raising the affordable % re-strikes the residual (viability moves)', via1 !== via0)
+
   // ── development cashflow appraisal (DCF) ──
   const appr = await text('[data-appraisal]')
   ok('a development cashflow appraisal card is present', /Development cashflow/i.test(appr) && /Profit/i.test(appr) && /Margin on cost/i.test(appr))
