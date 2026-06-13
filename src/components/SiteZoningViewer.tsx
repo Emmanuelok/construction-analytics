@@ -24,6 +24,7 @@ export function SiteZoningViewer({
   envelopeTiers,
   proposedHeight,
   compliant,
+  neighbours = [],
   height = 460,
 }: {
   boundary: Pt[]
@@ -33,15 +34,16 @@ export function SiteZoningViewer({
   envelopeTiers: MassingTier[] // legal envelope, stepped at the sky-exposure plane
   proposedHeight: number
   compliant: boolean
+  neighbours?: { id: string; footprint: Pt[]; height: number }[] // context massing (grey blocks)
   height?: number
 }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
-  const propsRef = useRef({ boundary, buildable, maxHeight, tiers, envelopeTiers, proposedHeight, compliant })
-  propsRef.current = { boundary, buildable, maxHeight, tiers, envelopeTiers, proposedHeight, compliant }
+  const propsRef = useRef({ boundary, buildable, maxHeight, tiers, envelopeTiers, proposedHeight, compliant, neighbours })
+  propsRef.current = { boundary, buildable, maxHeight, tiers, envelopeTiers, proposedHeight, compliant, neighbours }
 
   const rebuildRef = useRef<(() => void) | null>(null)
-  useEffect(() => { rebuildRef.current?.() }, [boundary, buildable, maxHeight, tiers, envelopeTiers, proposedHeight, compliant])
+  useEffect(() => { rebuildRef.current?.() }, [boundary, buildable, maxHeight, tiers, envelopeTiers, proposedHeight, compliant, neighbours])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -103,6 +105,7 @@ export function SiteZoningViewer({
     const envMat = track(new THREE.MeshStandardMaterial({ color: '#38bdf8', transparent: true, opacity: 0.1, roughness: 1, side: THREE.DoubleSide, depthWrite: false }))
     const greenMat = track(new THREE.MeshStandardMaterial({ color: '#22c55e', roughness: 0.5, metalness: 0.05 }))
     const redMat = track(new THREE.MeshStandardMaterial({ color: '#ef4444', roughness: 0.5, metalness: 0.05 }))
+    const nbMat = track(new THREE.MeshStandardMaterial({ color: '#475569', roughness: 0.85, metalness: 0.02 }))
 
     const orbit = { azimuth: Math.PI * 0.25, polar: Math.PI * 0.36, radius: 200, target: new THREE.Vector3() }
     const applyCamera = () => {
@@ -123,12 +126,21 @@ export function SiteZoningViewer({
 
     const build = () => {
       clear()
-      const { boundary: bnd, buildable: bld, maxHeight: mh, tiers: tr, envelopeTiers: env, proposedHeight: ph, compliant: ok } = propsRef.current
+      const { boundary: bnd, buildable: bld, maxHeight: mh, tiers: tr, envelopeTiers: env, proposedHeight: ph, compliant: ok, neighbours: nbs } = propsRef.current
       if (bnd.length < 3) return
       const c = polygonCentroid(bnd)
 
       group.add(lineLoop(bnd, 0.05, '#e2e8f0')) // site boundary — white
       if (bld.length >= 3) group.add(lineLoop(bld, 0.06, '#fbbf24', true)) // setback — dashed amber
+
+      // context neighbours — solid grey massing blocks at their own footprint + height
+      for (const nb of nbs ?? []) {
+        if (nb.footprint.length < 3 || nb.height <= 0) continue
+        const block = extrude(nb.footprint, nb.height, nbMat)
+        block.castShadow = true; block.receiveShadow = true
+        group.add(block)
+        group.add(lineLoop(nb.footprint, nb.height, '#64748b')) // roofline
+      }
 
       // legal envelope — one translucent prism per tier (stepped at the sky plane)
       const envBase = bld.length >= 3 ? bld : bnd
@@ -157,8 +169,9 @@ export function SiteZoningViewer({
         group.add(massing)
       }
 
-      // frame camera + light to the site
-      const xs = bnd.map((p) => p.x), zs = bnd.map((p) => p.z)
+      // frame camera + light to the site (including any context neighbours)
+      const framePts = [...bnd, ...(nbs ?? []).flatMap((n) => n.footprint)]
+      const xs = framePts.map((p) => p.x), zs = framePts.map((p) => p.z)
       const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs), mh, 10)
       orbit.target.set(c.x, mh * 0.4, c.z)
       orbit.radius = span * 1.7
@@ -219,7 +232,7 @@ export function SiteZoningViewer({
       window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); mount.removeEventListener('keydown', onKeyDown)
       clear()
       ground.geometry.dispose(); (ground.material as THREE.Material).dispose()
-      ;[envMat, greenMat, redMat].forEach((m) => m.dispose())
+      ;[envMat, greenMat, redMat, nbMat].forEach((m) => m.dispose())
       renderer.dispose(); if (el.parentNode === mount) mount.removeChild(el)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

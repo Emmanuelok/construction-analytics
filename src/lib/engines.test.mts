@@ -63,9 +63,9 @@ import { meshBoxes, detectClashes, detectClashesMeshes, meshHitsBox, geometryTak
 import { buildBcf, makeZip, bcfTopicCount } from './bcf.ts'
 import { buildZoning, insetPolygon, insetPolygonEdges, classifyEdges, polygonArea, polygonPerimeter, polygonCentroid, scalePolygon, parseGeoBoundary, rectSite } from './zoning.ts'
 import { castShadow, shadowStudy, convexHull } from './shadow.ts'
-import { sunDirection } from './sun.ts'
+import { defaultNeighbours, overshadowing, overshadowingCsv } from './context-shadow.ts'
 import { ZONING_PRESETS, presetById, normaliseMix } from './zoning-presets.ts'
-import { maximizeScheme } from './zoning-optimize.ts'
+import { maximizeScheme, maximizeValue } from './zoning-optimize.ts'
 import { feasibility, feasibilityWaterfall, feasibilityCsv, DEFAULT_RATES } from './feasibility.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
@@ -1856,6 +1856,37 @@ section('shadow')
   const study = shadowStudy(fp, 50, { lat: 40.7, lng: -74, month: 12 })
   ok('the study runs three solar moments with a worst-case reach + net area', study.moments.length === 3 && study.maxReach > 0 && study.netShadowArea > 0 && study.moments.every((m) => m.shadow.polygon.length >= 3))
   ok('winter shadows are longer than summer (lower sun)', shadowStudy(fp, 50, { lat: 40.7, lng: -74, month: 12 }).maxReach > shadowStudy(fp, 50, { lat: 40.7, lng: -74, month: 6 }).maxReach)
+}
+
+// ── context-shadow (neighbours + overshadowing / sun-hours) ──────────────────────
+section('context-shadow')
+{
+  const site = rectSite(40, 30)
+  const nb = defaultNeighbours(site, 8, 24)
+  ok('a default context ring places four neighbours around the site bbox', nb.length === 4 && nb.every((n) => n.footprint.length === 4 && n.height > 0) && nb.some((n) => /North/.test(n.name)))
+  ok('neighbours sit outside the parcel (north lot is north of the site)', (() => { const n = nb.find((x) => x.id === 'n-n')!; return Math.min(...n.footprint.map((p) => p.z)) >= 15 - 1e-6 })())
+  // a tall mass in winter (low sun) shades the north neighbour more than the south
+  const fp = rectSite(30, 20)
+  const winter = overshadowing(fp, 60, nb, { lat: 40.7, lng: -74, month: 12 })
+  ok('overshadowing reports per-neighbour coverage + sun-hours', winter.neighbours.length === 4 && winter.neighbours.every((n) => n.worstCoverage >= 0 && n.worstCoverage <= 100 && n.sunHours >= 0 && n.byMoment.length === 3))
+  ok('the north neighbour is shaded more than the south (sun is to the south)', winter.neighbours.find((n) => n.id === 'n-n')!.worstCoverage >= winter.neighbours.find((n) => n.id === 'n-s')!.worstCoverage)
+  ok('a taller proposal overshadows more than a short one', overshadowing(fp, 90, nb, { lat: 40.7, lng: -74, month: 12 }).totalShadedArea >= winter.totalShadedArea)
+  ok('winter midday shades the north neighbour far more than summer (lower sun)', winter.neighbours.find((n) => n.id === 'n-n')!.worstCoverage > overshadowing(fp, 60, nb, { lat: 40.7, lng: -74, month: 6 }).neighbours.find((n) => n.id === 'n-n')!.worstCoverage)
+  ok('a worst-neighbour + total shaded area are surfaced', !!winter.worstNeighbour && winter.worstNeighbour !== '—' && winter.totalShadedArea >= 0)
+  ok('overshadowing CSV lists every neighbour + a total', (() => { const c = overshadowingCsv(winter); return c.split('\n').length === nb.length + 2 && /Worst shadow %/.test(c) && /North neighbour/.test(c) })())
+}
+
+// ── zoning value-optimal massing (maximise residual land value) ──────────────────
+section('zoning-value')
+{
+  const site = rectSite(50, 36) // 1800 m²
+  const rules = { boundary: site, far: 6, heightLimit: 80, setback: 5, maxCoverage: 70, storeyHeight: 3.5, podium: 0, towerSetback: 0, skyBase: 0, skyStep: 0 }
+  const v = maximizeValue(rules, { mix: { residential: 0.6, office: 0.25, retail: 0.15 }, investmentYield: 0.06, targetMarginPct: 18 })
+  ok('the value optimiser returns a compliant scheme + the best residual land value', v.proposedGFA > 0 && v.residualLandValue > 0 && v.perStorey.length > 1)
+  ok('the chosen storey count has the max RLV of the compliant options', (() => { const best = v.perStorey.filter((s) => s.compliant).reduce((m, s) => (s.rlv > m.rlv ? s : m)); return best.storeys === v.proposedStoreys && best.rlv === v.residualLandValue })())
+  ok('every per-storey row carries gfa + rlv + a compliance flag', v.perStorey.every((s) => s.gfa >= 0 && typeof s.rlv === 'number' && typeof s.compliant === 'boolean'))
+  ok('the optimum never breaches the height limit', v.proposedStoreys * rules.storeyHeight <= rules.heightLimit + 1e-6)
+  ok('a richer all-residential mix at premium prices shifts the optimum', (() => { const v2 = maximizeValue(rules, { mix: { residential: 1, office: 0, retail: 0 }, targetMarginPct: 18 }); return v2.residualLandValue !== v.residualLandValue })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────
