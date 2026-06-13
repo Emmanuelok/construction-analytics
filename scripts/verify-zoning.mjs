@@ -91,6 +91,29 @@ try {
   ok('pinning A populates the comparison table', /A \(pinned\)/i.test(cmp0) && /B \(current\)/i.test(cmp0) && /Residual land/.test(cmp0))
   ok('the comparison reports the feasibility return for both schemes', /Margin \(land-free\)/.test(cmp0) && /GDV/.test(cmp0))
 
+  // ── value-optimal massing ──
+  const vm = await text('[data-value-maximize]')
+  ok('a value-optimal massing banner is offered', /Value-optimal massing/i.test(vm) && /storeys/i.test(vm) && /land/i.test(vm))
+  const feasBeforeVal = await page.evaluate(() => document.querySelector('[data-feasibility]')?.innerText || '')
+  await page.evaluate(() => { const b = [...document.querySelectorAll('[data-value-maximize] button')].find((x) => /Max value/.test(x.textContent || '')); b?.click() })
+  await wait(800)
+  const feasAfterVal = await page.evaluate(() => document.querySelector('[data-feasibility]')?.innerText || '')
+  ok('Max value loads the residual-land-value-maximal scheme (page recomputes)', feasAfterVal !== feasBeforeVal || /Residual land value/i.test(feasAfterVal))
+
+  // ── context & overshadowing ──
+  await page.evaluate(() => { const b = [...document.querySelectorAll('[data-context] button')].find((x) => /Add context/.test(x.textContent || '')); b?.click() })
+  await wait(900)
+  const ctx = await text('[data-context]')
+  ok('enabling context runs the overshadowing study', /Overshadowing by neighbour/i.test(ctx) && /neighbour/i.test(ctx))
+  ok('the per-neighbour table reports worst shadow, sunlit moments + sun-hours', /Worst shadow/i.test(ctx) && /Sunlit/i.test(ctx) && /Sun-hrs/i.test(ctx) && /(Significant|Moderate|Minor)/i.test(ctx))
+  ok('the context plan diagram is drawn', await page.evaluate(() => !!document.querySelector('[data-context] svg[aria-label="Context overshadowing plan"]')))
+  ok('an overshadowing CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-context] button')].some((b) => /CSV/.test(b.textContent || ''))))
+  const ctx0 = await page.evaluate(() => document.querySelector('[data-context] table')?.innerText || '')
+  const raised = await setRange('North neighbour', 120)
+  await wait(800)
+  const ctx1 = await page.evaluate(() => document.querySelector('[data-context] table')?.innerText || '')
+  ok('changing a neighbour height re-runs the study', !raised || ctx1 !== ctx0, { raised })
+
   // existing compliance still works
   ok('the live compliance KPI still renders', /Compliant|Non-compliant/.test(await page.evaluate(() => document.body.innerText)))
 

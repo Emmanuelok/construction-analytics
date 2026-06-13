@@ -1,9 +1,9 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
-import { formatNumber } from '@/lib/format'
+import { formatNumber, formatCurrency } from '@/lib/format'
 import { PolygonEditor } from '@/components/PolygonEditor'
 import { ScrollableTable } from '@/components/ScrollableTable'
 import { downloadText } from '@/lib/download'
@@ -14,10 +14,10 @@ import {
 } from '@/lib/zoning'
 import { analyzeSite, siteSurvey, compass, type LatLng, type SiteSurvey } from '@/lib/geo'
 import { ZONING_PRESETS, presetById, type ProgrammeMix } from '@/lib/zoning-presets'
-import { maximizeScheme } from '@/lib/zoning-optimize'
+import { maximizeScheme, maximizeValue } from '@/lib/zoning-optimize'
 import { feasibility, feasibilityWaterfall, feasibilityCsv, DEFAULT_RATES, type Use, type Feasibility } from '@/lib/feasibility'
 import { shadowStudy } from '@/lib/shadow'
-import { formatCurrency } from '@/lib/format'
+import { defaultNeighbours, overshadowing, overshadowingCsv, type Neighbour, type ContextStudy } from '@/lib/context-shadow'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
 const SiteZoningViewer = lazy(() => import('@/components/SiteZoningViewer').then((m) => ({ default: m.SiteZoningViewer })))
@@ -63,6 +63,8 @@ export default function SiteZoning() {
   const [rearSb, setRearSb] = useState(8)
   const [shadowMonth, setShadowMonth] = useState(6)
   const [schemeA, setSchemeA] = useState<null | { label: string; gfa: number; storeys: number; height: number; compliant: boolean; gdv: number; rlv: number; margin: number }>(null)
+  const [neighbours, setNeighbours] = useState<Neighbour[] | null>(null) // null = auto from boundary
+  const [contextOn, setContextOn] = useState(false)
   // apply a zoning district: load its rules + programme split
   const applyPreset = (id: string) => {
     const p = presetById(id); if (!p) return
@@ -94,6 +96,11 @@ export default function SiteZoning() {
   // development feasibility / residual-land pro forma
   const feas = useMemo(() => feasibility({ gfa: proposedGFA, mix, siteArea: z.siteArea, buildableArea: z.buildableArea, investmentYield: investYield / 100, targetMarginPct: targetMargin }), [proposedGFA, mix, z.siteArea, z.buildableArea, investYield, targetMargin])
   const shadow = useMemo(() => (footprintPoly.length >= 3 ? shadowStudy(footprintPoly, z.proposed.height, { lat: anchor.lat, lng: anchor.lng, month: shadowMonth }) : null), [footprintPoly, z.proposed.height, anchor.lat, anchor.lng, shadowMonth])
+  const nbList = useMemo(() => neighbours ?? defaultNeighbours(boundary, 8, 24), [neighbours, boundary])
+  const context = useMemo(() => (contextOn && footprintPoly.length >= 3 ? overshadowing(footprintPoly, z.proposed.height, nbList, { lat: anchor.lat, lng: anchor.lng, month: shadowMonth }) : null), [contextOn, footprintPoly, z.proposed.height, nbList, anchor.lat, anchor.lng, shadowMonth])
+  const valueOpt = useMemo(() => maximizeValue({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, setbacks: perEdge ? { front: frontSb, side: sideSb, rear: rearSb } : undefined }, { mix, investmentYield: investYield / 100, targetMarginPct: targetMargin }), [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, perEdge, frontSb, sideSb, rearSb, mix, investYield, targetMargin])
+  const maximizeValueScheme = () => { setProposedGFA(valueOpt.proposedGFA); setProposedStoreys(valueOpt.proposedStoreys) }
+  const setNbHeight = (id: string, h: number) => setNeighbours(nbList.map((n) => (n.id === id ? { ...n, height: h } : n)))
   const pinA = () => setSchemeA({ label: 'A', gfa: Math.round(proposedGFA), storeys: proposedStoreys, height: Math.round(z.proposed.height), compliant: z.compliance.overall, gdv: feas.gdv, rlv: feas.residualLandValue, margin: feas.marginOnCost })
   const schemeB = { label: 'B', gfa: Math.round(proposedGFA), storeys: proposedStoreys, height: Math.round(z.proposed.height), compliant: z.compliance.overall, gdv: feas.gdv, rlv: feas.residualLandValue, margin: feas.marginOnCost }
 
@@ -102,7 +109,7 @@ export default function SiteZoning() {
     setMaxCoverage(DEFAULTS.maxCoverage); setStoreyHeight(DEFAULTS.storeyHeight); setProposedGFA(DEFAULTS.proposedGFA)
     setProposedStoreys(DEFAULTS.proposedStoreys); setPodium(DEFAULTS.podium); setTowerSetback(DEFAULTS.towerSetback)
     setSkyBase(DEFAULTS.skyBase); setSkyStep(DEFAULTS.skyStep); setGeoText(''); setGeoError(null)
-    setPresetId(''); setMix({ residential: 0.6, office: 0.25, retail: 0.15 }); setTargetMargin(18); setInvestYield(6); setPerEdge(false); setFrontSb(6); setSideSb(4); setRearSb(8); setShadowMonth(6); setSchemeA(null)
+    setPresetId(''); setMix({ residential: 0.6, office: 0.25, retail: 0.15 }); setTargetMargin(18); setInvestYield(6); setPerEdge(false); setFrontSb(6); setSideSb(4); setRearSb(8); setShadowMonth(6); setSchemeA(null); setNeighbours(null); setContextOn(false)
   }
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
@@ -167,7 +174,7 @@ export default function SiteZoning() {
           <CardHeader icon={MapIcon} accent={ACC} title="Massing envelope" subtitle="White = boundary · amber dashed = setback · blue = legal envelope (stepped at the sky plane) · solid = proposed podium + tower (green fits, red busts)" />
           <div className="border-t border-edge/50">
             <Suspense fallback={<div style={{ height: 460 }} className="grid place-items-center text-sm text-slate-500">Loading 3D model…</div>}>
-              <SiteZoningViewer boundary={boundary} buildable={z.buildable} maxHeight={z.maxHeight} tiers={z.tiers} envelopeTiers={z.envelopeTiers} proposedHeight={z.proposed.height} compliant={z.compliance.overall} height={460} />
+              <SiteZoningViewer boundary={boundary} buildable={z.buildable} maxHeight={z.maxHeight} tiers={z.tiers} envelopeTiers={z.envelopeTiers} proposedHeight={z.proposed.height} compliant={z.compliance.overall} neighbours={contextOn ? nbList : []} height={460} />
             </Suspense>
             <p className="border-t border-edge/50 px-4 py-2 text-[11px] text-slate-500">Drag or arrow-keys to orbit · scroll to zoom. The proposed mass is sized to its footprint (GFA ÷ storeys) and nested in the setback line.</p>
           </div>
@@ -191,6 +198,13 @@ export default function SiteZoning() {
                 <div className="truncate text-[11px] text-slate-400">{formatNumber(optimum.proposedGFA)} m² · {optimum.proposedStoreys} storeys · binds on <span className="text-teal-200">{optimum.binding}</span></div>
               </div>
               <button onClick={maximize} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-teal-500/20 px-2.5 py-1 text-xs font-medium text-teal-100 ring-1 ring-inset ring-teal-500/40 hover:bg-teal-500/30"><Wand2 className="h-3.5 w-3.5" /> Maximize</button>
+            </div>
+            <div data-value-maximize className="flex items-center justify-between gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/[0.06] px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-emerald-100">Value-optimal massing</div>
+                <div className="truncate text-[11px] text-slate-400">{formatNumber(valueOpt.proposedGFA)} m² · {valueOpt.proposedStoreys} storeys · land {formatCurrency(valueOpt.residualLandValue, { compact: true })}</div>
+              </div>
+              <button onClick={maximizeValueScheme} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-500/20 px-2.5 py-1 text-xs font-medium text-emerald-100 ring-1 ring-inset ring-emerald-500/40 hover:bg-emerald-500/30"><TrendingUp className="h-3.5 w-3.5" /> Max value</button>
             </div>
             <div>
               <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">Site boundary — draw your own</div>
@@ -518,6 +532,76 @@ export default function SiteZoning() {
         </Card>
       )}
 
+      {/* context & overshadowing — neighbouring buildings */}
+      <Card data-context>
+        <CardHeader
+          icon={Building} accent="sky" title="Context & overshadowing — neighbours"
+          subtitle="Drop a ring of neighbouring buildings around the parcel and measure how much the proposed mass shades them through the day — worst-moment shadow coverage, sunlit moments kept, and a sun-hours-retained proxy per neighbour. Right-to-light, in context. Set each neighbour's height and the study re-runs live."
+          action={
+            <button onClick={() => setContextOn((v) => !v)} aria-pressed={contextOn} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset', contextOn ? 'bg-sky-500/20 text-sky-100 ring-sky-500/40 hover:bg-sky-500/30' : 'bg-elevated/60 text-slate-300 ring-edge/70 hover:text-white')}>
+              <Building className="h-3.5 w-3.5" /> {contextOn ? 'Context on' : 'Add context'}
+            </button>
+          }
+        />
+        {contextOn && context ? (
+          <>
+            <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-4">
+              <Metric label="Neighbours" value={String(context.neighbours.length)} sub="context lots" />
+              <Metric label="Worst affected" value={context.worstNeighbour} sub={`${Math.max(0, ...context.neighbours.map((n) => n.worstCoverage))}% shaded`} />
+              <Metric label="Total shaded" value={`${formatNumber(context.totalShadedArea)} m²`} sub="at each worst moment" />
+              <Metric label="Study month" value={shadowMonth === 6 ? 'June (summer)' : shadowMonth === 12 ? 'Dec (winter)' : 'Equinox'} sub="solar path" />
+            </div>
+            <div className="grid gap-4 border-t border-edge/50 p-5 lg:grid-cols-2">
+              <ContextDiagram boundary={boundary} footprint={footprintPoly} neighbours={nbList} study={context} shadows={shadow ? shadow.moments.map((m) => m.shadow.polygon) : []} />
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Neighbour heights</div>
+                  <button onClick={() => setNeighbours(null)} className="text-[11px] text-slate-400 hover:text-white">Reset to auto</button>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {nbList.map((nb) => (
+                    <Range key={nb.id} label={nb.name} unit="m" value={nb.height} min={3} max={120} step={3} onChange={(v) => setNbHeight(nb.id, v)} />
+                  ))}
+                </div>
+                <p className="text-[11px] leading-relaxed text-slate-500">Heights drive the grey context blocks in the 3D model above. Each footprint is sampled on a grid against the proposal's cast shadow at 09:00 / noon / 15:00 — worst shadow is the peak coverage across those moments; sun-hours is a proxy from the share of moments the neighbour's centre stays sunlit (× a 10h day). Change the month in the shadow card to test winter, the binding case for right-to-light.</p>
+              </div>
+            </div>
+            <div className="border-t border-edge/50 p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Overshadowing by neighbour</div>
+                <button onClick={() => downloadText('site-overshadowing.csv', overshadowingCsv(context), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>
+              </div>
+              <ScrollableTable label="Overshadowing by neighbour">
+                <table className="w-full min-w-[560px] text-left text-sm">
+                  <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Neighbour', 'Height (m)', 'Area (m²)', 'Worst shadow', 'Avg', 'Sunlit', 'Sun-hrs', 'Verdict'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && i <= 6 && 'text-right')}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {context.neighbours.map((n) => {
+                      const v = n.worstCoverage >= 50 ? { t: 'Significant', b: 'danger' as const } : n.worstCoverage >= 20 ? { t: 'Moderate', b: 'warn' as const } : { t: 'Minor', b: 'success' as const }
+                      return (
+                        <tr key={n.id} className="border-b border-edge/30 hover:bg-elevated/40">
+                          <td className="px-3 py-1.5 font-medium text-slate-200">{n.name}</td>
+                          <td className="data-mono px-3 py-1.5 text-right text-slate-300">{n.height}</td>
+                          <td className="data-mono px-3 py-1.5 text-right text-slate-400">{formatNumber(n.area)}</td>
+                          <td className="data-mono px-3 py-1.5 text-right text-slate-200">{n.worstCoverage}%</td>
+                          <td className="data-mono px-3 py-1.5 text-right text-slate-400">{n.avgCoverage}%</td>
+                          <td className="data-mono px-3 py-1.5 text-right text-slate-400">{n.sunlitMoments}/{n.totalMoments}</td>
+                          <td className="data-mono px-3 py-1.5 text-right text-slate-300">{n.sunHours}</td>
+                          <td className="px-3 py-1.5"><Badge variant={v.b}>{v.t}</Badge></td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </ScrollableTable>
+            </div>
+          </>
+        ) : (
+          <div className="border-t border-edge/50 p-5">
+            <p className="grid h-24 place-items-center text-center text-sm text-slate-500">No context yet —<button onClick={() => setContextOn(true)} className="mx-1 text-sky-300 hover:underline">add a ring of neighbours</button>to study how the proposed mass overshadows them through the day.</p>
+          </div>
+        )}
+      </Card>
+
       {/* A/B scheme comparison */}
       <Card data-compare>
         <CardHeader
@@ -679,6 +763,43 @@ function ShadowDiagram({ footprint, shadow }: { footprint: Pt[]; shadow: Pt[] })
     <svg viewBox={`0 0 ${W} ${H}`} className="h-28 w-full rounded-lg bg-[#0a0f1c]" role="img" aria-label="Shadow cast diagram">
       <polygon points={shadow.map(map).join(' ')} fill="#1e293b" stroke="#475569" strokeWidth={1} />
       <polygon points={footprint.map(map).join(' ')} fill="#f59e0b55" stroke="#f59e0b" strokeWidth={1.2} />
+    </svg>
+  )
+}
+
+/* Context plan: site + neighbours (tinted by worst overshadowing) under the day's
+ * cast shadows (layered, so overlaps darken) + the proposed footprint. */
+function ContextDiagram({ boundary, footprint, neighbours, study, shadows }: { boundary: Pt[]; footprint: Pt[]; neighbours: Neighbour[]; study: ContextStudy; shadows: Pt[][] }) {
+  const all = [...boundary, ...footprint, ...neighbours.flatMap((n) => n.footprint), ...shadows.flat()]
+  if (all.length < 3) return <div className="grid h-64 place-items-center rounded-xl bg-[#0a0f1c] text-[11px] text-slate-600">no context</div>
+  const xs = all.map((p) => p.x), zs = all.map((p) => p.z)
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs)
+  const W = 480, H = 360, pad = 22
+  const s = Math.min((W - pad * 2) / Math.max(1, maxX - minX), (H - pad * 2) / Math.max(1, maxZ - minZ))
+  const ox = (W - (maxX - minX) * s) / 2, oz = (H - (maxZ - minZ) * s) / 2
+  const map = (p: Pt) => `${(ox + (p.x - minX) * s).toFixed(1)},${(oz + (maxZ - p.z) * s).toFixed(1)}` // z up → screen up
+  const cov = (id: string) => study.neighbours.find((n) => n.id === id)?.worstCoverage ?? 0
+  const tint = (c: number) => (c >= 50 ? '#ef4444' : c >= 20 ? '#f59e0b' : '#64748b')
+  const centre = (pts: Pt[]) => ({ x: pts.reduce((a, p) => a + p.x, 0) / pts.length, z: pts.reduce((a, p) => a + p.z, 0) / pts.length })
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full rounded-xl" role="img" aria-label="Context overshadowing plan">
+      <rect x={0} y={0} width={W} height={H} fill="#0a0f1c" rx={10} />
+      {shadows.map((sh, i) => sh.length >= 3 && <polygon key={i} points={sh.map(map).join(' ')} fill="#38bdf8" fillOpacity={0.1} stroke="#38bdf8" strokeOpacity={0.18} strokeWidth={0.8} />)}
+      {neighbours.map((nb) => {
+        const c = cov(nb.id), col = tint(c), m = centre(nb.footprint)
+        return (
+          <g key={nb.id}>
+            <polygon points={nb.footprint.map(map).join(' ')} fill={col} fillOpacity={0.28} stroke={col} strokeWidth={1.2} />
+            <text x={ox + (m.x - minX) * s} y={oz + (maxZ - m.z) * s} fontSize={10} fill="#e2e8f0" textAnchor="middle" dominantBaseline="middle">{c}%</text>
+          </g>
+        )
+      })}
+      <polygon points={boundary.map(map).join(' ')} fill="none" stroke="#e2e8f0" strokeWidth={1.4} strokeDasharray="2 3" />
+      {footprint.length >= 3 && <polygon points={footprint.map(map).join(' ')} fill="#14b8a6" fillOpacity={0.55} stroke="#2dd4bf" strokeWidth={1.5} />}
+      <g fontSize={10} fill="#94a3b8">
+        <text x={12} y={H - 24}>▣ <tspan fill="#2dd4bf">Proposed</tspan> · ▢ <tspan fill="#e2e8f0">Site</tspan> · <tspan fill="#38bdf8">day shadow</tspan></text>
+        <text x={12} y={H - 10}>Neighbour shading: <tspan fill="#64748b">minor</tspan> · <tspan fill="#f59e0b">moderate</tspan> · <tspan fill="#ef4444">significant</tspan></text>
+      </g>
     </svg>
   )
 }

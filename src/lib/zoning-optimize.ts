@@ -58,3 +58,41 @@ export function maximizeScheme(rules: Rules, opts: { maxStoreys?: number } = {})
   else { best.binding = 'None'; best.bindingNote = 'The scheme reaches the FAR within all other limits.' }
   return best
 }
+
+import { feasibility, type ProgrammeMix } from './feasibility'
+
+export type ValueOptimum = {
+  proposedGFA: number
+  proposedStoreys: number
+  residualLandValue: number
+  perStorey: { storeys: number; gfa: number; rlv: number; compliant: boolean }[]
+  note: string
+}
+
+/** Value-optimal massing: among the compliant storey counts, the one whose
+ *  development pro forma yields the highest residual land value (developers
+ *  maximise value, not just GFA — a tall slim tower can beat a fatter low one,
+ *  or vice-versa, depending on rates). Reuses the same compliance + feasibility. */
+export function maximizeValue(
+  rules: Rules,
+  feasInput: { mix: ProgrammeMix; investmentYield?: number; targetMarginPct?: number },
+  opts: { maxStoreys?: number } = {},
+): ValueOptimum {
+  const maxStoreys = opts.maxStoreys ?? Math.max(1, Math.floor((rules.heightLimit ?? 60) / Math.max(2, rules.storeyHeight ?? 3.6)))
+  const perStorey: ValueOptimum['perStorey'] = []
+  let best: { storeys: number; gfa: number; rlv: number } | null = null
+  for (let storeys = 1; storeys <= maxStoreys; storeys++) {
+    if (storeys * rules.storeyHeight > rules.heightLimit + 1e-6) break
+    const probe = buildZoning({ ...rules, proposedGFA: rules.far * 1e9, proposedStoreys: storeys })
+    const gfa = Math.min(probe.maxGFA, probe.maxFootprint * storeys)
+    if (gfa <= 0) continue
+    const z = buildZoning({ ...rules, proposedGFA: gfa, proposedStoreys: storeys })
+    const compliant = z.compliance.overall
+    const f = feasibility({ gfa, mix: feasInput.mix, siteArea: z.siteArea, buildableArea: z.buildableArea, investmentYield: feasInput.investmentYield, targetMarginPct: feasInput.targetMarginPct })
+    perStorey.push({ storeys, gfa: Math.round(gfa), rlv: f.residualLandValue, compliant })
+    if (compliant && (!best || f.residualLandValue > best.rlv)) best = { storeys, gfa: Math.round(gfa), rlv: f.residualLandValue }
+  }
+  if (!best) return { proposedGFA: 0, proposedStoreys: 1, residualLandValue: 0, perStorey, note: 'No compliant scheme fits the zoning.' }
+  const note = `${best.storeys} storeys (${best.gfa.toLocaleString()} m²) yields the highest residual land value of the compliant options.`
+  return { proposedGFA: best.gfa, proposedStoreys: best.storeys, residualLandValue: best.rlv, perStorey, note }
+}
