@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
@@ -20,6 +20,7 @@ import { shadowStudy } from '@/lib/shadow'
 import { defaultNeighbours, overshadowing, overshadowingCsv, type Neighbour, type ContextStudy } from '@/lib/context-shadow'
 import { appraise, quarterly, appraisalCsv } from '@/lib/appraisal'
 import { tornado, dataTable, scenarios, sensitivityCsv, METRIC_LABEL, type Metric, type ScenarioBase, type TornadoBar, type DataTable as SensDataTable } from '@/lib/sensitivity'
+import { accommodation, accommodationCsv, DEFAULT_UNIT_TYPES, type UnitMix } from '@/lib/unit-mix'
 import { LineTrend } from '@/components/charts'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
@@ -78,6 +79,7 @@ export default function SiteZoning() {
   const [landPrice, setLandPrice] = useState(12_000_000)
   const [sensMetric, setSensMetric] = useState<Metric>('profit')
   const [sensSwing, setSensSwing] = useState(0.1)
+  const [unitMix, setUnitMix] = useState<UnitMix>({ studio: 0.1, '1b': 0.4, '2b': 0.4, '3b': 0.1 })
   // apply a zoning district: load its rules + programme split
   const applyPreset = (id: string) => {
     const p = presetById(id); if (!p) return
@@ -108,6 +110,9 @@ export default function SiteZoning() {
   const maximize = () => { setProposedGFA(optimum.proposedGFA); setProposedStoreys(optimum.proposedStoreys) }
   // development feasibility / residual-land pro forma
   const feas = useMemo(() => feasibility({ gfa: proposedGFA, mix, siteArea: z.siteArea, buildableArea: z.buildableArea, investmentYield: investYield / 100, targetMarginPct: targetMargin }), [proposedGFA, mix, z.siteArea, z.buildableArea, investYield, targetMargin])
+  // accommodation schedule — refine the residential line into a typed unit mix
+  const residentialNet = useMemo(() => feas.lines.find((l) => l.use === 'residential')?.net ?? 0, [feas])
+  const accom = useMemo(() => accommodation({ residentialNet, mix: unitMix, basePricePerM2: DEFAULT_RATES.residential.salePrice, siteAreaM2: z.siteArea }), [residentialNet, unitMix, z.siteArea])
   // development cashflow appraisal — phase the static pro forma over a programme
   const saleRevenue = useMemo(() => feas.lines.filter((l) => l.tenure === 'sale').reduce((s, l) => s + l.revenue, 0), [feas])
   const investmentRevenue = useMemo(() => feas.lines.filter((l) => l.tenure === 'investment').reduce((s, l) => s + l.revenue, 0), [feas])
@@ -139,7 +144,7 @@ export default function SiteZoning() {
     setSkyBase(DEFAULTS.skyBase); setSkyStep(DEFAULTS.skyStep); setGeoText(''); setGeoError(null)
     setPresetId(''); setMix({ residential: 0.6, office: 0.25, retail: 0.15 }); setTargetMargin(18); setInvestYield(6); setPerEdge(false); setFrontSb(6); setSideSb(4); setRearSb(8); setShadowMonth(6); setSchemeA(null); setNeighbours(null); setContextOn(false)
     setPreMonths(6); setConstructionMonths(24); setSaleMonths(12); setFacilityRate(7.5); setDiscountRate(10); setUseResidualLand(true); setLandPrice(12_000_000)
-    setSensMetric('profit'); setSensSwing(0.1)
+    setSensMetric('profit'); setSensSwing(0.1); setUnitMix({ studio: 0.1, '1b': 0.4, '2b': 0.4, '3b': 0.1 })
   }
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
@@ -527,6 +532,72 @@ export default function SiteZoning() {
             </table>
           </ScrollableTable>
           <p className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-500"><Car className="h-3.5 w-3.5 shrink-0" /> {formatNumber(feas.parkingBays)} parking bays required from the programme ({formatCurrency(feas.parking, { compact: true })}). Default rates: resi ${DEFAULT_RATES.residential.buildCost}/m² build · ${DEFAULT_RATES.residential.salePrice}/m² sale; office/retail capitalised at {investYield}%. Tune the mix, margin and yield above.</p>
+        </div>
+      </Card>
+
+      {/* accommodation schedule — unit mix */}
+      <Card data-accommodation>
+        <CardHeader
+          icon={Home} accent="cyan" title="Accommodation schedule — unit mix"
+          subtitle="The residential floorspace broken into a typed dwelling mix — studio / 1–3 bed — solved so the integer unit counts fill the net area. Reports the planning numbers a submission needs: bed spaces, habitable rooms, average dwelling size, density per hectare and a blended sales rate. Tune the mix and the schedule re-solves."
+          action={<button onClick={() => downloadText('site-accommodation.csv', accommodationCsv(accom), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-6">
+          <Metric label="Dwellings" value={formatNumber(accom.totalUnits)} sub={`${formatNumber(accom.totalNet)} m² net`} />
+          <Metric label="Avg size" value={`${accom.avgSize} m²`} sub="net per dwelling" />
+          <Metric label="Bed spaces" value={formatNumber(accom.bedSpaces)} sub="design occupancy" />
+          <Metric label="Habitable rooms" value={formatNumber(accom.habitableRooms)} sub={`${accom.densityHrPerHa}/ha`} />
+          <Metric label="Density" value={`${accom.densityUnitsPerHa}`} sub="dwellings/ha" />
+          <Metric label="Blended rate" value={`$${formatNumber(accom.blendedPricePerM2)}`} sub="per m² net" />
+        </div>
+        <div className="grid gap-5 border-t border-edge/50 p-5 lg:grid-cols-2">
+          <div className="space-y-3">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Mix by dwelling count</div>
+            {DEFAULT_UNIT_TYPES.map((t) => (
+              <Range key={t.key} label={`${t.label} · ${t.size} m²`} value={unitMix[t.key] ?? 0} min={0} max={1} step={0.05} onChange={(v) => setUnitMix((m) => ({ ...m, [t.key]: v }))} fmt={(v) => `${Math.round(v * 100)}%`} />
+            ))}
+            <div className="mt-1 flex h-3 w-full overflow-hidden rounded-full ring-1 ring-inset ring-edge/50">
+              {accom.lines.map((l, i) => {
+                const cols = ['bg-cyan-500/70', 'bg-sky-500/70', 'bg-teal-500/70', 'bg-emerald-500/70']
+                const pct = accom.totalUnits > 0 ? (l.units / accom.totalUnits) * 100 : 0
+                return pct > 0 ? <div key={l.key} className={cols[i % cols.length]} style={{ width: `${pct}%` }} title={`${l.label}: ${l.units}`} /> : null
+              })}
+            </div>
+            <p className={cn('rounded-lg px-3 py-2 text-[12px] leading-relaxed ring-1 ring-inset', Math.abs(accom.reconciliation.variancePct) <= 3 ? 'bg-elevated/40 text-slate-400 ring-edge/50' : 'bg-amber-500/[0.06] text-amber-200 ring-amber-500/25')}>
+              Integer unit counts use {formatNumber(accom.reconciliation.usedNet)} m² of the {formatNumber(accom.reconciliation.targetNet)} m² residential net area ({accom.reconciliation.variancePct > 0 ? '+' : ''}{accom.reconciliation.variancePct}%). Smaller dwellings raise the count and the blended $/m²; family units cut density.
+            </p>
+          </div>
+          {/* schedule */}
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Schedule by type</div>
+            <ScrollableTable label="Accommodation schedule by type">
+              <table className="w-full min-w-[520px] text-left text-sm">
+                <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Type', 'Size', 'Mix', 'Units', 'Net', '$/m²', 'Revenue'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && 'text-right')}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {accom.lines.map((l) => (
+                    <tr key={l.key} className="border-b border-edge/30 hover:bg-elevated/40">
+                      <td className="px-3 py-1.5 font-medium text-slate-200">{l.label}</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-slate-400">{l.size} m²</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-slate-400">{Math.round(l.share * 100)}%</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-slate-200">{formatNumber(l.units)}</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(l.netArea)}</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-slate-400">${formatNumber(l.pricePerM2)}</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-emerald-300/90">{formatCurrency(l.revenue, { compact: true })}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t border-edge/60 font-medium">
+                    <td className="px-3 py-1.5 text-slate-200">Total</td>
+                    <td className="px-3 py-1.5" />
+                    <td className="px-3 py-1.5" />
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-100">{formatNumber(accom.totalUnits)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-100">{formatNumber(accom.totalNet)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">${formatNumber(accom.blendedPricePerM2)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-emerald-300">{formatCurrency(accom.revenue, { compact: true })}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </ScrollableTable>
+          </div>
         </div>
       </Card>
 

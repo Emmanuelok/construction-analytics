@@ -69,6 +69,7 @@ import { maximizeScheme, maximizeValue } from './zoning-optimize.ts'
 import { feasibility, feasibilityWaterfall, feasibilityCsv, DEFAULT_RATES } from './feasibility.ts'
 import { appraise, quarterly, appraisalCsv, irr } from './appraisal.ts'
 import { evaluate as evalScenario, tornado, dataTable, scenarios, sensitivityCsv, FACTORS } from './sensitivity.ts'
+import { accommodation, accommodationCsv, DEFAULT_UNIT_TYPES } from './unit-mix.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -1972,6 +1973,28 @@ section('sensitivity')
   ok('the base scenario matches a plain evaluate()', sc[1].result.profit === r.profit && sc[1].result.gdv === r.gdv)
   // csv
   ok('sensitivity CSV carries the tornado + scenario blocks', (() => { const c = sensitivityCsv(base, 'profit', 0.1); return /Sensitivity of Profit/.test(c) && /Driver,Low/.test(c) && /Scenario,GDV/.test(c) && /Downside/.test(c) })())
+}
+
+// ── unit mix & accommodation schedule ────────────────────────────────────────────
+section('unit-mix')
+{
+  const a = accommodation({ residentialNet: 10_000, mix: { studio: 0.1, '1b': 0.4, '2b': 0.4, '3b': 0.1 }, basePricePerM2: 6500, siteAreaM2: 5000 })
+  ok('a line per dwelling type', a.lines.length === DEFAULT_UNIT_TYPES.length)
+  ok('integer unit counts fill ~the residential net area', a.reconciliation.usedNet > 0 && Math.abs(a.reconciliation.variancePct) < 5)
+  ok('total units = sum of the typed counts', a.totalUnits === a.lines.reduce((s, l) => s + l.units, 0))
+  ok('the dominant mix shares carry the most units', (() => { const oneB = a.lines.find((l) => l.key === '1b'); const studio = a.lines.find((l) => l.key === 'studio'); return !!oneB && !!studio && oneB.units > studio.units })())
+  ok('smaller units fetch a higher $/m² (value factor)', (() => { const s = a.lines.find((l) => l.key === 'studio'); const t = a.lines.find((l) => l.key === '3b'); return !!s && !!t && s.pricePerM2 > t.pricePerM2 })())
+  ok('revenue = Σ units × size × $/m²', near(a.revenue, a.lines.reduce((s, l) => s + l.units * l.size * l.pricePerM2, 0), a.lines.length + 1))
+  ok('bed spaces & habitable rooms accumulate by occupancy', a.bedSpaces > a.totalUnits && a.habitableRooms >= a.totalUnits)
+  ok('average dwelling size sits between the smallest and largest type', a.avgSize >= 40 && a.avgSize <= 103)
+  ok('dwelling density is per hectare of site', near(a.densityUnitsPerHa, a.totalUnits / (5000 / 10000), 0.2))
+  ok('blended sales rate ≈ revenue ÷ net area', near(a.blendedPricePerM2, a.revenue / a.totalNet, 1))
+  // mix shifts move the schedule
+  ok('shifting the mix to family units lowers the unit count (bigger dwellings)', (() => { const fam = accommodation({ residentialNet: 10_000, mix: { studio: 0, '1b': 0, '2b': 0.3, '3b': 0.7 }, basePricePerM2: 6500 }); return fam.totalUnits < a.totalUnits })())
+  ok('an all-studio mix maximises the unit count', (() => { const st = accommodation({ residentialNet: 10_000, mix: { studio: 1, '1b': 0, '2b': 0, '3b': 0 }, basePricePerM2: 6500 }); return st.totalUnits > a.totalUnits && st.lines.find((l) => l.key === 'studio')?.units === st.totalUnits })())
+  ok('an empty mix normalises rather than dividing by zero', (() => { const z2 = accommodation({ residentialNet: 10_000, mix: {}, basePricePerM2: 6500 }); return Number.isFinite(z2.totalUnits) && z2.totalUnits >= 0 })())
+  ok('no site area → density is zero (not NaN)', accommodation({ residentialNet: 5000, mix: { '2b': 1 }, basePricePerM2: 6000 }).densityUnitsPerHa === 0)
+  ok('accommodation CSV carries the schedule + totals + metrics', (() => { const c = accommodationCsv(a); return /Type,Beds,Size/.test(c) && /TOTAL/.test(c) && /Dwelling density/.test(c) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────
