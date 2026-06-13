@@ -100,6 +100,24 @@ try {
   const feasAfterVal = await page.evaluate(() => document.querySelector('[data-feasibility]')?.innerText || '')
   ok('Max value loads the residual-land-value-maximal scheme (page recomputes)', feasAfterVal !== feasBeforeVal || /Residual land value/i.test(feasAfterVal))
 
+  // ── development cashflow appraisal (DCF) ──
+  const appr = await text('[data-appraisal]')
+  ok('a development cashflow appraisal card is present', /Development cashflow/i.test(appr) && /Profit/i.test(appr) && /Margin on cost/i.test(appr))
+  ok('the appraisal reports a project IRR, NPV and peak debt', /IRR \(project\)/i.test(appr) && /NPV/i.test(appr) && /Peak debt/i.test(appr) && /Break-even/i.test(appr))
+  ok('the quarterly cashflow table renders', /Quarterly cashflow/i.test(appr) && /Q1/.test(appr) && /Cumulative/i.test(appr))
+  ok('the cashflow J-curve chart is drawn', await page.evaluate(() => !!document.querySelector('[data-appraisal] svg')))
+  ok('an appraisal CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-appraisal] button')].some((b) => /CSV/.test(b.textContent || ''))))
+  const apprPeak0 = await page.evaluate(() => document.querySelector('[data-appraisal]')?.innerText || '')
+  await setRange('Facility interest rate', 0)
+  await wait(700)
+  const apprPeak1 = await page.evaluate(() => document.querySelector('[data-appraisal]')?.innerText || '')
+  ok('changing the facility rate re-runs the appraisal (interest/return move)', apprPeak1 !== apprPeak0)
+  const period0 = await page.evaluate(() => document.querySelector('[data-appraisal]')?.innerText || '')
+  await setRange('Construction', 40)
+  await wait(700)
+  const period1 = await page.evaluate(() => document.querySelector('[data-appraisal]')?.innerText || '')
+  ok('a longer construction programme lengthens the cashflow', period1 !== period0)
+
   // ── context & overshadowing ──
   await page.evaluate(() => { const b = [...document.querySelectorAll('[data-context] button')].find((x) => /Add context/.test(x.textContent || '')); b?.click() })
   await wait(900)

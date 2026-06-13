@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
@@ -18,6 +18,8 @@ import { maximizeScheme, maximizeValue } from '@/lib/zoning-optimize'
 import { feasibility, feasibilityWaterfall, feasibilityCsv, DEFAULT_RATES, type Use, type Feasibility } from '@/lib/feasibility'
 import { shadowStudy } from '@/lib/shadow'
 import { defaultNeighbours, overshadowing, overshadowingCsv, type Neighbour, type ContextStudy } from '@/lib/context-shadow'
+import { appraise, quarterly, appraisalCsv } from '@/lib/appraisal'
+import { LineTrend } from '@/components/charts'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
 const SiteZoningViewer = lazy(() => import('@/components/SiteZoningViewer').then((m) => ({ default: m.SiteZoningViewer })))
@@ -65,6 +67,14 @@ export default function SiteZoning() {
   const [schemeA, setSchemeA] = useState<null | { label: string; gfa: number; storeys: number; height: number; compliant: boolean; gdv: number; rlv: number; margin: number }>(null)
   const [neighbours, setNeighbours] = useState<Neighbour[] | null>(null) // null = auto from boundary
   const [contextOn, setContextOn] = useState(false)
+  // development cashflow appraisal (DCF) programme + finance
+  const [preMonths, setPreMonths] = useState(6)
+  const [constructionMonths, setConstructionMonths] = useState(24)
+  const [saleMonths, setSaleMonths] = useState(12)
+  const [facilityRate, setFacilityRate] = useState(7.5)
+  const [discountRate, setDiscountRate] = useState(10)
+  const [useResidualLand, setUseResidualLand] = useState(true)
+  const [landPrice, setLandPrice] = useState(12_000_000)
   // apply a zoning district: load its rules + programme split
   const applyPreset = (id: string) => {
     const p = presetById(id); if (!p) return
@@ -95,6 +105,15 @@ export default function SiteZoning() {
   const maximize = () => { setProposedGFA(optimum.proposedGFA); setProposedStoreys(optimum.proposedStoreys) }
   // development feasibility / residual-land pro forma
   const feas = useMemo(() => feasibility({ gfa: proposedGFA, mix, siteArea: z.siteArea, buildableArea: z.buildableArea, investmentYield: investYield / 100, targetMarginPct: targetMargin }), [proposedGFA, mix, z.siteArea, z.buildableArea, investYield, targetMargin])
+  // development cashflow appraisal — phase the static pro forma over a programme
+  const saleRevenue = useMemo(() => feas.lines.filter((l) => l.tenure === 'sale').reduce((s, l) => s + l.revenue, 0), [feas])
+  const investmentRevenue = useMemo(() => feas.lines.filter((l) => l.tenure === 'investment').reduce((s, l) => s + l.revenue, 0), [feas])
+  const appraisalLand = useResidualLand ? feas.residualLandValue : landPrice
+  const appraisal = useMemo(() => appraise({
+    saleRevenue, investmentRevenue,
+    costs: { construction: feas.construction, fees: feas.fees, contingency: feas.contingency, parking: feas.parking, demolition: feas.demolition, siteWorks: feas.siteWorks },
+    land: appraisalLand, programme: { preMonths, constructionMonths, saleMonths }, annualInterest: facilityRate / 100, discountRate: discountRate / 100,
+  }), [saleRevenue, investmentRevenue, feas.construction, feas.fees, feas.contingency, feas.parking, feas.demolition, feas.siteWorks, appraisalLand, preMonths, constructionMonths, saleMonths, facilityRate, discountRate])
   const shadow = useMemo(() => (footprintPoly.length >= 3 ? shadowStudy(footprintPoly, z.proposed.height, { lat: anchor.lat, lng: anchor.lng, month: shadowMonth }) : null), [footprintPoly, z.proposed.height, anchor.lat, anchor.lng, shadowMonth])
   const nbList = useMemo(() => neighbours ?? defaultNeighbours(boundary, 8, 24), [neighbours, boundary])
   const context = useMemo(() => (contextOn && footprintPoly.length >= 3 ? overshadowing(footprintPoly, z.proposed.height, nbList, { lat: anchor.lat, lng: anchor.lng, month: shadowMonth }) : null), [contextOn, footprintPoly, z.proposed.height, nbList, anchor.lat, anchor.lng, shadowMonth])
@@ -110,6 +129,7 @@ export default function SiteZoning() {
     setProposedStoreys(DEFAULTS.proposedStoreys); setPodium(DEFAULTS.podium); setTowerSetback(DEFAULTS.towerSetback)
     setSkyBase(DEFAULTS.skyBase); setSkyStep(DEFAULTS.skyStep); setGeoText(''); setGeoError(null)
     setPresetId(''); setMix({ residential: 0.6, office: 0.25, retail: 0.15 }); setTargetMargin(18); setInvestYield(6); setPerEdge(false); setFrontSb(6); setSideSb(4); setRearSb(8); setShadowMonth(6); setSchemeA(null); setNeighbours(null); setContextOn(false)
+    setPreMonths(6); setConstructionMonths(24); setSaleMonths(12); setFacilityRate(7.5); setDiscountRate(10); setUseResidualLand(true); setLandPrice(12_000_000)
   }
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
@@ -497,6 +517,80 @@ export default function SiteZoning() {
             </table>
           </ScrollableTable>
           <p className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-500"><Car className="h-3.5 w-3.5 shrink-0" /> {formatNumber(feas.parkingBays)} parking bays required from the programme ({formatCurrency(feas.parking, { compact: true })}). Default rates: resi ${DEFAULT_RATES.residential.buildCost}/m² build · ${DEFAULT_RATES.residential.salePrice}/m² sale; office/retail capitalised at {investYield}%. Tune the mix, margin and yield above.</p>
+        </div>
+      </Card>
+
+      {/* development cashflow appraisal (DCF) */}
+      <Card data-appraisal>
+        <CardHeader
+          icon={LineChart} accent="emerald" title="Development cashflow & returns (DCF)"
+          subtitle="The static pro forma phased over a development programme: land at close, construction spend on an S-curve, fees front-loaded, for-sale settlements on an absorption curve and the investment asset realised at stabilisation. A facility funds the negative cashflow with interest rolling up monthly — so the appraisal reports peak debt, the project NPV and IRR, not just a residual."
+          action={<button onClick={() => downloadText('site-appraisal.csv', appraisalCsv(appraisal), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-6">
+          <Metric label="Profit" value={formatCurrency(appraisal.profit, { compact: true })} sub={`${appraisal.profitOnGdv}% on GDV`} />
+          <Metric label="Margin on cost" value={`${appraisal.marginOnCost}%`} sub="incl. land + finance" />
+          <Metric label="IRR (project)" value={Number.isFinite(appraisal.irrAnnual) ? `${appraisal.irrAnnual}%` : 'n/a'} sub="annualised" />
+          <Metric label="NPV" value={formatCurrency(appraisal.npv, { compact: true })} sub={`at ${discountRate}% discount`} />
+          <Metric label="Peak debt" value={formatCurrency(appraisal.peakFunding, { compact: true })} sub={`month ${appraisal.peakFundingMonth} · ${formatCurrency(appraisal.totalInterest, { compact: true })} interest`} />
+          <Metric label="Break-even" value={appraisal.breakEvenMonth >= 0 ? `M${appraisal.breakEvenMonth}` : '—'} sub={`of ${appraisal.months} months`} />
+        </div>
+        <div className="grid gap-5 border-t border-edge/50 p-5 lg:grid-cols-2">
+          {/* programme + finance controls */}
+          <div className="space-y-3">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Programme &amp; finance</div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Range label="Pre-construction" unit="mo" value={preMonths} min={0} max={24} step={1} onChange={setPreMonths} />
+              <Range label="Construction" unit="mo" value={constructionMonths} min={6} max={48} step={1} onChange={setConstructionMonths} />
+              <Range label="Sales / lease-up" unit="mo" value={saleMonths} min={0} max={36} step={1} onChange={setSaleMonths} />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Range label="Facility interest rate" unit="%" value={facilityRate} min={0} max={18} step={0.25} onChange={setFacilityRate} fmt={(v) => v.toFixed(2)} />
+              <Range label="Discount rate" unit="%" value={discountRate} min={0} max={20} step={0.5} onChange={setDiscountRate} fmt={(v) => v.toFixed(1)} />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <input type="checkbox" checked={useResidualLand} onChange={(e) => setUseResidualLand(e.target.checked)} aria-label="Price land at the residual" className="h-4 w-4 rounded border-edge bg-elevated accent-emerald-500" />
+              Price land at the residual ({formatCurrency(feas.residualLandValue, { compact: true })})
+            </label>
+            {!useResidualLand && <Num label="Land price" unit="$" value={landPrice} step={250_000} onChange={setLandPrice} />}
+            <p className={cn('rounded-lg px-3 py-2 text-[13px] leading-relaxed ring-1 ring-inset', appraisal.profit > 0 ? 'bg-emerald-500/[0.06] text-slate-300 ring-emerald-500/25' : 'bg-rose-500/[0.06] text-rose-200 ring-rose-500/30')}>{appraisal.headline}</p>
+          </div>
+          {/* cashflow J-curve */}
+          <div>
+            <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500"><CalendarClock className="h-3.5 w-3.5" /> Cumulative cashflow vs outstanding debt</div>
+            <LineTrend
+              data={appraisal.rows.map((r) => ({ m: r.label, Cumulative: r.cumulative, Debt: Math.max(0, r.funding) }))}
+              xKey="m"
+              height={250}
+              series={[{ key: 'Cumulative', name: 'Cumulative cashflow', accent: 'emerald' }, { key: 'Debt', name: 'Outstanding debt', accent: 'rose' }]}
+              dashedKeys={['Debt']}
+              valueFormatter={(v) => formatCurrency(v, { compact: true })}
+            />
+            <p className="mt-1 text-[11px] text-slate-500">The cashflow dips into debt through construction (the J-curve) and recovers as sales settle and the asset is realised. Peak debt sets the facility size; the deeper and longer the valley, the more interest rolls up.</p>
+          </div>
+        </div>
+        {/* quarterly cashflow table */}
+        <div className="border-t border-edge/50 p-4">
+          <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Quarterly cashflow</div>
+          <ScrollableTable label="Quarterly development cashflow">
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Quarter', 'Cost out', 'Revenue in', 'Net', 'Cumulative', 'Interest', 'Debt'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && 'text-right')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {quarterly(appraisal).map((q) => (
+                  <tr key={q.label} className="border-b border-edge/30 hover:bg-elevated/40">
+                    <td className="px-3 py-1.5 font-medium text-slate-200">{q.label}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-400">{q.cost ? formatCurrency(q.cost, { compact: true }) : '—'}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-emerald-300/90">{q.revenue ? formatCurrency(q.revenue, { compact: true }) : '—'}</td>
+                    <td className={cn('data-mono px-3 py-1.5 text-right', q.net >= 0 ? 'text-emerald-300' : 'text-slate-300')}>{formatCurrency(q.net, { compact: true })}</td>
+                    <td className={cn('data-mono px-3 py-1.5 text-right', q.cumulative >= 0 ? 'text-emerald-300' : 'text-rose-300')}>{formatCurrency(q.cumulative, { compact: true })}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-amber-300/80">{q.interest ? formatCurrency(q.interest, { compact: true }) : '—'}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-rose-300/80">{q.funding > 0 ? formatCurrency(q.funding, { compact: true }) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollableTable>
+          <p className="mt-3 text-[11px] leading-relaxed text-slate-500">Total cost {formatCurrency(appraisal.totalCost)} = land {formatCurrency(appraisalLand, { compact: true })} + dev cost {formatCurrency(appraisal.devCostExFinance, { compact: true })} + rolled-up interest {formatCurrency(appraisal.totalInterest, { compact: true })}. Return on peak funding {appraisal.returnOnFunding}%. A feasibility-stage cashflow — programme, absorption and finance are simplified; tune them above.</p>
         </div>
       </Card>
 

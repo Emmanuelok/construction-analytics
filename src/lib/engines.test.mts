@@ -67,6 +67,7 @@ import { defaultNeighbours, overshadowing, overshadowingCsv } from './context-sh
 import { ZONING_PRESETS, presetById, normaliseMix } from './zoning-presets.ts'
 import { maximizeScheme, maximizeValue } from './zoning-optimize.ts'
 import { feasibility, feasibilityWaterfall, feasibilityCsv, DEFAULT_RATES } from './feasibility.ts'
+import { appraise, quarterly, appraisalCsv, irr } from './appraisal.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -1887,6 +1888,53 @@ section('zoning-value')
   ok('every per-storey row carries gfa + rlv + a compliance flag', v.perStorey.every((s) => s.gfa >= 0 && typeof s.rlv === 'number' && typeof s.compliant === 'boolean'))
   ok('the optimum never breaches the height limit', v.proposedStoreys * rules.storeyHeight <= rules.heightLimit + 1e-6)
   ok('a richer all-residential mix at premium prices shifts the optimum', (() => { const v2 = maximizeValue(rules, { mix: { residential: 1, office: 0, retail: 0 }, targetMarginPct: 18 }); return v2.residualLandValue !== v.residualLandValue })())
+}
+
+// ── appraisal (time-phased development cashflow / DCF) ───────────────────────────
+section('appraisal')
+{
+  const base = {
+    saleRevenue: 80_000_000, investmentRevenue: 20_000_000,
+    costs: { construction: 50_000_000, fees: 6_000_000, contingency: 4_000_000, parking: 3_000_000, demolition: 1_000_000, siteWorks: 2_000_000 },
+    land: 12_000_000, programme: { preMonths: 6, constructionMonths: 24, saleMonths: 12 },
+    annualInterest: 0.075, discountRate: 0.1,
+  }
+  const a = appraise(base)
+  ok('the cashflow spans the full programme (pre + construction + sale)', a.months === 42 && a.rows.length === 42)
+  ok('GDV = for-sale + investment revenue', a.gdv === 100_000_000)
+  ok('land is drawn in month 0 only', a.rows[0].land === 12_000_000 && a.rows.slice(1).every((r) => r.land === 0))
+  ok('costs are spread, not lumped (no single month holds them all)', a.rows.every((r) => r.cost < base.costs.construction) && a.rows.some((r) => r.cost > 0))
+  ok('revenue arrives later than the first spend', (() => { const firstCost = a.rows.findIndex((r) => r.cost > 0 || r.land > 0); const firstRev = a.rows.findIndex((r) => r.revenue > 0); return firstRev > firstCost })())
+  ok('the investment capital value lands at stabilisation (final month)', a.rows[a.months - 1].revenue >= 20_000_000)
+  ok('summed monthly cost ≈ the dev cost stack', near(a.rows.reduce((s, r) => s + r.cost, 0), a.devCostExFinance, 5))
+  ok('summed monthly revenue ≈ GDV', near(a.rows.reduce((s, r) => s + r.revenue, 0), a.gdv, 5))
+  ok('a development facility is drawn — peak debt is positive', a.peakFunding > 0 && a.peakFundingMonth > 0 && a.peakFundingMonth < a.months)
+  ok('interest rolls up — total interest > 0 at a 7.5% facility', a.totalInterest > 0)
+  ok('total cost = land + dev cost + interest', a.totalCost === Math.round(base.land + a.devCostExFinance + a.totalInterest))
+  ok('profit = GDV − total cost, and the margin is reported', a.profit === a.gdv - a.totalCost && a.marginOnCost > 0)
+  ok('the project IRR is a sensible positive annual rate', Number.isFinite(a.irrAnnual) && a.irrAnnual > 0 && a.irrAnnual < 200)
+  ok('the cashflow breaks even before the final month', a.breakEvenMonth > 0 && a.breakEvenMonth < a.months)
+  // finance sensitivity
+  const cheap = appraise({ ...base, annualInterest: 0 })
+  ok('a 0% facility charges no interest', cheap.totalInterest === 0)
+  ok('a dearer facility erodes profit and lifts interest', (() => { const dear = appraise({ ...base, annualInterest: 0.15 }); return dear.totalInterest > a.totalInterest && dear.profit < a.profit })())
+  // NPV ↔ discount rate ↔ IRR relationships
+  ok('NPV falls as the discount rate rises', appraise({ ...base, discountRate: 0.2 }).npv < appraise({ ...base, discountRate: 0.05 }).npv)
+  ok('NPV ≈ 0 when discounting at the IRR', (() => { const at = appraise({ ...base, discountRate: Math.pow(1 + a.irrMonthly, 12) - 1 }); return Math.abs(at.npv) < Math.max(50_000, a.gdv * 0.002) })())
+  ok('NPV is positive when the discount rate is below the IRR', a.irrAnnual > 10 ? a.npv > 0 : true)
+  // programme sensitivity — a longer build draws more interest
+  ok('a longer construction period accrues more interest', appraise({ ...base, programme: { ...base.programme, constructionMonths: 36 } }).totalInterest > a.totalInterest)
+  // a loss-making land price
+  const overpaid = appraise({ ...base, land: 60_000_000 })
+  ok('overpaying for land tips the scheme into a loss with a warning headline', overpaid.profit < 0 && /loss|doesn.t return/i.test(overpaid.headline))
+  // quarterly aggregation + csv
+  const q = quarterly(a)
+  ok('quarterly aggregation buckets the months into quarters', q.length === Math.ceil(a.months / 3) && q[0].label === 'Q1')
+  ok('quarterly cumulative tracks the last month of each quarter', q[0].cumulative === a.rows[2].cumulative)
+  ok('appraisal CSV carries the monthly rows + a summary', (() => { const c = appraisalCsv(a); return /Month,Land,Cost/.test(c) && /IRR \(annual\)/.test(c) && c.split('\n').length > a.months })())
+  // irr helper edge cases
+  ok('irr returns NaN when there is no sign change', Number.isNaN(irr([-1, -2, -3])) && Number.isNaN(irr([1, 2, 3])))
+  ok('irr solves a simple two-flow case (−100 now, +121 in 2 periods ⇒ 10%/period)', near(irr([-100, 0, 121]), 0.1, 1e-3))
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────
