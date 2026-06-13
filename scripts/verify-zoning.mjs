@@ -100,6 +100,19 @@ try {
   const feasAfterVal = await page.evaluate(() => document.querySelector('[data-feasibility]')?.innerText || '')
   ok('Max value loads the residual-land-value-maximal scheme (page recomputes)', feasAfterVal !== feasBeforeVal || /Residual land value/i.test(feasAfterVal))
 
+  // ── accommodation schedule (unit mix) ──
+  const acc = await text('[data-accommodation]')
+  ok('an accommodation schedule card is present', /Accommodation schedule/i.test(acc) && /Dwellings/i.test(acc) && /Bed spaces/i.test(acc))
+  ok('the schedule lists dwelling types with units + revenue', /Studio/i.test(acc) && /1 bed/i.test(acc) && /2 bed/i.test(acc) && /3 bed/i.test(acc))
+  ok('it reports planning numbers (density, habitable rooms, blended rate)', /Density/i.test(acc) && /Habitable rooms/i.test(acc) && /Blended rate/i.test(acc))
+  ok('an accommodation CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-accommodation] button')].some((b) => /CSV/.test(b.textContent || ''))))
+  const dwell0 = num(await page.evaluate(() => document.querySelector('[data-accommodation]')?.innerText || ''), /Dwellings\s*\n?\s*([\d,]+)/i)
+  await setRange('Studio · 40 m²', 1)
+  await setRange('3 bed · 103 m²', 0)
+  await wait(700)
+  const dwell1 = num(await page.evaluate(() => document.querySelector('[data-accommodation]')?.innerText || ''), /Dwellings\s*\n?\s*([\d,]+)/i)
+  ok('shifting the mix to studios raises the dwelling count', dwell1 > dwell0, { dwell0, dwell1 })
+
   // ── development cashflow appraisal (DCF) ──
   const appr = await text('[data-appraisal]')
   ok('a development cashflow appraisal card is present', /Development cashflow/i.test(appr) && /Profit/i.test(appr) && /Margin on cost/i.test(appr))
