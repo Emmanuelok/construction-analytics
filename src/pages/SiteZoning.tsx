@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, FileText, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise, Sparkles, Leaf, Route, Droplets, Sprout } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, FileText, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise, Sparkles, Leaf, Route, Droplets, Sprout, Lightbulb } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
@@ -29,6 +29,7 @@ import { massingCarbon, massingCarbonCsv, STRUCTURE_LABEL, type StructureType } 
 import { transport, transportCsv } from '@/lib/transport'
 import { drainage, drainageCsv } from '@/lib/drainage'
 import { biodiversity, biodiversityCsv, DISTINCTIVENESS_LABEL, CONDITION_LABEL, type Distinctiveness, type Condition } from '@/lib/biodiversity'
+import { daylight, daylightCsv } from '@/lib/daylight'
 import { LineTrend } from '@/components/charts'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
@@ -107,6 +108,10 @@ export default function SiteZoning() {
   const [proposedCond, setProposedCond] = useState<Condition>('good')
   const [greenRoofFrac, setGreenRoofFrac] = useState(0.3)
   const [strategicSig, setStrategicSig] = useState(1)
+  const [roomDepth, setRoomDepth] = useState(5)
+  const [windowRatio, setWindowRatio] = useState(0.4)
+  const [facingDistance, setFacingDistance] = useState(21)
+  const [oppositeHeight, setOppositeHeight] = useState(18)
   // apply a zoning district: load its rules + programme split
   const applyPreset = (id: string) => {
     const p = presetById(id); if (!p) return
@@ -179,6 +184,8 @@ export default function SiteZoning() {
   const transit = useMemo(() => transport({ residentialUnits: accom.totalUnits, officeNet: feas.lines.find((l) => l.use === 'office')?.net ?? 0, retailNet: feas.lines.find((l) => l.use === 'retail')?.net ?? 0, transitLevel, parkingSupply: feas.parkingBays }), [accom.totalUnits, feas, transitLevel])
   // drainage & flood (SuDS) — runoff, greenfield limit, attenuation storage
   const drain = useMemo(() => drainage({ siteArea: z.siteArea, footprint: z.proposed.footprint, hardstandingFrac, intensity: stormIntensity, climateFactor, greenfieldRate }), [z.siteArea, z.proposed.footprint, hardstandingFrac, stormIntensity, climateFactor, greenfieldRate])
+  // interior daylight (ADF) for a representative habitable room
+  const day = useMemo(() => daylight({ roomWidth: 3.6, roomDepth, roomHeight: Math.max(2.3, storeyHeight - 0.9), wwr: windowRatio, facingDistance, oppositeHeight }), [roomDepth, storeyHeight, windowRatio, facingDistance, oppositeHeight])
   // biodiversity net gain (BNG) — statutory metric units, baseline vs post
   const bio = useMemo(() => biodiversity({ siteAreaM2: z.siteArea, footprintM2: z.proposed.footprint, hardstandingM2: Math.max(0, z.siteArea - z.proposed.footprint) * hardstandingFrac, baseline: { distinctiveness: baselineDist, condition: baselineCond }, proposedGreen: { distinctiveness: proposedDist, condition: proposedCond }, greenRoofM2: z.proposed.footprint * greenRoofFrac, strategicSignificance: strategicSig, targetGainPct: 10 }), [z.siteArea, z.proposed.footprint, hardstandingFrac, baselineDist, baselineCond, proposedDist, proposedCond, greenRoofFrac, strategicSig])
   // full feasibility report — bundles every engine's output into one Markdown deliverable
@@ -199,6 +206,7 @@ export default function SiteZoning() {
     setStructureType('concrete'); setEnergyIntensity(75); setGridFactor(0.15); setTransitLevel(3)
     setHardstandingFrac(0.4); setStormIntensity(50); setClimateFactor(1.4); setGreenfieldRate(7)
     setBaselineDist('low'); setBaselineCond('moderate'); setProposedDist('medium'); setProposedCond('good'); setGreenRoofFrac(0.3); setStrategicSig(1)
+    setRoomDepth(5); setWindowRatio(0.4); setFacingDistance(21); setOppositeHeight(18)
   }
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
@@ -1303,6 +1311,58 @@ export default function SiteZoning() {
                 </tbody>
               </table>
             </ScrollableTable>
+          </div>
+        </div>
+      </Card>
+
+      {/* interior daylight (ADF) */}
+      <Card data-daylight>
+        <CardHeader
+          icon={Lightbulb} accent="amber" title="Interior daylight (ADF)"
+          subtitle={`The BRE Average Daylight Factor for a representative habitable room. ${day.note}`}
+          action={<button onClick={() => downloadText('site-daylight.csv', daylightCsv(day), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-5">
+          <div className={cn('rounded-lg p-2.5 ring-1 ring-inset', day.verdict === 'Good' ? 'bg-emerald-500/[0.08] ring-emerald-500/30' : day.verdict === 'Adequate' ? 'bg-amber-500/[0.08] ring-amber-500/30' : 'bg-rose-500/[0.08] ring-rose-500/30')}>
+            <div className="text-[11px] text-slate-400">Avg daylight factor</div>
+            <div className={cn('data-mono text-base font-bold', day.verdict === 'Good' ? 'text-emerald-300' : day.verdict === 'Adequate' ? 'text-amber-300' : 'text-rose-300')}>{day.adf}%</div>
+            <div className="text-[10px] text-slate-500">{day.verdict} · target {day.target}%</div>
+          </div>
+          <Metric label="Visible sky" value={`${day.skyAngle}°`} sub={`obstruction ${day.obstructionAngle}°`} />
+          <Metric label="Glazed area" value={`${day.glazedArea} m²`} sub={`${Math.round(windowRatio * 100)}% of façade`} />
+          <Metric label="Room depth" value={`${roomDepth} m`} sub={`depth/height ${day.depthRatio}`} />
+          <div className={cn('rounded-lg p-2.5 ring-1 ring-inset', day.depthAdequate ? 'bg-elevated/40 ring-edge/40' : 'bg-amber-500/[0.06] ring-amber-500/25')}>
+            <div className="text-[11px] text-slate-400">Penetration</div>
+            <div className={cn('text-sm font-semibold', day.depthAdequate ? 'text-slate-200' : 'text-amber-300')}>{day.depthAdequate ? 'Adequate' : 'Deep'}</div>
+            <div className="text-[10px] text-slate-500">no-sky-line</div>
+          </div>
+        </div>
+        <div className="grid gap-5 border-t border-edge/50 p-5 lg:grid-cols-2">
+          <div className="space-y-3">
+            <Range label="Window-to-wall ratio" unit="%" value={Math.round(windowRatio * 100)} min={10} max={80} step={5} onChange={(v) => setWindowRatio(v / 100)} />
+            <Range label="Room depth" unit="m" value={roomDepth} min={3} max={12} step={0.5} onChange={setRoomDepth} fmt={(v) => v.toFixed(1)} />
+            <Range label="Distance to facing building" unit="m" value={facingDistance} min={5} max={60} step={1} onChange={setFacingDistance} />
+            <Range label="Facing building height" unit="m" value={oppositeHeight} min={0} max={60} step={1} onChange={setOppositeHeight} />
+            <p className="text-[11px] leading-relaxed text-slate-500">ADF = (M·T·A<sub>w</sub>·θ) ÷ (A·(1−R²)). More glazing and a wider gap to facing buildings raise it; deeper rooms and taller obstructions lower it. BRE targets: ~2% living, 1.5% kitchen, 1% bedroom.</p>
+          </div>
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">ADF vs glazing ratio</div>
+            <div className="space-y-1.5">
+              {day.sensitivity.map((s) => {
+                const max = Math.max(...day.sensitivity.map((x) => x.adf), day.target) * 1.1
+                return (
+                  <div key={s.wwr} className="flex items-center gap-2 text-[11px]">
+                    <span className="w-10 shrink-0 text-right text-slate-400">{Math.round(s.wwr * 100)}%</span>
+                    <div className="relative h-3 flex-1 overflow-hidden rounded bg-base/60 ring-1 ring-inset ring-edge/40">
+                      <div className={cn('h-3 rounded', s.adf >= day.target ? 'bg-emerald-500/70' : s.adf >= day.target * 0.5 ? 'bg-amber-500/70' : 'bg-rose-500/70')} style={{ width: `${(s.adf / max) * 100}%` }} />
+                      <div className="absolute top-[-2px] h-3.5 w-0.5 bg-slate-200" style={{ left: `${(day.target / max) * 100}%` }} title={`target ${day.target}%`} />
+                    </div>
+                    <span className="data-mono w-10 shrink-0 text-right text-slate-300">{s.adf}%</span>
+                  </div>
+                )
+              })}
+            </div>
+            <p className="mt-2 text-[11px] text-slate-500">The white tick is the {day.target}% target; bars turn green once a glazing ratio clears it at this room geometry and obstruction.</p>
           </div>
         </div>
       </Card>
