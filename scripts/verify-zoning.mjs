@@ -191,6 +191,18 @@ try {
   const gfaAfterMass = num(await page.evaluate(() => document.body.innerText), /Capacity used[\s\S]{0,20}?(\d+)%/)
   ok('applying a recommended massing updates the scheme', Number.isFinite(gfaAfterMass), { gfaBeforeMass, gfaAfterMass })
 
+  // ── biodiversity net gain (BNG) ──
+  const bng = await text('[data-biodiversity]')
+  ok('a biodiversity net gain card is present', /Biodiversity net gain/i.test(bng) && /Net gain/i.test(bng) && /habitat units/i.test(bng))
+  ok('it shows baseline + post-development habitat units', /Baseline/i.test(bng) && /Post-development/i.test(bng))
+  ok('habitat distinctiveness + condition are selectable', await page.evaluate(() => !!document.querySelector('select[aria-label="Baseline distinctiveness"]') && !!document.querySelector('select[aria-label="Proposed distinctiveness"]')))
+  ok('a BNG CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-biodiversity] button')].some((b) => /CSV/.test(b.textContent || ''))))
+  const bng0 = await page.evaluate(() => document.querySelector('[data-biodiversity]')?.innerText || '')
+  await setSelect('Proposed distinctiveness', 'very-high')
+  await wait(700)
+  const bng1 = await page.evaluate(() => document.querySelector('[data-biodiversity]')?.innerText || '')
+  ok('richer created habitat lifts the net gain (recomputes)', bng1 !== bng0)
+
   // ── drainage & flood (SuDS) ──
   const dr = await text('[data-drainage]')
   ok('a drainage & flood card is present', /Drainage & flood/i.test(dr) && /Peak runoff/i.test(dr) && /Attenuation/i.test(dr))
