@@ -78,6 +78,7 @@ import { massingCarbon, massingCarbonCsv, carbonBand, STRUCTURE_LABEL } from './
 import { transport, transportCsv, carShare, carOwnershipFor } from './transport.ts'
 import { drainage, drainageCsv } from './drainage.ts'
 import { biodiversity, biodiversityCsv, habitatUnits, DISTINCTIVENESS_SCORE } from './biodiversity.ts'
+import { daylight, daylightCsv } from './daylight.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -2171,6 +2172,24 @@ section('biodiversity')
   ok('higher strategic significance scales both stages', (() => { const s = biodiversity({ ...base, strategicSignificance: 1.15 }); return s.baselineUnits > b.baselineUnits && s.postUnits > b.postUnits })())
   ok('distinctiveness scores follow the metric ladder', DISTINCTIVENESS_SCORE['very-low'] === 0 && DISTINCTIVENESS_SCORE.low === 2 && DISTINCTIVENESS_SCORE['very-high'] === 8)
   ok('BNG CSV carries baseline + post lines and the verdict', (() => { const c = biodiversityCsv(b); return /Stage,Habitat/.test(c) && /Baseline,/.test(c) && /Post,/.test(c) && /Net gain/.test(c) })())
+}
+
+// ── interior daylight (Average Daylight Factor) ──────────────────────────────────
+section('daylight')
+{
+  const d = daylight({ roomWidth: 3.6, roomDepth: 5, roomHeight: 2.7, wwr: 0.4 })
+  ok('ADF is a positive percentage', d.adf > 0 && d.adf < 20)
+  ok('the visible sky angle = 90 − obstruction angle', d.skyAngle === 90 - d.obstructionAngle)
+  ok('glazed area = façade area × window ratio', near(d.glazedArea, 3.6 * 2.7 * 0.4, 0.01))
+  ok('surface area = 2(WD + WH + DH)', near(d.surfaceArea, 2 * (3.6 * 5 + 3.6 * 2.7 + 5 * 2.7), 0.01))
+  ok('more glazing raises the ADF', daylight({ roomWidth: 3.6, roomDepth: 5, roomHeight: 2.7, wwr: 0.6 }).adf > d.adf)
+  ok('a taller / closer obstruction lowers the ADF', daylight({ roomWidth: 3.6, roomDepth: 5, roomHeight: 2.7, wwr: 0.4, facingDistance: 8, oppositeHeight: 30 }).adf < d.adf)
+  ok('a deeper room lowers the ADF (more surface area to light)', daylight({ roomWidth: 3.6, roomDepth: 9, roomHeight: 2.7, wwr: 0.4 }).adf < d.adf)
+  ok('the verdict follows the target thresholds', (() => { const good = daylight({ roomWidth: 4, roomDepth: 4, roomHeight: 3, wwr: 0.6, facingDistance: 40, oppositeHeight: 6 }); return good.verdict === (good.adf >= good.target ? 'Good' : good.adf >= good.target * 0.5 ? 'Adequate' : 'Poor') })())
+  ok('a deep room fails the no-sky-line depth check', daylight({ roomWidth: 3.6, roomDepth: 9, roomHeight: 2.7, wwr: 0.4 }).depthAdequate === false)
+  ok('the sensitivity curve rises with glazing ratio', (() => { const s = d.sensitivity; return s.length === 5 && s.every((p, i) => i === 0 || p.adf >= s[i - 1].adf) })())
+  ok('higher reflectance lifts the ADF', daylight({ roomWidth: 3.6, roomDepth: 5, roomHeight: 2.7, wwr: 0.4, reflectance: 0.7 }).adf > d.adf)
+  ok('daylight CSV carries the metrics + glazing sensitivity', (() => { const c = daylightCsv(d); return /Average daylight factor/.test(c) && /Visible sky angle/.test(c) && /Glazing ratio,ADF/.test(c) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────

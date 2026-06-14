@@ -191,6 +191,17 @@ try {
   const gfaAfterMass = num(await page.evaluate(() => document.body.innerText), /Capacity used[\s\S]{0,20}?(\d+)%/)
   ok('applying a recommended massing updates the scheme', Number.isFinite(gfaAfterMass), { gfaBeforeMass, gfaAfterMass })
 
+  // ── interior daylight (ADF) ──
+  const dl = await text('[data-daylight]')
+  ok('an interior daylight (ADF) card is present', /Interior daylight/i.test(dl) && /daylight factor/i.test(dl) && /Visible sky/i.test(dl))
+  ok('it shows an ADF-vs-glazing sensitivity', /ADF vs glazing/i.test(dl))
+  ok('a daylight CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-daylight] button')].some((b) => /CSV/.test(b.textContent || ''))))
+  const dl0 = await page.evaluate(() => document.querySelector('[data-daylight]')?.innerText || '')
+  await setRange('Window-to-wall ratio', 80)
+  await wait(700)
+  const dl1 = await page.evaluate(() => document.querySelector('[data-daylight]')?.innerText || '')
+  ok('more glazing raises the ADF (recomputes)', dl1 !== dl0)
+
   // ── biodiversity net gain (BNG) ──
   const bng = await text('[data-biodiversity]')
   ok('a biodiversity net gain card is present', /Biodiversity net gain/i.test(bng) && /Net gain/i.test(bng) && /habitat units/i.test(bng))
