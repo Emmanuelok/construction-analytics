@@ -191,6 +191,17 @@ try {
   const gfaAfterMass = num(await page.evaluate(() => document.body.innerText), /Capacity used[\s\S]{0,20}?(\d+)%/)
   ok('applying a recommended massing updates the scheme', Number.isFinite(gfaAfterMass), { gfaBeforeMass, gfaAfterMass })
 
+  // ── transport & access ──
+  const tr = await text('[data-transport]')
+  ok('a transport & access card is present', /Transport & access/i.test(tr) && /Daily trips/i.test(tr) && /Mode split/i.test(tr))
+  ok('it lists trip generation by use + a parking balance', /Trip generation by use/i.test(tr) && /Parking/i.test(tr) && /Sustainable/i.test(tr))
+  ok('a transport CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-transport] button')].some((b) => /CSV/.test(b.textContent || ''))))
+  const tr0 = await page.evaluate(() => document.querySelector('[data-transport]')?.innerText || '')
+  await setRange('Public-transport accessibility (PTAL)', 6)
+  await wait(700)
+  const tr1 = await page.evaluate(() => document.querySelector('[data-transport]')?.innerText || '')
+  ok('raising accessibility shifts trips off cars (recomputes)', tr1 !== tr0)
+
   // ── whole-life carbon ──
   const carb = await text('[data-carbon]')
   ok('a whole-life carbon card is present', /Whole-life carbon/i.test(carb) && /Embodied band/i.test(carb) && /Whole-life/i.test(carb))
