@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, FileText, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise, Sparkles, Leaf, Route, Droplets } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, FileText, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise, Sparkles, Leaf, Route, Droplets, Sprout } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
@@ -28,6 +28,7 @@ import { optimizeMassing, massingCsv, type MassingStudy, type MassingCandidate }
 import { massingCarbon, massingCarbonCsv, STRUCTURE_LABEL, type StructureType } from '@/lib/massing-carbon'
 import { transport, transportCsv } from '@/lib/transport'
 import { drainage, drainageCsv } from '@/lib/drainage'
+import { biodiversity, biodiversityCsv, DISTINCTIVENESS_LABEL, CONDITION_LABEL, type Distinctiveness, type Condition } from '@/lib/biodiversity'
 import { LineTrend } from '@/components/charts'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
@@ -100,6 +101,12 @@ export default function SiteZoning() {
   const [stormIntensity, setStormIntensity] = useState(50)
   const [climateFactor, setClimateFactor] = useState(1.4)
   const [greenfieldRate, setGreenfieldRate] = useState(7)
+  const [baselineDist, setBaselineDist] = useState<Distinctiveness>('low')
+  const [baselineCond, setBaselineCond] = useState<Condition>('moderate')
+  const [proposedDist, setProposedDist] = useState<Distinctiveness>('medium')
+  const [proposedCond, setProposedCond] = useState<Condition>('good')
+  const [greenRoofFrac, setGreenRoofFrac] = useState(0.3)
+  const [strategicSig, setStrategicSig] = useState(1)
   // apply a zoning district: load its rules + programme split
   const applyPreset = (id: string) => {
     const p = presetById(id); if (!p) return
@@ -172,6 +179,8 @@ export default function SiteZoning() {
   const transit = useMemo(() => transport({ residentialUnits: accom.totalUnits, officeNet: feas.lines.find((l) => l.use === 'office')?.net ?? 0, retailNet: feas.lines.find((l) => l.use === 'retail')?.net ?? 0, transitLevel, parkingSupply: feas.parkingBays }), [accom.totalUnits, feas, transitLevel])
   // drainage & flood (SuDS) — runoff, greenfield limit, attenuation storage
   const drain = useMemo(() => drainage({ siteArea: z.siteArea, footprint: z.proposed.footprint, hardstandingFrac, intensity: stormIntensity, climateFactor, greenfieldRate }), [z.siteArea, z.proposed.footprint, hardstandingFrac, stormIntensity, climateFactor, greenfieldRate])
+  // biodiversity net gain (BNG) — statutory metric units, baseline vs post
+  const bio = useMemo(() => biodiversity({ siteAreaM2: z.siteArea, footprintM2: z.proposed.footprint, hardstandingM2: Math.max(0, z.siteArea - z.proposed.footprint) * hardstandingFrac, baseline: { distinctiveness: baselineDist, condition: baselineCond }, proposedGreen: { distinctiveness: proposedDist, condition: proposedCond }, greenRoofM2: z.proposed.footprint * greenRoofFrac, strategicSignificance: strategicSig, targetGainPct: 10 }), [z.siteArea, z.proposed.footprint, hardstandingFrac, baselineDist, baselineCond, proposedDist, proposedCond, greenRoofFrac, strategicSig])
   // full feasibility report — bundles every engine's output into one Markdown deliverable
   const report = useMemo(() => feasibilityReport({ title: 'Development feasibility report', district: presetById(presetId)?.label, location: anchor, zoning: z, proposedGFA, proposedStoreys, feasibility: feas, accommodation: accom, obligations: oblig, appraisal, scenarios: scen, shadow, sunlight, context, carbon }), [presetId, anchor, z, proposedGFA, proposedStoreys, feas, accom, oblig, appraisal, scen, shadow, sunlight, context, carbon])
   const setNbHeight = (id: string, h: number) => setNeighbours(nbList.map((n) => (n.id === id ? { ...n, height: h } : n)))
@@ -189,6 +198,7 @@ export default function SiteZoning() {
     setAffordablePct(0.3); setTenureSplit({ socialRent: 0.3, affordableRent: 0.3, sharedOwnership: 0.4 }); setCilPerM2(120); setS106PerUnit(8000); setBenchmarkLand(8_000_000)
     setStructureType('concrete'); setEnergyIntensity(75); setGridFactor(0.15); setTransitLevel(3)
     setHardstandingFrac(0.4); setStormIntensity(50); setClimateFactor(1.4); setGreenfieldRate(7)
+    setBaselineDist('low'); setBaselineCond('moderate'); setProposedDist('medium'); setProposedCond('good'); setGreenRoofFrac(0.3); setStrategicSig(1)
   }
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
@@ -1228,6 +1238,75 @@ export default function SiteZoning() {
         </div>
       </Card>
 
+      {/* biodiversity net gain (BNG) */}
+      <Card data-biodiversity>
+        <CardHeader
+          icon={Sprout} accent="lime" title="Biodiversity net gain (BNG)"
+          subtitle={`The statutory biodiversity metric — habitat units before vs after, against the mandatory +10% net-gain requirement. ${bio.note}`}
+          action={<button onClick={() => downloadText('site-biodiversity.csv', biodiversityCsv(bio), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-5">
+          <div className={cn('rounded-lg p-2.5 ring-1 ring-inset', bio.meets ? 'bg-emerald-500/[0.08] ring-emerald-500/30' : 'bg-rose-500/[0.08] ring-rose-500/30')}>
+            <div className="text-[11px] text-slate-400">Net gain</div>
+            <div className={cn('data-mono text-base font-bold', bio.meets ? 'text-emerald-300' : 'text-rose-300')}>{bio.netGainPct >= 0 ? '+' : ''}{bio.netGainPct}%</div>
+            <div className="text-[10px] text-slate-500">target +{bio.target}%</div>
+          </div>
+          <Metric label="Baseline" value={`${bio.baselineUnits}`} sub="habitat units" />
+          <Metric label="Post-development" value={`${bio.postUnits}`} sub="habitat units" />
+          <Metric label="Net change" value={`${bio.netChange >= 0 ? '+' : ''}${bio.netChange}`} sub="units" />
+          <Metric label="Off-site needed" value={bio.shortfallUnits > 0 ? `${bio.shortfallUnits}` : '—'} sub={bio.shortfallUnits > 0 ? 'units to comply' : 'met on-site'} />
+        </div>
+        <div className="grid gap-5 border-t border-edge/50 p-5 lg:grid-cols-2">
+          <div className="space-y-3">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Baseline habitat (existing site)</div>
+            <div className="grid grid-cols-2 gap-2">
+              <BngSelect label="Distinctiveness" value={baselineDist} onChange={(v) => setBaselineDist(v as Distinctiveness)} options={Object.entries(DISTINCTIVENESS_LABEL)} aria="Baseline distinctiveness" />
+              <BngSelect label="Condition" value={baselineCond} onChange={(v) => setBaselineCond(v as Condition)} options={Object.entries(CONDITION_LABEL)} aria="Baseline condition" />
+            </div>
+            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Created / retained green space</div>
+            <div className="grid grid-cols-2 gap-2">
+              <BngSelect label="Distinctiveness" value={proposedDist} onChange={(v) => setProposedDist(v as Distinctiveness)} options={Object.entries(DISTINCTIVENESS_LABEL)} aria="Proposed distinctiveness" />
+              <BngSelect label="Condition" value={proposedCond} onChange={(v) => setProposedCond(v as Condition)} options={Object.entries(CONDITION_LABEL)} aria="Proposed condition" />
+            </div>
+            <Range label="Green roof (of footprint)" unit="%" value={Math.round(greenRoofFrac * 100)} min={0} max={100} step={5} onChange={(v) => setGreenRoofFrac(v / 100)} />
+            <label className="flex items-center justify-between gap-2 text-sm text-slate-300">Strategic significance
+              <select value={strategicSig} onChange={(e) => setStrategicSig(Number(e.target.value))} aria-label="Strategic significance" className="rounded-lg border border-edge/60 bg-elevated/50 px-2 py-1 text-xs text-slate-100 focus:border-lime-500/50 focus:outline-none">
+                {[['Low (×1.0)', 1], ['Medium (×1.1)', 1.1], ['High (×1.15)', 1.15]].map(([l, v]) => <option key={v as number} value={v as number}>{l}</option>)}
+              </select>
+            </label>
+          </div>
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Baseline → post units</div>
+            <div className="mb-3 space-y-1.5">
+              {([['Baseline', bio.baselineUnits, 'bg-slate-500/70'], ['Post-development', bio.postUnits, bio.meets ? 'bg-emerald-500/70' : 'bg-rose-500/70']] as [string, number, string][]).map(([label, val, col]) => {
+                const max = Math.max(bio.baselineUnits, bio.postUnits, 1) * 1.1
+                return (
+                  <div key={label} className="flex items-center gap-2 text-xs">
+                    <span className="w-28 shrink-0 truncate text-slate-400">{label}</span>
+                    <div className="relative h-3 flex-1 overflow-hidden rounded bg-base/60 ring-1 ring-inset ring-edge/40">
+                      <div className={cn('h-3 rounded', col)} style={{ width: `${(val / max) * 100}%` }} />
+                      <div className="absolute top-[-2px] h-3.5 w-0.5 bg-slate-200" style={{ left: `${(bio.baselineUnits * (1 + bio.target / 100) / max) * 100}%` }} title={`+${bio.target}% target`} />
+                    </div>
+                    <span className="data-mono w-12 shrink-0 text-right text-slate-300">{val}</span>
+                  </div>
+                )
+              })}
+            </div>
+            <ScrollableTable label="BNG habitat units">
+              <table className="w-full min-w-[400px] text-left text-sm">
+                <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Habitat', 'Area (ha)', 'Units'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && 'text-right')}>{h}</th>)}</tr></thead>
+                <tbody>
+                  <tr className="text-[11px] uppercase text-slate-500"><td className="px-3 pt-2" colSpan={3}>Baseline</td></tr>
+                  {bio.baselineLines.map((l) => <tr key={`b${l.name}`} className="border-b border-edge/30"><td className="px-3 py-1.5 text-slate-300">{l.name}</td><td className="data-mono px-3 py-1.5 text-right text-slate-400">{l.areaHa}</td><td className="data-mono px-3 py-1.5 text-right text-slate-300">{l.units}</td></tr>)}
+                  <tr className="text-[11px] uppercase text-slate-500"><td className="px-3 pt-2" colSpan={3}>Post-development</td></tr>
+                  {bio.postLines.map((l) => <tr key={`p${l.name}`} className="border-b border-edge/30"><td className="px-3 py-1.5 text-slate-300">{l.name}</td><td className="data-mono px-3 py-1.5 text-right text-slate-400">{l.areaHa}</td><td className="data-mono px-3 py-1.5 text-right text-slate-300">{l.units}</td></tr>)}
+                </tbody>
+              </table>
+            </ScrollableTable>
+          </div>
+        </div>
+      </Card>
+
       {/* A/B scheme comparison */}
       <Card data-compare>
         <CardHeader
@@ -1626,6 +1705,17 @@ function Num({ label, unit, value, step, onChange }: { label: string; unit?: str
     <label className="block">
       <span className="mb-1 block text-xs text-slate-400">{label}{unit ? ` (${unit})` : ''}</span>
       <input type="number" step={step} value={value} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) onChange(n) }} className="w-full rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-teal-500/50 focus:outline-none focus:ring-1 focus:ring-teal-500/30" />
+    </label>
+  )
+}
+
+function BngSelect({ label, value, onChange, options, aria }: { label: string; value: string; onChange: (v: string) => void; options: [string, string][]; aria: string }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs text-slate-400">{label}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={aria} className="w-full rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 focus:border-lime-500/50 focus:outline-none">
+        {options.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
     </label>
   )
 }

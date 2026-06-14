@@ -77,6 +77,7 @@ import { optimizeMassing, massingCsv } from './massing-optimize.ts'
 import { massingCarbon, massingCarbonCsv, carbonBand, STRUCTURE_LABEL } from './massing-carbon.ts'
 import { transport, transportCsv, carShare, carOwnershipFor } from './transport.ts'
 import { drainage, drainageCsv } from './drainage.ts'
+import { biodiversity, biodiversityCsv, habitatUnits, DISTINCTIVENESS_SCORE } from './biodiversity.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -2149,6 +2150,27 @@ section('drainage')
   ok('a bigger storm needs more attenuation', drainage({ siteArea: 5000, footprint: 1500, stormDurationHr: 4 }).attenuationVolume > d.attenuationVolume)
   ok('a greener scheme (less hardstanding) cuts runoff', drainage({ siteArea: 5000, footprint: 1500, hardstandingFrac: 0.1 }).peakRunoff < d.peakRunoff)
   ok('drainage CSV carries the metrics + SuDS list', (() => { const c = drainageCsv(d); return /Developed peak runoff/.test(c) && /Attenuation storage/.test(c) && /SuDS components/.test(c) })())
+}
+
+// ── biodiversity net gain (BNG) ──────────────────────────────────────────────────
+section('biodiversity')
+{
+  const base = { siteAreaM2: 5000, footprintM2: 1500, hardstandingM2: 1400, baseline: { distinctiveness: 'low' as const, condition: 'moderate' as const }, proposedGreen: { distinctiveness: 'medium' as const, condition: 'good' as const }, greenRoofM2: 600, targetGainPct: 10 }
+  const b = biodiversity(base)
+  ok('biodiversity units = area(ha) × distinctiveness × condition', near(habitatUnits(1, { distinctiveness: 'medium', condition: 'good' }), 4 * 3, 1e-9))
+  ok('baseline scores the whole site as one habitat', b.baselineLines.length === 1 && near(b.baselineUnits, 0.5 * 2 * 2, 0.01))
+  ok('sealed area scores zero biodiversity units', (b.postLines.find((l) => /Sealed/.test(l.name))?.units ?? -1) === 0)
+  ok('post habitats are sealed + green + green roof', b.postLines.length === 3 && b.postLines.some((l) => /Green roof/.test(l.name)))
+  ok('sealed + green areas reconcile to the site', near(b.sealedHa + b.greenHa, 0.5, 0.001))
+  ok('net change = post − baseline units', near(b.netChange, b.postUnits - b.baselineUnits, 0.01))
+  ok('net gain % is relative to the baseline', near(b.netGainPct, (b.netChange / b.baselineUnits) * 100, 0.2))
+  ok('the +10% target drives the meets flag', b.meets === (b.postUnits >= b.baselineUnits * 1.1 - 1e-6))
+  ok('a shortfall is reported when the target is missed', (() => { const sealed = biodiversity({ ...base, footprintM2: 3500, hardstandingM2: 1400, greenRoofM2: 0 }); return !sealed.meets && sealed.shortfallUnits > 0 })())
+  ok('richer proposed planting lifts the post units', biodiversity({ ...base, proposedGreen: { distinctiveness: 'high', condition: 'good' } }).postUnits > b.postUnits)
+  ok('more green roof improves the net gain', biodiversity({ ...base, greenRoofM2: 1500 }).netGainPct > b.netGainPct)
+  ok('higher strategic significance scales both stages', (() => { const s = biodiversity({ ...base, strategicSignificance: 1.15 }); return s.baselineUnits > b.baselineUnits && s.postUnits > b.postUnits })())
+  ok('distinctiveness scores follow the metric ladder', DISTINCTIVENESS_SCORE['very-low'] === 0 && DISTINCTIVENESS_SCORE.low === 2 && DISTINCTIVENESS_SCORE['very-high'] === 8)
+  ok('BNG CSV carries baseline + post lines and the verdict', (() => { const c = biodiversityCsv(b); return /Stage,Habitat/.test(c) && /Baseline,/.test(c) && /Post,/.test(c) && /Net gain/.test(c) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────
