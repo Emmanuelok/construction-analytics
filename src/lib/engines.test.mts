@@ -75,6 +75,7 @@ import { amenitySunlight, sunlightCsv } from './sunlight.ts'
 import { feasibilityReport } from './feasibility-report.ts'
 import { optimizeMassing, massingCsv } from './massing-optimize.ts'
 import { massingCarbon, massingCarbonCsv, carbonBand, STRUCTURE_LABEL } from './massing-carbon.ts'
+import { transport, transportCsv, carShare, carOwnershipFor } from './transport.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -2109,6 +2110,25 @@ section('massing-carbon')
   ok('a greener grid lowers operational + whole-life carbon', massingCarbon({ gfa: 10_000, structure: 'concrete', storeys: 10, gridFactor: 0.05 }).wholeLifePerM2 < conc.wholeLifePerM2)
   ok('structure labels cover all four systems', !!STRUCTURE_LABEL.concrete && !!STRUCTURE_LABEL.steel && !!STRUCTURE_LABEL.timber && !!STRUCTURE_LABEL.hybrid)
   ok('carbon CSV carries elements + benchmarks', (() => { const c = massingCarbonCsv(conc); return /Element,kgCO2e/.test(c) && /Whole-life kgCO2e/.test(c) && /RIBA 2030/.test(c) })())
+}
+
+// ── transport & access (trip generation, modal split, parking) ───────────────────
+section('transport')
+{
+  const t = transport({ residentialUnits: 100, officeNet: 2000, retailNet: 1000, transitLevel: 3, parkingSupply: 120 })
+  ok('person-trips are generated per land use', t.person.lines.length === 3 && t.person.lines.every((l) => l.daily > 0))
+  ok('total daily trips = sum of the use lines', near(t.person.daily, t.person.lines.reduce((s, l) => s + l.daily, 0), 0.5))
+  ok('residential daily trips ≈ units × rate', near(t.person.lines.find((l) => l.use === 'Residential')?.daily ?? 0, 600, 1))
+  ok('the mode split sums to ~100%', near(t.mode.car + t.mode.transit + t.mode.walk + t.mode.cycle, 1, 0.02))
+  ok('better transit shifts trips out of cars', carShare(6) < carShare(1) && transport({ residentialUnits: 100, officeNet: 0, retailNet: 0, transitLevel: 6, parkingSupply: 50 }).mode.car < t.mode.car)
+  ok('vehicle trips = car-share person trips ÷ occupancy', near(t.vehicle.daily, (t.person.daily * t.mode.car) / 1.25, 1))
+  ok('car ownership falls as accessibility rises', carOwnershipFor(6) < carOwnershipFor(1))
+  ok('parking demand combines residential ownership + commercial', t.parking.demand > 0 && t.parking.residential > 0 && t.parking.commercial > 0 && t.parking.demand === Math.round(t.parking.residential + t.parking.commercial))
+  ok('parking balance = supply − demand', t.parking.balance === t.parking.supply - t.parking.demand)
+  ok('a high-PTAL scheme needs less parking than a low-PTAL one', transport({ residentialUnits: 100, officeNet: 0, retailNet: 0, transitLevel: 6, parkingSupply: 0 }).parking.demand < transport({ residentialUnits: 100, officeNet: 0, retailNet: 0, transitLevel: 1, parkingSupply: 0 }).parking.demand)
+  ok('the sustainable-transport share is the non-car share', t.sustainableShare === Math.round((1 - t.mode.car) * 100))
+  ok('AM and PM peaks are a fraction of daily trips', t.person.am < t.person.daily && t.person.pm < t.person.daily)
+  ok('transport CSV carries trips, modes + parking', (() => { const c = transportCsv(t); return /Use,Daily/.test(c) && /Mode,Share/.test(c) && /Parking demand/.test(c) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────

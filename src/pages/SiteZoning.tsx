@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, FileText, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise, Sparkles, Leaf } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, FileText, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise, Sparkles, Leaf, Route } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
@@ -26,6 +26,7 @@ import { amenitySunlight, sunlightCsv, type SunObstacle, type AmenitySunlight } 
 import { feasibilityReport } from '@/lib/feasibility-report'
 import { optimizeMassing, massingCsv, type MassingStudy, type MassingCandidate } from '@/lib/massing-optimize'
 import { massingCarbon, massingCarbonCsv, STRUCTURE_LABEL, type StructureType } from '@/lib/massing-carbon'
+import { transport, transportCsv } from '@/lib/transport'
 import { LineTrend } from '@/components/charts'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
@@ -93,6 +94,7 @@ export default function SiteZoning() {
   const [structureType, setStructureType] = useState<StructureType>('concrete')
   const [energyIntensity, setEnergyIntensity] = useState(75)
   const [gridFactor, setGridFactor] = useState(0.15)
+  const [transitLevel, setTransitLevel] = useState(3)
   // apply a zoning district: load its rules + programme split
   const applyPreset = (id: string) => {
     const p = presetById(id); if (!p) return
@@ -161,6 +163,8 @@ export default function SiteZoning() {
   const applyMassing = (c: MassingCandidate) => { setProposedGFA(c.gfa); setProposedStoreys(c.storeys); setPodium(c.podium); setTowerSetback(c.towerSetback) }
   // whole-life carbon of the massing
   const carbon = useMemo(() => massingCarbon({ gfa: proposedGFA, structure: structureType, storeys: proposedStoreys, energyIntensity, gridFactor }), [proposedGFA, structureType, proposedStoreys, energyIntensity, gridFactor])
+  // transport & access — trip generation, modal split, parking demand vs supply
+  const transit = useMemo(() => transport({ residentialUnits: accom.totalUnits, officeNet: feas.lines.find((l) => l.use === 'office')?.net ?? 0, retailNet: feas.lines.find((l) => l.use === 'retail')?.net ?? 0, transitLevel, parkingSupply: feas.parkingBays }), [accom.totalUnits, feas, transitLevel])
   // full feasibility report — bundles every engine's output into one Markdown deliverable
   const report = useMemo(() => feasibilityReport({ title: 'Development feasibility report', district: presetById(presetId)?.label, location: anchor, zoning: z, proposedGFA, proposedStoreys, feasibility: feas, accommodation: accom, obligations: oblig, appraisal, scenarios: scen, shadow, sunlight, context, carbon }), [presetId, anchor, z, proposedGFA, proposedStoreys, feas, accom, oblig, appraisal, scen, shadow, sunlight, context, carbon])
   const setNbHeight = (id: string, h: number) => setNeighbours(nbList.map((n) => (n.id === id ? { ...n, height: h } : n)))
@@ -176,7 +180,7 @@ export default function SiteZoning() {
     setPreMonths(6); setConstructionMonths(24); setSaleMonths(12); setFacilityRate(7.5); setDiscountRate(10); setUseResidualLand(true); setLandPrice(12_000_000)
     setSensMetric('profit'); setSensSwing(0.1); setUnitMix({ studio: 0.1, '1b': 0.4, '2b': 0.4, '3b': 0.1 })
     setAffordablePct(0.3); setTenureSplit({ socialRent: 0.3, affordableRent: 0.3, sharedOwnership: 0.4 }); setCilPerM2(120); setS106PerUnit(8000); setBenchmarkLand(8_000_000)
-    setStructureType('concrete'); setEnergyIntensity(75); setGridFactor(0.15)
+    setStructureType('concrete'); setEnergyIntensity(75); setGridFactor(0.15); setTransitLevel(3)
   }
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
@@ -1098,6 +1102,73 @@ export default function SiteZoning() {
               <Range label="Operational energy" unit="kWh/m²/yr" value={energyIntensity} min={30} max={200} step={5} onChange={setEnergyIntensity} />
               <Range label="Grid carbon" unit="kg/kWh" value={gridFactor} min={0} max={0.5} step={0.01} onChange={setGridFactor} fmt={(v) => v.toFixed(2)} />
             </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* transport & access */}
+      <Card data-transport>
+        <CardHeader
+          icon={Route} accent="sky" title="Transport & access"
+          subtitle={`Trip generation by land use, split across modes by public-transport accessibility, with parking demand against the scheme's supply. ${transit.note}`}
+          action={<button onClick={() => downloadText('site-transport.csv', transportCsv(transit), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-6">
+          <Metric label="Daily trips" value={formatNumber(transit.person.daily)} sub="person-trips" />
+          <Metric label="Peak (AM/PM)" value={`${formatNumber(transit.person.am)}/${formatNumber(transit.person.pm)}`} sub="person-trips" />
+          <Metric label="Car trips/day" value={formatNumber(transit.vehicle.daily)} sub={`${Math.round(transit.mode.car * 100)}% by car`} />
+          <Metric label="Sustainable" value={`${transit.sustainableShare}%`} sub="non-car modes" />
+          <Metric label="Car ownership" value={`${transit.carOwnership}`} sub="per dwelling" />
+          <div className={cn('rounded-lg p-2.5 ring-1 ring-inset', transit.parking.balance >= 0 ? 'bg-emerald-500/[0.07] ring-emerald-500/25' : 'bg-rose-500/[0.07] ring-rose-500/30')}>
+            <div className="text-[11px] text-slate-400">Parking</div>
+            <div className={cn('data-mono text-sm font-semibold', transit.parking.balance >= 0 ? 'text-emerald-300' : 'text-rose-300')}>{transit.parking.balance >= 0 ? '+' : ''}{formatNumber(transit.parking.balance)}</div>
+            <div className="text-[10px] text-slate-500">{transit.parking.demand} need · {transit.parking.supply} supply</div>
+          </div>
+        </div>
+        <div className="grid gap-5 border-t border-edge/50 p-5 lg:grid-cols-2">
+          <div className="space-y-3">
+            <Range label="Public-transport accessibility (PTAL)" value={transitLevel} min={1} max={6} step={1} onChange={setTransitLevel} fmt={(v) => `${v} · ${['', 'Poor', 'Low', 'Moderate', 'Good', 'Very good', 'Excellent'][v]}`} />
+            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Mode split</div>
+            <div className="flex h-4 w-full overflow-hidden rounded-full ring-1 ring-inset ring-edge/50">
+              {([['Car', transit.mode.car, 'bg-rose-500/70'], ['Transit', transit.mode.transit, 'bg-sky-500/70'], ['Walk', transit.mode.walk, 'bg-emerald-500/70'], ['Cycle', transit.mode.cycle, 'bg-amber-500/70']] as [string, number, string][]).map(([label, v, col]) => v > 0 ? <div key={label} className={col} style={{ width: `${v * 100}%` }} title={`${label}: ${Math.round(v * 100)}%`} /> : null)}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400">
+              <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-rose-500/70 align-middle" />Car {Math.round(transit.mode.car * 100)}%</span>
+              <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-sky-500/70 align-middle" />Transit {Math.round(transit.mode.transit * 100)}%</span>
+              <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-emerald-500/70 align-middle" />Walk {Math.round(transit.mode.walk * 100)}%</span>
+              <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-amber-500/70 align-middle" />Cycle {Math.round(transit.mode.cycle * 100)}%</span>
+            </div>
+            <p className="text-[11px] leading-relaxed text-slate-500">Better accessibility shifts trips out of cars and cuts car ownership, lowering parking demand — the lever a Travel Plan pulls. Supply is the parking the feasibility provides ({formatNumber(transit.parking.supply)} bays).</p>
+          </div>
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Trip generation by use</div>
+            <ScrollableTable label="Trip generation by use">
+              <table className="w-full min-w-[360px] text-left text-sm">
+                <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Use', 'Daily', 'AM peak', 'PM peak'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && 'text-right')}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {transit.person.lines.map((l) => (
+                    <tr key={l.use} className="border-b border-edge/30">
+                      <td className="px-3 py-1.5 text-slate-200">{l.use}</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(l.daily)}</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-slate-400">{formatNumber(l.am)}</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-slate-400">{formatNumber(l.pm)}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t border-edge/60 font-medium">
+                    <td className="px-3 py-1.5 text-slate-200">Total person-trips</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-100">{formatNumber(transit.person.daily)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(transit.person.am)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(transit.person.pm)}</td>
+                  </tr>
+                  <tr>
+                    <td className="px-3 py-1.5 text-slate-400">Vehicle (car) trips</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-rose-300/80">{formatNumber(transit.vehicle.daily)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-rose-300/70">{formatNumber(transit.vehicle.am)}</td>
+                    <td className="data-mono px-3 py-1.5 text-right text-rose-300/70">{formatNumber(transit.vehicle.pm)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </ScrollableTable>
           </div>
         </div>
       </Card>
