@@ -71,6 +71,7 @@ import { appraise, quarterly, appraisalCsv, irr } from './appraisal.ts'
 import { evaluate as evalScenario, tornado, dataTable, scenarios, sensitivityCsv, FACTORS } from './sensitivity.ts'
 import { accommodation, accommodationCsv, DEFAULT_UNIT_TYPES } from './unit-mix.ts'
 import { obligations, obligationsCsv, AFFORDABLE_TENURES } from './obligations.ts'
+import { amenitySunlight, sunlightCsv } from './sunlight.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -2020,6 +2021,26 @@ section('obligations')
   ok('a scheme below benchmark reads as unviable with a viability-led headline', (() => { const u = obligations({ ...base, affordablePct: 0.6, benchmarkLandValue: 20_000_000 }); return !u.viable && /unviable/i.test(u.headline) })())
   ok('richer tenure (more shared ownership) lifts affordable GDV vs social rent', (() => { const so = obligations({ ...base, tenureSplit: { socialRent: 0, affordableRent: 0, sharedOwnership: 1 } }); const sr = obligations({ ...base, tenureSplit: { socialRent: 1, affordableRent: 0, sharedOwnership: 0 } }); return so.affordableGdv > sr.affordableGdv && so.residualLandValue > sr.residualLandValue })())
   ok('obligations CSV carries tenure lines + the viability block', (() => { const c = obligationsCsv(o); return /Affordable tenure,Units/.test(c) && /Residual land value/.test(c) && /Viable,/.test(c) && /Viability-led max/.test(c) })())
+}
+
+// ── amenity sunlight (sun-hours on open space) ───────────────────────────────────
+section('sunlight')
+{
+  const space = rectSite(60, 60) // 3600 m² open space
+  const noObstacle = amenitySunlight(space, [], { lat: 40.7, lng: -74, month: 6, n: 10 })
+  ok('with no obstacles every sample gets the full daylight hours', noObstacle.daylightHours > 0 && noObstacle.avgSunHours === noObstacle.daylightHours && noObstacle.sunlitFraction2h === 100)
+  ok('the hourly arc spans the requested window and reports altitude', noObstacle.moments.length === 18 - 7 + 1 && noObstacle.moments.some((m) => m.altitude > 0))
+  ok('the grid samples only points inside the open space', noObstacle.grid.length > 0 && noObstacle.grid.length <= 100)
+  // a tall block on the south side casts shadow north into the space → less sun
+  const block = [{ footprint: [{ x: -30, z: -45 }, { x: 30, z: -45 }, { x: 30, z: -30 }, { x: -30, z: -30 }], height: 60 }]
+  const shaded = amenitySunlight(space, block, { lat: 40.7, lng: -74, month: 6, n: 10 })
+  ok('an obstacle reduces average sun-hours on the space', shaded.avgSunHours < noObstacle.avgSunHours)
+  ok('a taller obstacle shades more than a shorter one', amenitySunlight(space, [{ ...block[0], height: 120 }], { lat: 40.7, lng: -74, month: 6, n: 10 }).avgSunHours <= shaded.avgSunHours)
+  ok('points under an obstacle footprint are excluded from the grid', amenitySunlight(space, block, { lat: 40.7, lng: -74, month: 6, n: 10 }).grid.every((g) => !(g.x >= -30 && g.x <= 30 && g.z >= -45 && g.z <= -30)))
+  ok('winter shades the space more than summer (lower sun)', amenitySunlight(space, block, { lat: 40.7, lng: -74, month: 12, n: 10 }).avgSunHours < shaded.avgSunHours)
+  ok('the ≥2h sunlit fraction is a 0–100% share', shaded.sunlitFraction2h >= 0 && shaded.sunlitFraction2h <= 100 && shaded.sunlitArea2h >= 0)
+  ok('per-moment sunlit fraction is 0 when the sun is down', noObstacle.moments.filter((m) => m.altitude <= 0).every((m) => m.sunlitFraction === 0))
+  ok('sunlight CSV carries the hourly arc + headline metrics', (() => { const c = sunlightCsv(shaded); return /Hour,Altitude,Sunlit/.test(c) && /Average sun-hours/.test(c) && /Share ≥2h/.test(c) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────
