@@ -73,6 +73,7 @@ import { accommodation, accommodationCsv, DEFAULT_UNIT_TYPES } from './unit-mix.
 import { obligations, obligationsCsv, AFFORDABLE_TENURES } from './obligations.ts'
 import { amenitySunlight, sunlightCsv } from './sunlight.ts'
 import { feasibilityReport } from './feasibility-report.ts'
+import { optimizeMassing, massingCsv } from './massing-optimize.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -2068,6 +2069,26 @@ section('feasibility-report')
   ok('headline figures are interpolated (GDV, IRR, units)', md.includes('GDV') && /IRR|n\/a/.test(md) && new RegExp(`${a.totalUnits}`).test(md))
   ok('the environmental section appears only when supplied', !/Daylight, sunlight & overshadowing/.test(md) && /Daylight, sunlight & overshadowing/.test(feasibilityReport({ zoning: z, proposedGFA: 9000, proposedStoreys: 14, feasibility: f, accommodation: a, obligations: o, appraisal: ap, scenarios: sc, sunlight: amenitySunlight(site, [], { lat: 40.7, lng: -74, n: 8 }) })))
   ok('a non-compliant scheme is flagged in the report', (() => { const z2 = buildZoning({ boundary: site, far: 1, heightLimit: 10, setback: 6, maxCoverage: 30, storeyHeight: 3.6, proposedGFA: 9000, proposedStoreys: 14, podium: 0, towerSetback: 0, skyBase: 0, skyStep: 0 }); const md2 = feasibilityReport({ zoning: z2, proposedGFA: 9000, proposedStoreys: 14, feasibility: f, accommodation: a, obligations: o, appraisal: ap, scenarios: sc }); return /Non-compliant/.test(md2) && /Breaches:/.test(md2) })())
+}
+
+// ── massing design-space optimiser (Pareto frontier) ─────────────────────────────
+section('massing-optimize')
+{
+  const rules = { boundary: rectSite(60, 45), far: 5, heightLimit: 70, setback: 5, maxCoverage: 55, storeyHeight: 3.5, podium: 0, towerSetback: 0, skyBase: 0, skyStep: 0 }
+  const feasInput = { mix: { residential: 0.6, office: 0.25, retail: 0.15 }, investmentYield: 0.06, targetMarginPct: 18 }
+  const s = optimizeMassing(rules, feasInput)
+  ok('the sweep produces many candidate massings', s.candidates.length > 10)
+  ok('every candidate carries gfa / height / rlv / compliance', s.candidates.every((c) => c.gfa >= 0 && c.height >= 0 && typeof c.rlv === 'number' && typeof c.compliant === 'boolean'))
+  ok('no candidate exceeds the height limit', s.candidates.every((c) => c.height <= rules.heightLimit + 1e-6))
+  ok('the frontier is a subset of the compliant candidates', s.frontier.every((c) => c.compliant && s.candidates.includes(c)))
+  ok('frontier points are flagged onFrontier', s.frontier.every((c) => c.onFrontier) && s.candidates.filter((c) => c.onFrontier).length === s.frontier.length)
+  ok('the frontier is Pareto-optimal — no point dominates another on value & height', s.frontier.every((c) => !s.frontier.some((o) => o !== c && o.rlv >= c.rlv && o.height <= c.height && (o.rlv > c.rlv || o.height < c.height))))
+  ok('the frontier is sorted by height ascending', s.frontier.every((c, i) => i === 0 || s.frontier[i - 1].height <= c.height))
+  ok('along the frontier, more value costs more height', (() => { if (s.frontier.length < 2) return true; for (let i = 1; i < s.frontier.length; i++) if (s.frontier[i].rlv < s.frontier[i - 1].rlv) return false; return true })())
+  ok('max-GFA and max-value candidates are identified + compliant', !!s.maxGfa && !!s.maxValue && s.maxGfa.compliant && s.maxValue.compliant)
+  ok('the most-compact near-optimal is no taller than the max-value scheme', !!s.mostCompact && !!s.maxValue && s.mostCompact.height <= s.maxValue.height && s.mostCompact.rlv >= s.maxValue.rlv * 0.95)
+  ok('a tighter height limit shrinks the design space', optimizeMassing({ ...rules, heightLimit: 21 }, feasInput).candidates.length < s.candidates.length)
+  ok('massing CSV lists every candidate with a frontier flag', (() => { const c = massingCsv(s); return /Storeys,Podium/.test(c) && /On frontier/.test(c) && c.split('\n').length === s.candidates.length + 1 })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────

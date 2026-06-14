@@ -179,6 +179,18 @@ try {
   ok('the day is broken into an hourly sunlit-share arc', /7:00/.test(sl) && /12:00/.test(sl))
   ok('an amenity sunlight CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-sunlight] button')].some((b) => /CSV/.test(b.textContent || ''))))
 
+  // ── massing optimiser ──
+  const mass = await text('[data-massing]')
+  ok('a massing optimiser card is present with the frontier', /Massing optimiser/i.test(mass) && /frontier/i.test(mass))
+  ok('it recommends peak-value / most-GFA / most-compact schemes', /Peak value/i.test(mass) && /Most GFA/i.test(mass) && /Most compact/i.test(mass))
+  ok('the value/height frontier chart is drawn', await page.evaluate(() => !!document.querySelector('[data-massing] svg[aria-label="Massing value versus height frontier"]')))
+  ok('a massing CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-massing] button')].some((b) => /CSV/.test(b.textContent || ''))))
+  const gfaBeforeMass = num(await page.evaluate(() => document.body.innerText), /Capacity used[\s\S]{0,20}?(\d+)%/)
+  await page.evaluate(() => { const b = [...document.querySelectorAll('[data-massing] button')].find((x) => /Apply/.test(x.textContent || '')); b?.click() })
+  await wait(700)
+  const gfaAfterMass = num(await page.evaluate(() => document.body.innerText), /Capacity used[\s\S]{0,20}?(\d+)%/)
+  ok('applying a recommended massing updates the scheme', Number.isFinite(gfaAfterMass), { gfaBeforeMass, gfaAfterMass })
+
   // ── feasibility report ──
   const rep = await text('[data-report]')
   ok('a feasibility report card is present with a preview', /Feasibility report/i.test(rep) && /Executive summary/i.test(rep))
