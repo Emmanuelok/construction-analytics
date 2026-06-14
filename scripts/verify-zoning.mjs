@@ -171,6 +171,14 @@ try {
   const ctx1 = await page.evaluate(() => document.querySelector('[data-context] table')?.innerText || '')
   ok('changing a neighbour height re-runs the study', !raised || ctx1 !== ctx0, { raised })
 
+  // ── amenity sunlight ──
+  const sl = await text('[data-sunlight]')
+  ok('an amenity sunlight card is present', /Sunlight on open space/i.test(sl) && /sun-hours/i.test(sl) && /Amenity area/i.test(sl))
+  ok('it reports avg sun-hours + a ≥2h sunlit share', /Avg sun-hours/i.test(sl) && /≥2h sunlit/i.test(sl))
+  ok('the sun-hours heat map is drawn', await page.evaluate(() => !!document.querySelector('[data-sunlight] svg[aria-label="Amenity sun-hours heat map"]')))
+  ok('the day is broken into an hourly sunlit-share arc', /7:00/.test(sl) && /12:00/.test(sl))
+  ok('an amenity sunlight CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-sunlight] button')].some((b) => /CSV/.test(b.textContent || ''))))
+
   // existing compliance still works
   ok('the live compliance KPI still renders', /Compliant|Non-compliant/.test(await page.evaluate(() => document.body.innerText)))
 

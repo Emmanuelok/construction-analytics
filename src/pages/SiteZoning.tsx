@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
@@ -22,6 +22,7 @@ import { appraise, quarterly, appraisalCsv } from '@/lib/appraisal'
 import { tornado, dataTable, scenarios, sensitivityCsv, METRIC_LABEL, type Metric, type ScenarioBase, type TornadoBar, type DataTable as SensDataTable } from '@/lib/sensitivity'
 import { accommodation, accommodationCsv, DEFAULT_UNIT_TYPES, type UnitMix } from '@/lib/unit-mix'
 import { obligations, obligationsCsv, AFFORDABLE_TENURES, TENURE_LABEL, type AffordableTenure } from '@/lib/obligations'
+import { amenitySunlight, sunlightCsv, type SunObstacle, type AmenitySunlight } from '@/lib/sunlight'
 import { LineTrend } from '@/components/charts'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
@@ -140,6 +141,13 @@ export default function SiteZoning() {
   const shadow = useMemo(() => (footprintPoly.length >= 3 ? shadowStudy(footprintPoly, z.proposed.height, { lat: anchor.lat, lng: anchor.lng, month: shadowMonth }) : null), [footprintPoly, z.proposed.height, anchor.lat, anchor.lng, shadowMonth])
   const nbList = useMemo(() => neighbours ?? defaultNeighbours(boundary, 8, 24), [neighbours, boundary])
   const context = useMemo(() => (contextOn && footprintPoly.length >= 3 ? overshadowing(footprintPoly, z.proposed.height, nbList, { lat: anchor.lat, lng: anchor.lng, month: shadowMonth }) : null), [contextOn, footprintPoly, z.proposed.height, nbList, anchor.lat, anchor.lng, shadowMonth])
+  // amenity sunlight — sun-hours on the open ground, shadowed by the proposal (+ neighbours when context is on)
+  const sunObstacles = useMemo<SunObstacle[]>(() => {
+    const obs: SunObstacle[] = footprintPoly.length >= 3 ? [{ footprint: footprintPoly, height: z.proposed.height }] : []
+    if (contextOn) obs.push(...nbList.map((nb) => ({ footprint: nb.footprint, height: nb.height })))
+    return obs
+  }, [footprintPoly, z.proposed.height, contextOn, nbList])
+  const sunlight = useMemo<AmenitySunlight | null>(() => { const space = z.buildable.length >= 3 ? z.buildable : boundary; return space.length >= 3 ? amenitySunlight(space, sunObstacles, { lat: anchor.lat, lng: anchor.lng, month: shadowMonth }) : null }, [z.buildable, boundary, sunObstacles, anchor.lat, anchor.lng, shadowMonth])
   const valueOpt = useMemo(() => maximizeValue({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, setbacks: perEdge ? { front: frontSb, side: sideSb, rear: rearSb } : undefined }, { mix, investmentYield: investYield / 100, targetMarginPct: targetMargin }), [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, perEdge, frontSb, sideSb, rearSb, mix, investYield, targetMargin])
   const maximizeValueScheme = () => { setProposedGFA(valueOpt.proposedGFA); setProposedStoreys(valueOpt.proposedStoreys) }
   const setNbHeight = (id: string, h: number) => setNeighbours(nbList.map((n) => (n.id === id ? { ...n, height: h } : n)))
@@ -918,6 +926,45 @@ export default function SiteZoning() {
         )}
       </Card>
 
+      {/* amenity sunlight — sun-hours on open space */}
+      {sunlight && (
+        <Card data-sunlight>
+          <CardHeader
+            icon={Sunrise} accent="lime" title="Sunlight on open space (amenity)"
+            subtitle={`How much sun reaches the open ground at this latitude — the proposal's own massing${contextOn ? ' and the context neighbours' : ''} cast shadow across the day. Averages ${sunlight.avgSunHours}h of sun, with ${sunlight.sunlitFraction2h}% of the amenity meeting a ≥2h target. BRE assesses amenity sunlight on 21 March — switch the month in the shadow card to test it.`}
+            action={<button onClick={() => downloadText('site-amenity-sunlight.csv', sunlightCsv(sunlight), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+          />
+          <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-5">
+            <Metric label="Amenity area" value={`${formatNumber(sunlight.area)} m²`} sub="open ground" />
+            <Metric label="Avg sun-hours" value={`${sunlight.avgSunHours}h`} sub={`of ${sunlight.daylightHours}h daylight`} />
+            <Metric label="≥2h sunlit" value={`${sunlight.sunlitFraction2h}%`} sub={`${formatNumber(sunlight.sunlitArea2h)} m²`} />
+            <Metric label="Best spot" value={`${sunlight.maxSunHours}h`} sub="max sun-hours" />
+            <Metric label="Study month" value={shadowMonth === 6 ? 'June' : shadowMonth === 12 ? 'Dec' : 'Equinox'} sub="solar path" />
+          </div>
+          <div className="grid gap-5 border-t border-edge/50 p-5 lg:grid-cols-2">
+            <div>
+              <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Sun-hours map</div>
+              <SunlightDiagram space={z.buildable.length >= 3 ? z.buildable : boundary} footprint={footprintPoly} grid={sunlight.grid} maxH={Math.max(1, sunlight.daylightHours)} />
+            </div>
+            <div>
+              <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Sunlit share through the day</div>
+              <div className="space-y-1">
+                {sunlight.moments.map((m) => (
+                  <div key={m.label} className="flex items-center gap-2 text-[11px]">
+                    <span className="w-10 shrink-0 text-right text-slate-400">{m.label}</span>
+                    <div className="relative h-3 flex-1 overflow-hidden rounded bg-base/60 ring-1 ring-inset ring-edge/40">
+                      <div className={cn('h-3 rounded', m.altitude <= 0 ? 'bg-slate-700' : 'bg-lime-500/70')} style={{ width: `${m.altitude <= 0 ? 100 : m.sunlitFraction}%` }} />
+                    </div>
+                    <span className="w-16 shrink-0 text-right data-mono text-slate-400">{m.altitude <= 0 ? 'sun down' : `${m.sunlitFraction}%`}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-[11px] leading-relaxed text-slate-500">Each bar is the share of the open space in sun at that hour; the map left accumulates these into sun-hours per point (red = overshadowed, green = open). Turn on context in the card above to include the neighbours' shadows.</p>
+            </div>
+          </div>
+        </Card>
+      )}
+
       {/* A/B scheme comparison */}
       <Card data-compare>
         <CardHeader
@@ -1115,6 +1162,31 @@ function ContextDiagram({ boundary, footprint, neighbours, study, shadows }: { b
       <g fontSize={10} fill="#94a3b8">
         <text x={12} y={H - 24}>▣ <tspan fill="#2dd4bf">Proposed</tspan> · ▢ <tspan fill="#e2e8f0">Site</tspan> · <tspan fill="#38bdf8">day shadow</tspan></text>
         <text x={12} y={H - 10}>Neighbour shading: <tspan fill="#64748b">minor</tspan> · <tspan fill="#f59e0b">moderate</tspan> · <tspan fill="#ef4444">significant</tspan></text>
+      </g>
+    </svg>
+  )
+}
+
+/* Sun-hours heat map: the open space outline, the building footprint, and the
+ * grid sample points coloured red (overshadowed) → amber → green (full sun). */
+function SunlightDiagram({ space, footprint, grid, maxH }: { space: Pt[]; footprint: Pt[]; grid: { x: number; z: number; sunHours: number }[]; maxH: number }) {
+  if (space.length < 3) return <div className="grid h-64 place-items-center rounded-xl bg-[#0a0f1c] text-[11px] text-slate-600">no open space</div>
+  const xs = space.map((p) => p.x), zs = space.map((p) => p.z)
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs)
+  const W = 460, H = 320, pad = 18
+  const s = Math.min((W - pad * 2) / Math.max(1, maxX - minX), (H - pad * 2) / Math.max(1, maxZ - minZ))
+  const ox = (W - (maxX - minX) * s) / 2, oz = (H - (maxZ - minZ) * s) / 2
+  const sx = (x: number) => ox + (x - minX) * s, sy = (z: number) => oz + (maxZ - z) * s
+  const path = (pts: Pt[]) => pts.map((p) => `${sx(p.x).toFixed(1)},${sy(p.z).toFixed(1)}`).join(' ')
+  const cell = Math.max(4, (s * Math.max(1, maxX - minX)) / Math.sqrt(Math.max(1, grid.length)) * 0.8)
+  const colour = (h: number) => { const t = Math.max(0, Math.min(1, h / maxH)); const r = t < 0.5 ? 244 : Math.round(244 - (t - 0.5) * 2 * (244 - 16)); const g = t < 0.5 ? Math.round(63 + t * 2 * (185 - 63)) : 185; const b = t < 0.5 ? 94 - Math.round(t * 2 * 30) : Math.round(64 + (t - 0.5) * 2 * 65); return `rgb(${r},${g},${b})` }
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full rounded-xl bg-[#0a0f1c]" role="img" aria-label="Amenity sun-hours heat map">
+      <polygon points={path(space)} fill="#0e1626" stroke="#475569" strokeWidth={1.2} />
+      {grid.map((p, i) => <rect key={i} x={sx(p.x) - cell / 2} y={sy(p.z) - cell / 2} width={cell} height={cell} rx={1} fill={colour(p.sunHours)} fillOpacity={0.85} />)}
+      {footprint.length >= 3 && <polygon points={path(footprint)} fill="#0a0f1c" fillOpacity={0.85} stroke="#94a3b8" strokeWidth={1.2} strokeDasharray="3 2" />}
+      <g fontSize={10} fill="#94a3b8">
+        <text x={12} y={H - 12}><tspan fill="#f43f5e">■</tspan> overshadowed · <tspan fill="#10b981">■</tspan> full sun ({maxH}h) · ▢ building</text>
       </g>
     </svg>
   )
