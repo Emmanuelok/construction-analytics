@@ -1,0 +1,60 @@
+/* Headless verification of the Critical Path Method (CPM) scheduler on
+ * /cost-schedule: the Gantt renders, the critical path is shown, editing a
+ * critical task's duration moves the project finish, and slack on a non-critical
+ * task does not. Run: node scripts/verify-schedule.mjs */
+import puppeteer from 'puppeteer'
+
+const BASE = process.env.BASE || 'http://localhost:4173/construction-analytics'
+const browser = await puppeteer.launch({ headless: 'new', protocolTimeout: 120000, args: ['--no-sandbox', '--disable-setuid-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist'] })
+let failures = 0
+const ok = (n, c, extra) => { if (c) console.log(`✓ ${n}`); else { failures++; console.error(`✗ ${n}`, extra ?? '') } }
+const page = await browser.newPage()
+const errors = []
+page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+page.on('pageerror', (e) => errors.push(String(e)))
+await page.evaluateOnNewDocument(() => {
+  localStorage.setItem('aec-profile', JSON.stringify({ name: 'T', role: 'PM', disciplines: [], sectors: [], goals: [], experience: 'pro', onboarded: true }))
+  sessionStorage.setItem('aec-onb-seen', '1')
+})
+const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+const text = (s) => page.evaluate((x) => document.querySelector(x)?.innerText || '', s)
+const num = (s, re) => { const m = (s || '').match(re); return m ? Number(m[1].replace(/,/g, '')) : NaN }
+const setNumber = (aria, v) => page.evaluate(({ a, val }) => { const el = document.querySelector(`input[aria-label="${a}"]`); if (!el) return false; const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; set.call(el, String(val)); el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return true }, { a: aria, val: v })
+
+try {
+  await page.goto(BASE + '/cost-schedule', { waitUntil: 'domcontentloaded', timeout: 30000 })
+  await page.waitForSelector('[data-cpm]', { timeout: 25000 })
+  await wait(1200)
+
+  const cpm = await text('[data-cpm]')
+  ok('a critical path schedule (CPM) card is present', /Critical path schedule/i.test(cpm) && /working days/i.test(cpm))
+  ok('it reports duration, finish, critical tasks + float', /Duration/i.test(cpm) && /Finish/i.test(cpm) && /Critical tasks/i.test(cpm) && /float/i.test(cpm))
+  ok('the critical path is listed', /Critical path/i.test(cpm) && /Mobilisation/i.test(cpm) && /Handover/i.test(cpm))
+  ok('the task table is editable (duration inputs)', await page.evaluate(() => document.querySelectorAll('[data-cpm] input[type="number"]').length >= 10))
+  ok('a CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-cpm] button')].some((b) => /CSV/.test(b.textContent || ''))))
+
+  const durBefore = num(await text('[data-cpm]'), /Duration\s*\n?\s*(\d+)\s*days/i)
+  // extend the critical envelope task → project finishes later
+  await setNumber('Envelope & cladding duration', 60)
+  await wait(500)
+  const durAfter = num(await text('[data-cpm]'), /Duration\s*\n?\s*(\d+)\s*days/i)
+  ok('extending the critical envelope task lengthens the project', durAfter > durBefore, { durBefore, durAfter })
+
+  // slack on landscaping (off the critical path) by a small amount → no change
+  await setNumber('Envelope & cladding duration', 30)
+  await wait(300)
+  const dur0 = num(await text('[data-cpm]'), /Duration\s*\n?\s*(\d+)\s*days/i)
+  await setNumber('Landscaping & externals duration', 17)
+  await wait(500)
+  const dur1 = num(await text('[data-cpm]'), /Duration\s*\n?\s*(\d+)\s*days/i)
+  ok('a small slip on a task with float does not move the finish', dur1 === dur0, { dur0, dur1 })
+
+  const realErrors = errors.filter((e) => !/404|favicon|tile|Failed to load resource|ERR_/i.test(e))
+  ok('no console errors', realErrors.length === 0, realErrors.slice(0, 4))
+} catch (e) {
+  failures++
+  console.error('✗ harness error —', e.message)
+}
+await browser.close()
+console.log(failures ? `\n${failures} check(s) failed` : '\nall CPM schedule checks passed')
+process.exit(failures ? 1 : 0)

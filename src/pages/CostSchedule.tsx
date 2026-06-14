@@ -11,8 +11,12 @@ import {
   Plus,
   Trash2,
   Banknote,
+  Network,
+  Download,
 } from 'lucide-react'
 import { Card, CardHeader, Badge, StatTile, PageHeader } from '@/components/ui'
+import { cpm, cpmCsv, DEFAULT_PROGRAMME } from '@/lib/cpm'
+import { downloadText } from '@/lib/download'
 import { BarSeries, ScatterViz } from '@/components/charts'
 import { PROJECTS } from '@/data/platform'
 import { computeEvm, portfolioEvm, evmNarrative, formatMoney, type Evm } from '@/lib/evm'
@@ -52,7 +56,12 @@ export default function CostSchedule() {
     setEdited(true)
   }
   const removeRow = (id: string) => { setRows((rs) => rs.filter((r) => r.id !== id)); setEdited(true) }
-  const reset = () => { setRows(seed()); setEdited(false) }
+  // CPM critical-path scheduler — an editable building programme
+  const [progStart, setProgStart] = useState('2026-01-05')
+  const [durations, setDurations] = useState<Record<string, number>>({})
+  const schedule = useMemo(() => cpm(DEFAULT_PROGRAMME.map((t) => ({ ...t, duration: durations[t.id] ?? t.duration })), { start: progStart }), [durations, progStart])
+  const critSet = useMemo(() => new Set(schedule.criticalPath), [schedule])
+  const reset = () => { setRows(seed()); setEdited(false); setProgStart('2026-01-05'); setDurations({}) }
 
   // EVM per project + portfolio — recomputed live from the editable rows.
   const evms = useMemo(
@@ -250,6 +259,85 @@ export default function CostSchedule() {
               ))}
             </div>
           )}
+        </div>
+      </Card>
+
+      {/* critical path schedule (CPM) */}
+      <Card data-cpm>
+        <CardHeader
+          icon={Network} accent="rose" title="Critical path schedule (CPM)"
+          subtitle={`A finish-to-start construction programme run through the Critical Path Method — forward/backward pass, total float and the critical path. Duration ${schedule.duration} working days (~${Math.round(schedule.duration / 5)} weeks)${schedule.finishDate ? `, finishing ${schedule.finishDate}` : ''}. Edit any duration and the critical path re-solves.`}
+          action={
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1.5 text-xs text-slate-400">Start
+                <input type="date" value={progStart} onChange={(e) => setProgStart(e.target.value)} aria-label="Programme start date" className="rounded-lg border border-edge/60 bg-elevated/50 px-2 py-1 text-xs text-slate-100 focus:border-rose-500/50 focus:outline-none" />
+              </label>
+              <button onClick={() => downloadText('critical-path-schedule.csv', cpmCsv(schedule), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>
+            </div>
+          }
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-4">
+          <StatTile label="Duration" value={`${schedule.duration} days`} icon={Timer} accent="rose" sub={`~${Math.round(schedule.duration / 5)} weeks`} />
+          <StatTile label="Finish" value={schedule.finishDate ?? '—'} icon={CalendarClock} accent="rose" sub={`from ${progStart}`} />
+          <StatTile label="Critical tasks" value={`${critSet.size} / ${schedule.tasks.length}`} icon={Network} accent="rose" sub="zero float" />
+          <StatTile label="Tasks with float" value={`${schedule.tasks.filter((t) => t.totalFloat > 0).length}`} icon={Gauge} accent="rose" sub="can slip without delay" />
+        </div>
+        {/* Gantt */}
+        <div className="space-y-1.5 border-t border-edge/50 p-5">
+          {schedule.tasks.map((t) => (
+            <div key={t.id} className="flex items-center gap-3">
+              <div className="flex w-52 shrink-0 items-center gap-2">
+                <span className={cn('h-2 w-2 shrink-0 rounded-full', t.critical ? 'bg-rose-400' : 'bg-sky-400')} />
+                <span className="truncate text-xs text-slate-300" title={t.name}>{t.name}</span>
+              </div>
+              <div className="relative h-5 flex-1 rounded bg-base/50 ring-1 ring-inset ring-edge/30">
+                {t.totalFloat > 0 && <div className="absolute top-1 h-3 rounded-sm bg-slate-500/30" style={{ left: `${(t.ef / schedule.duration) * 100}%`, width: `${(t.totalFloat / schedule.duration) * 100}%` }} title={`${t.totalFloat}d float`} />}
+                <div className={cn('absolute top-0.5 flex h-4 items-center justify-end rounded px-1.5', t.critical ? 'bg-rose-500/80' : 'bg-sky-500/70')} style={{ left: `${(t.es / schedule.duration) * 100}%`, width: `${Math.max(1, (t.duration / schedule.duration) * 100)}%` }}>
+                  <span className="data-mono text-[9px] text-white/90">{t.duration}d</span>
+                </div>
+              </div>
+              <span className={cn('w-14 shrink-0 text-right data-mono text-[10px]', t.critical ? 'text-rose-300' : 'text-slate-500')}>{t.critical ? 'critical' : `${t.totalFloat}d float`}</span>
+            </div>
+          ))}
+          <div className="flex items-center gap-4 pt-2 text-[11px] text-slate-500">
+            <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-rose-400 align-middle" />Critical path</span>
+            <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-sky-400 align-middle" />Has float</span>
+            <span><span className="mr-1 inline-block h-2 w-3 rounded-sm bg-slate-500/30 align-middle" />Float window</span>
+          </div>
+        </div>
+        {/* editable task table */}
+        <ScrollableTable label="CPM tasks" className="border-t border-edge/50">
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Task', 'Duration', 'Start', 'Finish', 'Float', 'Status'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && i <= 4 && 'text-right')}>{h}</th>)}</tr></thead>
+            <tbody>
+              {schedule.tasks.map((t) => (
+                <tr key={t.id} className="border-b border-edge/30 hover:bg-elevated/40">
+                  <td className="px-3 py-1.5 text-slate-200">{t.name}</td>
+                  <td className="px-3 py-1.5 text-right">
+                    <input type="number" min={1} max={120} value={durations[t.id] ?? t.duration} onChange={(e) => { const v = Number(e.target.value); if (v >= 1) setDurations((d) => ({ ...d, [t.id]: v })) }} aria-label={`${t.name} duration`} className="w-16 rounded border border-edge/60 bg-elevated/40 px-1.5 py-0.5 text-right data-mono text-xs text-slate-100 focus:border-rose-500/50 focus:outline-none" />
+                  </td>
+                  <td className="px-3 py-1.5 text-right data-mono text-slate-400">{t.startDate ?? t.es}</td>
+                  <td className="px-3 py-1.5 text-right data-mono text-slate-400">{t.endDate ?? t.ef}</td>
+                  <td className={cn('px-3 py-1.5 text-right data-mono', t.totalFloat > 0 ? 'text-slate-300' : 'text-rose-300')}>{t.totalFloat}d</td>
+                  <td className="px-3 py-1.5">{t.critical ? <Badge variant="danger">Critical</Badge> : <Badge variant="neutral">Float</Badge>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </ScrollableTable>
+        <div className="border-t border-edge/50 p-4">
+          <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">Critical path</div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {schedule.criticalPath.map((id, i) => {
+              const t = schedule.tasks.find((x) => x.id === id)
+              return (
+                <span key={id} className="inline-flex items-center gap-1.5">
+                  {i > 0 && <span className="text-slate-600">→</span>}
+                  <span className="rounded-md bg-rose-500/10 px-2 py-0.5 text-[11px] text-rose-200 ring-1 ring-inset ring-rose-500/30">{t?.name ?? id}</span>
+                </span>
+              )
+            })}
+          </div>
         </div>
       </Card>
     </div>
