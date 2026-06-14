@@ -72,6 +72,7 @@ import { evaluate as evalScenario, tornado, dataTable, scenarios, sensitivityCsv
 import { accommodation, accommodationCsv, DEFAULT_UNIT_TYPES } from './unit-mix.ts'
 import { obligations, obligationsCsv, AFFORDABLE_TENURES } from './obligations.ts'
 import { amenitySunlight, sunlightCsv } from './sunlight.ts'
+import { feasibilityReport } from './feasibility-report.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -2041,6 +2042,32 @@ section('sunlight')
   ok('the ≥2h sunlit fraction is a 0–100% share', shaded.sunlitFraction2h >= 0 && shaded.sunlitFraction2h <= 100 && shaded.sunlitArea2h >= 0)
   ok('per-moment sunlit fraction is 0 when the sun is down', noObstacle.moments.filter((m) => m.altitude <= 0).every((m) => m.sunlitFraction === 0))
   ok('sunlight CSV carries the hourly arc + headline metrics', (() => { const c = sunlightCsv(shaded); return /Hour,Altitude,Sunlit/.test(c) && /Average sun-hours/.test(c) && /Share ≥2h/.test(c) })())
+}
+
+// ── feasibility report (bundled Markdown deliverable) ────────────────────────────
+section('feasibility-report')
+{
+  const site = rectSite(60, 45)
+  const z = buildZoning({ boundary: site, far: 4, heightLimit: 60, setback: 6, maxCoverage: 55, storeyHeight: 3.6, proposedGFA: 9000, proposedStoreys: 14, podium: 0, towerSetback: 0, skyBase: 0, skyStep: 0 })
+  const f = feasibility({ gfa: 9000, mix: { residential: 0.6, office: 0.25, retail: 0.15 }, siteArea: z.siteArea, buildableArea: z.buildableArea, investmentYield: 0.06, targetMarginPct: 18 })
+  const resiNet = f.lines.find((l) => l.use === 'residential')?.net ?? 0
+  const resiGdv = f.lines.find((l) => l.use === 'residential')?.revenue ?? 0
+  const a = accommodation({ residentialNet: resiNet, mix: { studio: 0.1, '1b': 0.4, '2b': 0.4, '3b': 0.1 }, basePricePerM2: 6500, siteAreaM2: z.siteArea })
+  const o = obligations({ marketGdv: f.gdv, residentialGdv: resiGdv, totalUnits: a.totalUnits, gfa: 9000, affordablePct: 0.3, cilPerM2: 120, s106PerUnit: 8000, totalCostExLand: f.totalCostExLand, benchmarkLandValue: 8_000_000, targetMarginPct: 18 })
+  const saleRev = f.lines.filter((l) => l.tenure === 'sale').reduce((s, l) => s + l.revenue, 0)
+  const invRev = f.lines.filter((l) => l.tenure === 'investment').reduce((s, l) => s + l.revenue, 0)
+  const ap = appraise({ saleRevenue: saleRev, investmentRevenue: invRev, costs: { construction: f.construction, fees: f.fees, contingency: f.contingency, parking: f.parking, demolition: f.demolition, siteWorks: f.siteWorks }, land: f.residualLandValue, programme: { preMonths: 6, constructionMonths: 24, saleMonths: 12 }, annualInterest: 0.075, discountRate: 0.1 })
+  const sb = { gfa: 9000, mix: { residential: 0.6, office: 0.25, retail: 0.15 }, siteArea: z.siteArea, buildableArea: z.buildableArea, investmentYield: 0.06, targetMarginPct: 18, programme: { preMonths: 6, constructionMonths: 24, saleMonths: 12 }, annualInterest: 0.075, discountRate: 0.1, landMode: 'fixed' as const, land: f.residualLandValue }
+  const sc = scenarios(sb, 0.1)
+  const md = feasibilityReport({ title: 'Test scheme', district: 'Downtown', zoning: z, proposedGFA: 9000, proposedStoreys: 14, feasibility: f, accommodation: a, obligations: o, appraisal: ap, scenarios: sc })
+
+  ok('the report is Markdown with a title + executive summary', /^# Test scheme/m.test(md) && /## Executive summary/.test(md))
+  ok('every analysis section is present', ['Zoning & compliance', 'Accommodation schedule', 'Development feasibility', 'Cashflow appraisal', 'Affordable housing & viability', 'Sensitivity & scenarios'].every((s) => md.includes(s)))
+  ok('the accommodation table lists the dwelling types', /Studio/.test(md) && /3 bed/.test(md) && /\*\*Total\*\*/.test(md))
+  ok('the scenario table includes downside / base / upside', /Downside/.test(md) && /Base/.test(md) && /Upside/.test(md))
+  ok('headline figures are interpolated (GDV, IRR, units)', md.includes('GDV') && /IRR|n\/a/.test(md) && new RegExp(`${a.totalUnits}`).test(md))
+  ok('the environmental section appears only when supplied', !/Daylight, sunlight & overshadowing/.test(md) && /Daylight, sunlight & overshadowing/.test(feasibilityReport({ zoning: z, proposedGFA: 9000, proposedStoreys: 14, feasibility: f, accommodation: a, obligations: o, appraisal: ap, scenarios: sc, sunlight: amenitySunlight(site, [], { lat: 40.7, lng: -74, n: 8 }) })))
+  ok('a non-compliant scheme is flagged in the report', (() => { const z2 = buildZoning({ boundary: site, far: 1, heightLimit: 10, setback: 6, maxCoverage: 30, storeyHeight: 3.6, proposedGFA: 9000, proposedStoreys: 14, podium: 0, towerSetback: 0, skyBase: 0, skyStep: 0 }); const md2 = feasibilityReport({ zoning: z2, proposedGFA: 9000, proposedStoreys: 14, feasibility: f, accommodation: a, obligations: o, appraisal: ap, scenarios: sc }); return /Non-compliant/.test(md2) && /Breaches:/.test(md2) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────

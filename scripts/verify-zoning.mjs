@@ -179,6 +179,12 @@ try {
   ok('the day is broken into an hourly sunlit-share arc', /7:00/.test(sl) && /12:00/.test(sl))
   ok('an amenity sunlight CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-sunlight] button')].some((b) => /CSV/.test(b.textContent || ''))))
 
+  // ── feasibility report ──
+  const rep = await text('[data-report]')
+  ok('a feasibility report card is present with a preview', /Feasibility report/i.test(rep) && /Executive summary/i.test(rep))
+  ok('the report preview bundles the analysis sections', /Zoning & compliance/i.test(rep) && /Accommodation schedule/i.test(rep) && /Cashflow appraisal/i.test(rep) && /Affordable housing & viability/i.test(rep))
+  ok('a Markdown report download is offered', await page.evaluate(() => [...document.querySelectorAll('[data-report] button')].some((b) => /Download report/.test(b.textContent || ''))))
+
   // existing compliance still works
   ok('the live compliance KPI still renders', /Compliant|Non-compliant/.test(await page.evaluate(() => document.body.innerText)))
 
