@@ -254,6 +254,17 @@ try {
   ok('the report preview bundles the analysis sections', /Zoning & compliance/i.test(rep) && /Accommodation schedule/i.test(rep) && /Cashflow appraisal/i.test(rep) && /Affordable housing & viability/i.test(rep))
   ok('a Markdown report download is offered', await page.evaluate(() => [...document.querySelectorAll('[data-report] button')].some((b) => /Download report/.test(b.textContent || ''))))
 
+  // ── section jump-nav ──
+  ok('a sticky section jump-nav is present with chips', await page.evaluate(() => { const n = document.querySelector('nav[aria-label="Jump to analysis"]'); return !!n && n.querySelectorAll('button').length >= 10 }))
+  ok('the jump-nav scrolls to a target analysis', await page.evaluate(async () => {
+    const before = window.scrollY
+    const b = [...document.querySelectorAll('nav[aria-label="Jump to analysis"] button')].find((x) => /Report/.test(x.textContent || ''))
+    b?.click(); await new Promise((r) => setTimeout(r, 600))
+    return window.scrollY !== before
+  }))
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await wait(300)
+
   // existing compliance still works
   ok('the live compliance KPI still renders', /Compliant|Non-compliant/.test(await page.evaluate(() => document.body.innerText)))
 
