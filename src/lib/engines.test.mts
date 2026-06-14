@@ -80,6 +80,7 @@ import { drainage, drainageCsv } from './drainage.ts'
 import { biodiversity, biodiversityCsv, habitatUnits, DISTINCTIVENESS_SCORE } from './biodiversity.ts'
 import { daylight, daylightCsv } from './daylight.ts'
 import { cpm, cpmCsv, addWorkingDays, DEFAULT_PROGRAMME } from './cpm.ts'
+import { scheduleRisk, scheduleRiskCsv, triangular } from './schedule-risk.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -2233,6 +2234,26 @@ section('cpm')
   ok('tasks carry calendar dates when a start is given', !!r.tasks[0].startDate && !!r.finishDate)
   ok('a dependency cycle is rejected', (() => { try { cpm([{ id: 'X', name: 'X', duration: 1, deps: ['Y'] }, { id: 'Y', name: 'Y', duration: 1, deps: ['X'] }]); return false } catch { return true } })())
   ok('CPM CSV carries tasks + the critical path', (() => { const c = cpmCsv(r); return /Task,Duration,ES,EF/.test(c) && /Critical path,/.test(c) })())
+}
+
+// ── schedule risk (Monte Carlo / PERT) ───────────────────────────────────────────
+section('schedule-risk')
+{
+  const r = scheduleRisk({ tasks: DEFAULT_PROGRAMME, iterations: 1500, uncertainty: 0.4, seed: 7 })
+  ok('runs the requested iterations', r.iterations === 1500 && r.histogram.reduce((s, b) => s + b.count, 0) === 1500)
+  ok('the deterministic duration matches the plain CPM', r.deterministic === cpm(DEFAULT_PROGRAMME).duration)
+  ok('percentiles are ordered P10 ≤ P50 ≤ P80 ≤ P90', r.p10 <= r.p50 && r.p50 <= r.p80 && r.p80 <= r.p90)
+  ok('merge bias pushes the P50 at/above the deterministic finish', r.p50 >= r.deterministic - 1)
+  ok('the mean sits within the min/max envelope', r.mean >= r.min && r.mean <= r.max)
+  ok('probability of hitting the deterministic date is well under 100%', r.probOnTime < 90 && r.probOnTime >= 0)
+  ok('a generous target raises the probability above a tight one', scheduleRisk({ tasks: DEFAULT_PROGRAMME, iterations: 1500, uncertainty: 0.4, seed: 7, targetDays: r.p90 }).probTarget > scheduleRisk({ tasks: DEFAULT_PROGRAMME, iterations: 1500, uncertainty: 0.4, seed: 7, targetDays: r.p10 }).probTarget)
+  ok('more uncertainty widens the distribution', scheduleRisk({ tasks: DEFAULT_PROGRAMME, iterations: 1500, uncertainty: 0.7, seed: 7 }).stdev > scheduleRisk({ tasks: DEFAULT_PROGRAMME, iterations: 1500, uncertainty: 0.15, seed: 7 }).stdev)
+  ok('the criticality index ranks always-critical tasks at/near 100%', (() => { const sub = r.criticality.find((c) => c.id === 'sub'); return !!sub && sub.index >= 95 })())
+  ok('a high-float task has a low criticality index', (() => { const land = r.criticality.find((c) => c.id === 'land'); return !!land && land.index < 50 })())
+  ok('the run is reproducible with a fixed seed', scheduleRisk({ tasks: DEFAULT_PROGRAMME, iterations: 800, uncertainty: 0.4, seed: 42 }).p50 === scheduleRisk({ tasks: DEFAULT_PROGRAMME, iterations: 800, uncertainty: 0.4, seed: 42 }).p50)
+  ok('triangular sampling stays within [o,p] and respects the mode region', triangular(2, 5, 10, 0) >= 2 && triangular(2, 5, 10, 1) <= 10 && triangular(4, 4, 4, 0.5) === 4)
+  ok('calendar P-dates are produced when a start is given', !!scheduleRisk({ tasks: DEFAULT_PROGRAMME, iterations: 500, seed: 1, start: '2026-01-05' }).pDates?.p80)
+  ok('schedule-risk CSV carries percentiles + criticality', (() => { const c = scheduleRiskCsv(r); return /P80,/.test(c) && /Criticality index/.test(c) && /P\(on deterministic date\)/.test(c) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────

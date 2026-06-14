@@ -13,9 +13,11 @@ import {
   Banknote,
   Network,
   Download,
+  Dices,
 } from 'lucide-react'
 import { Card, CardHeader, Badge, StatTile, PageHeader } from '@/components/ui'
 import { cpm, cpmCsv, DEFAULT_PROGRAMME } from '@/lib/cpm'
+import { scheduleRisk, scheduleRiskCsv, type RiskResult } from '@/lib/schedule-risk'
 import { downloadText } from '@/lib/download'
 import { BarSeries, ScatterViz } from '@/components/charts'
 import { PROJECTS } from '@/data/platform'
@@ -61,7 +63,11 @@ export default function CostSchedule() {
   const [durations, setDurations] = useState<Record<string, number>>({})
   const schedule = useMemo(() => cpm(DEFAULT_PROGRAMME.map((t) => ({ ...t, duration: durations[t.id] ?? t.duration })), { start: progStart }), [durations, progStart])
   const critSet = useMemo(() => new Set(schedule.criticalPath), [schedule])
-  const reset = () => { setRows(seed()); setEdited(false); setProgStart('2026-01-05'); setDurations({}) }
+  // schedule risk (Monte Carlo / PERT) — over the same editable programme
+  const [uncertainty, setUncertainty] = useState(0.4)
+  const [riskIters, setRiskIters] = useState(2000)
+  const risk = useMemo(() => scheduleRisk({ tasks: DEFAULT_PROGRAMME.map((t) => ({ ...t, duration: durations[t.id] ?? t.duration })), iterations: riskIters, uncertainty, start: progStart, seed: 7 }), [durations, riskIters, uncertainty, progStart])
+  const reset = () => { setRows(seed()); setEdited(false); setProgStart('2026-01-05'); setDurations({}); setUncertainty(0.4); setRiskIters(2000) }
 
   // EVM per project + portfolio — recomputed live from the editable rows.
   const evms = useMemo(
@@ -340,6 +346,56 @@ export default function CostSchedule() {
           </div>
         </div>
       </Card>
+
+      {/* schedule risk — Monte Carlo / PERT */}
+      <Card data-risk>
+        <CardHeader
+          icon={Dices} accent="rose" title="Schedule risk — Monte Carlo"
+          subtitle={`The critical-path programme simulated ${risk.iterations.toLocaleString()}× with three-point task durations. The single-point plan finishes in ${risk.deterministic} days, but with realistic variability the P80 is ${risk.p80} days — only a ${risk.probOnTime}% chance of hitting the deterministic date (merge bias). Plan to the P80${risk.pDates ? ` (${risk.pDates.p80})` : ''}.`}
+          action={<button onClick={() => downloadText('schedule-risk.csv', scheduleRiskCsv(risk), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-6">
+          <StatTile label="Deterministic" value={`${risk.deterministic} d`} icon={Network} accent="rose" sub="single-point CPM" />
+          <StatTile label="P50 (likely)" value={`${risk.p50} d`} icon={Dices} accent="rose" sub={risk.pDates?.p50 ?? 'median'} />
+          <StatTile label="P80 (commit)" value={`${risk.p80} d`} icon={Dices} accent="rose" sub={risk.pDates?.p80 ?? '80% confidence'} />
+          <StatTile label="P90" value={`${risk.p90} d`} icon={Dices} accent="rose" sub={risk.pDates?.p90 ?? '90% confidence'} />
+          <StatTile label="On-plan odds" value={`${risk.probOnTime}%`} icon={Gauge} accent="rose" sub="vs deterministic" />
+          <StatTile label="Spread (σ)" value={`${risk.stdev} d`} icon={TrendingUp} accent="rose" sub={`${risk.min}–${risk.max} d range`} />
+        </div>
+        <div className="grid gap-5 border-t border-edge/50 p-5 lg:grid-cols-2">
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Finish-date distribution</div>
+            <RiskHistogram risk={risk} />
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <div className="mb-1 flex items-center justify-between text-sm"><span className="text-slate-300">Task uncertainty</span><span className="data-mono text-slate-200">±{Math.round(uncertainty * 100)}%</span></div>
+                <input type="range" min={0.1} max={0.9} step={0.05} value={uncertainty} onChange={(e) => setUncertainty(Number(e.target.value))} aria-label="Task uncertainty" className="h-1 w-full cursor-pointer accent-rose-500" />
+              </label>
+              <label className="block">
+                <div className="mb-1 flex items-center justify-between text-sm"><span className="text-slate-300">Iterations</span><span className="data-mono text-slate-200">{riskIters.toLocaleString()}</span></div>
+                <select value={riskIters} onChange={(e) => setRiskIters(Number(e.target.value))} aria-label="Iterations" className="w-full rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 focus:border-rose-500/50 focus:outline-none">
+                  {[500, 1000, 2000, 5000].map((v) => <option key={v} value={v}>{v.toLocaleString()}</option>)}
+                </select>
+              </label>
+            </div>
+          </div>
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Criticality index — how often each task drives the finish</div>
+            <div className="space-y-1.5">
+              {risk.criticality.slice(0, 9).map((c) => (
+                <div key={c.id} className="flex items-center gap-2 text-[11px]">
+                  <span className="w-40 shrink-0 truncate text-slate-400" title={c.name}>{c.name}</span>
+                  <div className="relative h-3 flex-1 overflow-hidden rounded bg-base/60 ring-1 ring-inset ring-edge/40">
+                    <div className={cn('h-3 rounded', c.index >= 80 ? 'bg-rose-500/80' : c.index >= 30 ? 'bg-amber-500/70' : 'bg-sky-500/60')} style={{ width: `${c.index}%` }} />
+                  </div>
+                  <span className="w-9 shrink-0 text-right data-mono text-slate-300">{c.index}%</span>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-[11px] leading-relaxed text-slate-500">Tasks with a high criticality index land on the critical path in most simulations — the real schedule risks to protect with float or mitigation, even some that look non-critical in the single-point plan.</p>
+          </div>
+        </div>
+      </Card>
     </div>
   )
 }
@@ -365,5 +421,39 @@ function NumCell({ value, onChange, fmt, step = 1 }: { value: number; onChange: 
         </button>
       )}
     </td>
+  )
+}
+
+/* Monte Carlo finish-date histogram with deterministic / P50 / P80 markers. */
+function RiskHistogram({ risk }: { risk: RiskResult }) {
+  const bars = risk.histogram
+  if (!bars.length) return null
+  const W = 460, H = 180, padL = 8, padR = 8, padB = 26, padT = 10
+  const maxC = Math.max(...bars.map((b) => b.count), 1)
+  const minD = bars[0].day, maxD = bars[bars.length - 1].day
+  const span = Math.max(1, maxD - minD)
+  const plotW = W - padL - padR, plotH = H - padT - padB
+  const bw = plotW / bars.length
+  const X = (day: number) => padL + ((day - minD) / span) * plotW
+  const marker = (day: number, color: string, label: string) => {
+    const x = Math.max(padL, Math.min(W - padR, X(day)))
+    return (
+      <g key={label}>
+        <line x1={x} y1={padT} x2={x} y2={H - padB} stroke={color} strokeWidth={1.5} strokeDasharray="3 2" />
+        <text x={x} y={padT + 8} fontSize={9} fill={color} textAnchor={x > W - 60 ? 'end' : 'middle'}>{label}</text>
+      </g>
+    )
+  }
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full rounded-xl bg-[#0a0f1c]" role="img" aria-label="Finish-date distribution">
+      {bars.map((b, i) => (
+        <rect key={i} x={padL + i * bw + 0.5} width={Math.max(0.5, bw - 1)} y={H - padB - (b.count / maxC) * plotH} height={(b.count / maxC) * plotH} fill="#f43f5e" fillOpacity={0.55} rx={1} />
+      ))}
+      {marker(risk.deterministic, '#94a3b8', `plan ${risk.deterministic}`)}
+      {marker(risk.p50, '#38bdf8', `P50 ${risk.p50}`)}
+      {marker(risk.p80, '#f59e0b', `P80 ${risk.p80}`)}
+      <text x={padL} y={H - 8} fontSize={9} fill="#64748b">{minD}d</text>
+      <text x={W - padR} y={H - 8} fontSize={9} fill="#64748b" textAnchor="end">{maxD}d</text>
+    </svg>
   )
 }

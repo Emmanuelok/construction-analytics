@@ -49,6 +49,19 @@ try {
   const dur1 = num(await text('[data-cpm]'), /Duration\s*\n?\s*(\d+)\s*days/i)
   ok('a small slip on a task with float does not move the finish', dur1 === dur0, { dur0, dur1 })
 
+  // ── schedule risk (Monte Carlo) ──
+  const risk = await text('[data-risk]')
+  ok('a Monte Carlo schedule-risk card is present', /Schedule risk/i.test(risk) && /Monte Carlo/i.test(risk) && /P80/i.test(risk))
+  ok('it reports deterministic vs P50/P80/P90 and on-plan odds', /Deterministic/i.test(risk) && /P50/i.test(risk) && /On-plan odds/i.test(risk))
+  ok('the finish-date distribution histogram is drawn', await page.evaluate(() => !!document.querySelector('[data-risk] svg[aria-label="Finish-date distribution"]')))
+  ok('a criticality index is shown', /Criticality index/i.test(risk))
+  ok('a schedule-risk CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-risk] button')].some((b) => /CSV/.test(b.textContent || ''))))
+  const p80Before = num(await text('[data-risk]'), /P80 \(commit\)\s*\n?\s*(\d+)\s*d/i)
+  await page.evaluate(() => { const el = document.querySelector('input[aria-label="Task uncertainty"]'); if (el) { const s = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; s.call(el, '0.9'); el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })) } })
+  await wait(700)
+  const p80After = num(await text('[data-risk]'), /P80 \(commit\)\s*\n?\s*(\d+)\s*d/i)
+  ok('raising task uncertainty pushes the P80 finish out', p80After >= p80Before, { p80Before, p80After })
+
   const realErrors = errors.filter((e) => !/404|favicon|tile|Failed to load resource|ERR_/i.test(e))
   ok('no console errors', realErrors.length === 0, realErrors.slice(0, 4))
 } catch (e) {
