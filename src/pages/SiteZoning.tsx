@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, FileText, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise, Sparkles } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, FileText, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise, Sparkles, Leaf } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
@@ -25,6 +25,7 @@ import { obligations, obligationsCsv, AFFORDABLE_TENURES, TENURE_LABEL, type Aff
 import { amenitySunlight, sunlightCsv, type SunObstacle, type AmenitySunlight } from '@/lib/sunlight'
 import { feasibilityReport } from '@/lib/feasibility-report'
 import { optimizeMassing, massingCsv, type MassingStudy, type MassingCandidate } from '@/lib/massing-optimize'
+import { massingCarbon, massingCarbonCsv, STRUCTURE_LABEL, type StructureType } from '@/lib/massing-carbon'
 import { LineTrend } from '@/components/charts'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
@@ -89,6 +90,9 @@ export default function SiteZoning() {
   const [cilPerM2, setCilPerM2] = useState(120)
   const [s106PerUnit, setS106PerUnit] = useState(8000)
   const [benchmarkLand, setBenchmarkLand] = useState(8_000_000)
+  const [structureType, setStructureType] = useState<StructureType>('concrete')
+  const [energyIntensity, setEnergyIntensity] = useState(75)
+  const [gridFactor, setGridFactor] = useState(0.15)
   // apply a zoning district: load its rules + programme split
   const applyPreset = (id: string) => {
     const p = presetById(id); if (!p) return
@@ -150,13 +154,15 @@ export default function SiteZoning() {
     return obs
   }, [footprintPoly, z.proposed.height, contextOn, nbList])
   const sunlight = useMemo<AmenitySunlight | null>(() => { const space = z.buildable.length >= 3 ? z.buildable : boundary; return space.length >= 3 ? amenitySunlight(space, sunObstacles, { lat: anchor.lat, lng: anchor.lng, month: shadowMonth }) : null }, [z.buildable, boundary, sunObstacles, anchor.lat, anchor.lng, shadowMonth])
-  // full feasibility report — bundles every engine's output into one Markdown deliverable
-  const report = useMemo(() => feasibilityReport({ title: 'Development feasibility report', district: presetById(presetId)?.label, location: anchor, zoning: z, proposedGFA, proposedStoreys, feasibility: feas, accommodation: accom, obligations: oblig, appraisal, scenarios: scen, shadow, sunlight, context }), [presetId, anchor, z, proposedGFA, proposedStoreys, feas, accom, oblig, appraisal, scen, shadow, sunlight, context])
   const valueOpt = useMemo(() => maximizeValue({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, setbacks: perEdge ? { front: frontSb, side: sideSb, rear: rearSb } : undefined }, { mix, investmentYield: investYield / 100, targetMarginPct: targetMargin }), [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, perEdge, frontSb, sideSb, rearSb, mix, investYield, targetMargin])
   const maximizeValueScheme = () => { setProposedGFA(valueOpt.proposedGFA); setProposedStoreys(valueOpt.proposedStoreys) }
   // massing design-space sweep — value/height Pareto frontier
   const massing = useMemo<MassingStudy>(() => optimizeMassing({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, setbacks: perEdge ? { front: frontSb, side: sideSb, rear: rearSb } : undefined }, { mix, investmentYield: investYield / 100, targetMarginPct: targetMargin }), [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, perEdge, frontSb, sideSb, rearSb, mix, investYield, targetMargin])
   const applyMassing = (c: MassingCandidate) => { setProposedGFA(c.gfa); setProposedStoreys(c.storeys); setPodium(c.podium); setTowerSetback(c.towerSetback) }
+  // whole-life carbon of the massing
+  const carbon = useMemo(() => massingCarbon({ gfa: proposedGFA, structure: structureType, storeys: proposedStoreys, energyIntensity, gridFactor }), [proposedGFA, structureType, proposedStoreys, energyIntensity, gridFactor])
+  // full feasibility report — bundles every engine's output into one Markdown deliverable
+  const report = useMemo(() => feasibilityReport({ title: 'Development feasibility report', district: presetById(presetId)?.label, location: anchor, zoning: z, proposedGFA, proposedStoreys, feasibility: feas, accommodation: accom, obligations: oblig, appraisal, scenarios: scen, shadow, sunlight, context, carbon }), [presetId, anchor, z, proposedGFA, proposedStoreys, feas, accom, oblig, appraisal, scen, shadow, sunlight, context, carbon])
   const setNbHeight = (id: string, h: number) => setNeighbours(nbList.map((n) => (n.id === id ? { ...n, height: h } : n)))
   const pinA = () => setSchemeA({ label: 'A', gfa: Math.round(proposedGFA), storeys: proposedStoreys, height: Math.round(z.proposed.height), compliant: z.compliance.overall, gdv: feas.gdv, rlv: feas.residualLandValue, margin: feas.marginOnCost })
   const schemeB = { label: 'B', gfa: Math.round(proposedGFA), storeys: proposedStoreys, height: Math.round(z.proposed.height), compliant: z.compliance.overall, gdv: feas.gdv, rlv: feas.residualLandValue, margin: feas.marginOnCost }
@@ -170,6 +176,7 @@ export default function SiteZoning() {
     setPreMonths(6); setConstructionMonths(24); setSaleMonths(12); setFacilityRate(7.5); setDiscountRate(10); setUseResidualLand(true); setLandPrice(12_000_000)
     setSensMetric('profit'); setSensSwing(0.1); setUnitMix({ studio: 0.1, '1b': 0.4, '2b': 0.4, '3b': 0.1 })
     setAffordablePct(0.3); setTenureSplit({ socialRent: 0.3, affordableRent: 0.3, sharedOwnership: 0.4 }); setCilPerM2(120); setS106PerUnit(8000); setBenchmarkLand(8_000_000)
+    setStructureType('concrete'); setEnergyIntensity(75); setGridFactor(0.15)
   }
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
@@ -1017,6 +1024,83 @@ export default function SiteZoning() {
           </div>
         </Card>
       )}
+
+      {/* whole-life carbon of the massing */}
+      <Card data-carbon>
+        <CardHeader
+          icon={Leaf} accent="emerald" title="Whole-life carbon"
+          subtitle={`Embodied (A1–A5) + operational (B6) carbon for the massing by structural system, benchmarked against the RIBA 2030 and LETI targets. ${carbon.note}`}
+          action={<button onClick={() => downloadText('site-carbon.csv', massingCarbonCsv(carbon), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="flex flex-wrap items-center gap-2 border-t border-edge/50 p-4">
+          <span className="text-xs text-slate-400">Structure</span>
+          {(['concrete', 'steel', 'hybrid', 'timber'] as StructureType[]).map((s) => (
+            <button key={s} onClick={() => setStructureType(s)} aria-pressed={structureType === s} className={cn('rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-inset', structureType === s ? 'bg-emerald-500/20 text-emerald-100 ring-emerald-500/40' : 'bg-elevated/50 text-slate-300 ring-edge/60 hover:text-white')}>{STRUCTURE_LABEL[s]}</button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="rounded-lg bg-elevated/40 p-2.5">
+            <div className="text-[11px] text-slate-400">Embodied band</div>
+            <div className={cn('text-base font-bold', carbon.embodiedPerM2 < 350 ? 'text-emerald-300' : carbon.embodiedPerM2 < 675 ? 'text-amber-300' : 'text-rose-300')}>{carbon.band}</div>
+            <div className="text-[10px] text-slate-500">{carbon.embodiedPerM2} kgCO₂e/m²</div>
+          </div>
+          <Metric label="Embodied total" value={`${formatNumber(Math.round(carbon.embodiedTotal / 1000))} t`} sub="A1–A5 CO₂e" />
+          <Metric label="Operational" value={`${carbon.operationalPerM2Yr} kg/m²/yr`} sub={`${carbon.operationalPerM2Life} over ${carbon.studyPeriod}y`} />
+          <Metric label="Whole-life" value={`${formatNumber(carbon.wholeLifePerM2)} kg/m²`} sub={`${formatNumber(Math.round(carbon.wholeLifeTotal / 1000))} t CO₂e`} />
+          <Metric label="Biogenic storage" value={carbon.sequestration < 0 ? `${formatNumber(carbon.sequestration)} kg/m²` : '—'} sub={carbon.sequestration < 0 ? 'stored in timber' : 'no timber'} />
+          <Metric label="vs RIBA 2030" value={`${carbon.benchmarks[0].ratioPct}%`} sub={carbon.benchmarks[0].meets ? 'within target' : 'over target'} />
+        </div>
+        <div className="grid gap-5 border-t border-edge/50 p-5 lg:grid-cols-2">
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Embodied carbon by element</div>
+            <div className="mb-3 flex h-4 w-full overflow-hidden rounded-full ring-1 ring-inset ring-edge/50">
+              {carbon.elements.map((e, i) => {
+                const cols = ['bg-slate-500/70', 'bg-emerald-600/70', 'bg-teal-500/70', 'bg-cyan-500/70', 'bg-sky-500/70']
+                const pct = carbon.embodiedPerM2 > 0 ? (e.intensity / carbon.embodiedPerM2) * 100 : 0
+                return pct > 0 ? <div key={e.key} className={cols[i % cols.length]} style={{ width: `${pct}%` }} title={`${e.label}: ${e.intensity}`} /> : null
+              })}
+            </div>
+            <ScrollableTable label="Embodied carbon by element">
+              <table className="w-full min-w-[360px] text-left text-sm">
+                <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Element', 'kgCO₂e/m²', 'Total (t)'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 1 && 'text-right')}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {carbon.elements.map((e) => (
+                    <tr key={e.key} className="border-b border-edge/30">
+                      <td className="px-3 py-1.5 text-slate-200">{e.label}</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-slate-300">{e.intensity}</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-slate-400">{formatNumber(Math.round(e.total / 1000))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </ScrollableTable>
+          </div>
+          <div className="space-y-4">
+            <div>
+              <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Benchmarks (kgCO₂e/m²)</div>
+              <div className="space-y-1.5">
+                {[...carbon.embodiedBenchmarks.map((b) => ({ b, val: carbon.embodiedPerM2, kind: 'Embodied' })), ...carbon.benchmarks.map((b) => ({ b, val: carbon.wholeLifePerM2, kind: 'Whole-life' }))].map(({ b, val, kind }) => {
+                  const max = Math.max(val, b.target) * 1.1
+                  return (
+                    <div key={kind + b.name} className="text-[11px]">
+                      <div className="mb-0.5 flex justify-between"><span className="text-slate-400">{b.name}</span><span className={cn('data-mono', b.meets ? 'text-emerald-300' : 'text-rose-300')}>{b.ratioPct}% {b.meets ? '✓' : '✗'}</span></div>
+                      <div className="relative h-2.5 w-full rounded bg-base/60 ring-1 ring-inset ring-edge/40">
+                        <div className={cn('h-2.5 rounded', b.meets ? 'bg-emerald-500/70' : 'bg-rose-500/70')} style={{ width: `${(val / max) * 100}%` }} />
+                        <div className="absolute top-[-2px] h-3.5 w-0.5 bg-slate-200" style={{ left: `${(b.target / max) * 100}%` }} title={`target ${b.target}`} />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">Bars are the scheme; the white tick is the target. Embodied is the design-stage priority — operational decarbonises with the grid.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Range label="Operational energy" unit="kWh/m²/yr" value={energyIntensity} min={30} max={200} step={5} onChange={setEnergyIntensity} />
+              <Range label="Grid carbon" unit="kg/kWh" value={gridFactor} min={0} max={0.5} step={0.01} onChange={setGridFactor} fmt={(v) => v.toFixed(2)} />
+            </div>
+          </div>
+        </div>
+      </Card>
 
       {/* A/B scheme comparison */}
       <Card data-compare>

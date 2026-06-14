@@ -74,6 +74,7 @@ import { obligations, obligationsCsv, AFFORDABLE_TENURES } from './obligations.t
 import { amenitySunlight, sunlightCsv } from './sunlight.ts'
 import { feasibilityReport } from './feasibility-report.ts'
 import { optimizeMassing, massingCsv } from './massing-optimize.ts'
+import { massingCarbon, massingCarbonCsv, carbonBand, STRUCTURE_LABEL } from './massing-carbon.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -2067,7 +2068,7 @@ section('feasibility-report')
   ok('the accommodation table lists the dwelling types', /Studio/.test(md) && /3 bed/.test(md) && /\*\*Total\*\*/.test(md))
   ok('the scenario table includes downside / base / upside', /Downside/.test(md) && /Base/.test(md) && /Upside/.test(md))
   ok('headline figures are interpolated (GDV, IRR, units)', md.includes('GDV') && /IRR|n\/a/.test(md) && new RegExp(`${a.totalUnits}`).test(md))
-  ok('the environmental section appears only when supplied', !/Daylight, sunlight & overshadowing/.test(md) && /Daylight, sunlight & overshadowing/.test(feasibilityReport({ zoning: z, proposedGFA: 9000, proposedStoreys: 14, feasibility: f, accommodation: a, obligations: o, appraisal: ap, scenarios: sc, sunlight: amenitySunlight(site, [], { lat: 40.7, lng: -74, n: 8 }) })))
+  ok('the environmental section appears only when supplied', !/Daylight, sunlight/.test(md) && /Daylight, sunlight/.test(feasibilityReport({ zoning: z, proposedGFA: 9000, proposedStoreys: 14, feasibility: f, accommodation: a, obligations: o, appraisal: ap, scenarios: sc, sunlight: amenitySunlight(site, [], { lat: 40.7, lng: -74, n: 8 }) })))
   ok('a non-compliant scheme is flagged in the report', (() => { const z2 = buildZoning({ boundary: site, far: 1, heightLimit: 10, setback: 6, maxCoverage: 30, storeyHeight: 3.6, proposedGFA: 9000, proposedStoreys: 14, podium: 0, towerSetback: 0, skyBase: 0, skyStep: 0 }); const md2 = feasibilityReport({ zoning: z2, proposedGFA: 9000, proposedStoreys: 14, feasibility: f, accommodation: a, obligations: o, appraisal: ap, scenarios: sc }); return /Non-compliant/.test(md2) && /Breaches:/.test(md2) })())
 }
 
@@ -2089,6 +2090,25 @@ section('massing-optimize')
   ok('the most-compact near-optimal is no taller than the max-value scheme', !!s.mostCompact && !!s.maxValue && s.mostCompact.height <= s.maxValue.height && s.mostCompact.rlv >= s.maxValue.rlv * 0.95)
   ok('a tighter height limit shrinks the design space', optimizeMassing({ ...rules, heightLimit: 21 }, feasInput).candidates.length < s.candidates.length)
   ok('massing CSV lists every candidate with a frontier flag', (() => { const c = massingCsv(s); return /Storeys,Podium/.test(c) && /On frontier/.test(c) && c.split('\n').length === s.candidates.length + 1 })())
+}
+
+// ── massing whole-life carbon ────────────────────────────────────────────────────
+section('massing-carbon')
+{
+  const conc = massingCarbon({ gfa: 10_000, structure: 'concrete', storeys: 10 })
+  ok('an element line per building element', conc.elements.length === 5 && conc.elements.some((e) => e.key === 'superstructure'))
+  ok('embodied per m² = sum of element intensities', near(conc.embodiedPerM2, conc.elements.reduce((s, e) => s + e.intensity, 0), 0.5))
+  ok('embodied total = per-m² × GFA', near(conc.embodiedTotal, conc.embodiedPerM2 * 10_000, 10))
+  ok('whole-life = embodied + operational over the study period', near(conc.wholeLifePerM2, conc.embodiedPerM2 + conc.operationalPerM2Life, 0.5))
+  ok('operational scales with energy × grid × years', (() => { const c = massingCarbon({ gfa: 1000, structure: 'concrete', storeys: 5, energyIntensity: 100, gridFactor: 0.2, studyPeriod: 60 }); return near(c.operationalPerM2Yr, 20, 0.01) && near(c.operationalPerM2Life, 1200, 1) })())
+  ok('timber cuts embodied carbon sharply vs concrete', massingCarbon({ gfa: 10_000, structure: 'timber', storeys: 10 }).embodiedPerM2 < conc.embodiedPerM2 * 0.85)
+  ok('timber + hybrid carry biogenic sequestration, concrete/steel none', massingCarbon({ gfa: 1, structure: 'timber', storeys: 5 }).sequestration < 0 && massingCarbon({ gfa: 1, structure: 'hybrid', storeys: 5 }).sequestration < 0 && conc.sequestration === 0)
+  ok('a taller tower raises frame intensity per m²', (massingCarbon({ gfa: 10_000, structure: 'concrete', storeys: 30 }).elements.find((e) => e.key === 'superstructure')?.intensity ?? 0) > (conc.elements.find((e) => e.key === 'superstructure')?.intensity ?? 0))
+  ok('the embodied band tightens as intensity falls', carbonBand(90) === 'A++' && carbonBand(300) === 'A' && carbonBand(900) === 'E')
+  ok('benchmarks flag meets/exceeds vs the target', conc.benchmarks.every((b) => typeof b.meets === 'boolean' && b.ratioPct > 0) && conc.benchmarks.some((b) => b.name.includes('RIBA')))
+  ok('a greener grid lowers operational + whole-life carbon', massingCarbon({ gfa: 10_000, structure: 'concrete', storeys: 10, gridFactor: 0.05 }).wholeLifePerM2 < conc.wholeLifePerM2)
+  ok('structure labels cover all four systems', !!STRUCTURE_LABEL.concrete && !!STRUCTURE_LABEL.steel && !!STRUCTURE_LABEL.timber && !!STRUCTURE_LABEL.hybrid)
+  ok('carbon CSV carries elements + benchmarks', (() => { const c = massingCarbonCsv(conc); return /Element,kgCO2e/.test(c) && /Whole-life kgCO2e/.test(c) && /RIBA 2030/.test(c) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────

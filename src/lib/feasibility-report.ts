@@ -17,6 +17,7 @@ import type { Scenario } from './sensitivity'
 import type { ShadowStudy } from './shadow'
 import type { AmenitySunlight } from './sunlight'
 import type { ContextStudy } from './context-shadow'
+import type { MassingCarbon } from './massing-carbon'
 
 export type ReportInput = {
   title?: string
@@ -34,6 +35,7 @@ export type ReportInput = {
   shadow?: ShadowStudy | null
   sunlight?: AmenitySunlight | null
   context?: ContextStudy | null
+  carbon?: MassingCarbon | null
 }
 
 const n = (v: number) => formatNumber(Math.round(v))
@@ -132,11 +134,12 @@ export function feasibilityReport(input: ReportInput): string {
   }
 
   // environmental
-  if (input.shadow || input.sunlight || input.context) {
-    h('## 7. Daylight, sunlight & overshadowing')
+  if (input.shadow || input.sunlight || input.context || input.carbon) {
+    h('## 7. Daylight, sunlight, overshadowing & carbon')
     if (input.shadow) L.push(`- **Shadow:** the mass reaches up to ${n(input.shadow.maxReach)} m and casts ~${n(input.shadow.netShadowArea)} m² of net new shadow at the worst moment.`)
     if (input.sunlight) L.push(`- **Amenity sunlight:** ${n(input.sunlight.area)} m² of open space averages ${input.sunlight.avgSunHours}h of sun, ${pct(input.sunlight.sunlitFraction2h)} meeting the ≥2h target.`)
     if (input.context) L.push(`- **Overshadowing:** worst-affected neighbour is ${input.context.worstNeighbour}; ${n(input.context.totalShadedArea)} m² of neighbour ground shaded at each worst moment.`)
+    if (input.carbon) L.push(`- **Whole-life carbon:** ${input.carbon.embodiedPerM2} kgCO₂e/m² embodied (band ${input.carbon.band}), ${input.carbon.wholeLifePerM2} kgCO₂e/m² whole-life — ${input.carbon.benchmarks[0].meets ? 'within' : 'over'} the RIBA 2030 target.`)
   }
 
   h('---')
