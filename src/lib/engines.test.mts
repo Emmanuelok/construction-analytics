@@ -79,6 +79,7 @@ import { transport, transportCsv, carShare, carOwnershipFor } from './transport.
 import { drainage, drainageCsv } from './drainage.ts'
 import { biodiversity, biodiversityCsv, habitatUnits, DISTINCTIVENESS_SCORE } from './biodiversity.ts'
 import { daylight, daylightCsv } from './daylight.ts'
+import { cpm, cpmCsv, addWorkingDays, DEFAULT_PROGRAMME } from './cpm.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -2202,6 +2203,36 @@ section('daylight')
   ok('the sensitivity curve rises with glazing ratio', (() => { const s = d.sensitivity; return s.length === 5 && s.every((p, i) => i === 0 || p.adf >= s[i - 1].adf) })())
   ok('higher reflectance lifts the ADF', daylight({ roomWidth: 3.6, roomDepth: 5, roomHeight: 2.7, wwr: 0.4, reflectance: 0.7 }).adf > d.adf)
   ok('daylight CSV carries the metrics + glazing sensitivity', (() => { const c = daylightCsv(d); return /Average daylight factor/.test(c) && /Visible sky angle/.test(c) && /Glazing ratio,ADF/.test(c) })())
+}
+
+// ── CPM critical-path scheduler ──────────────────────────────────────────────────
+section('cpm')
+{
+  // simple diamond: A→B→D, A→C→D with B longer ⇒ A,B,D critical, C has float
+  const simple = cpm([
+    { id: 'A', name: 'A', duration: 2, deps: [] },
+    { id: 'B', name: 'B', duration: 5, deps: ['A'] },
+    { id: 'C', name: 'C', duration: 3, deps: ['A'] },
+    { id: 'D', name: 'D', duration: 2, deps: ['B', 'C'] },
+  ])
+  ok('forward pass sets ES/EF from dependencies', simple.tasks.find((t) => t.id === 'B')?.es === 2 && simple.tasks.find((t) => t.id === 'D')?.es === 7)
+  ok('project duration is the longest path', simple.duration === 9)
+  ok('the critical path is the zero-float chain', simple.criticalPath.join('') === 'ABD')
+  ok('the shorter parallel branch carries float', (() => { const c = simple.tasks.find((t) => t.id === 'C'); return !!c && c.totalFloat === 2 && !c.critical })())
+  ok('critical tasks have zero total float', simple.tasks.filter((t) => t.critical).every((t) => t.totalFloat === 0))
+  ok('latest finish never precedes earliest finish', simple.tasks.every((t) => t.lf >= t.ef))
+
+  const r = cpm(DEFAULT_PROGRAMME, { start: '2026-01-05' })
+  ok('the default programme schedules every task', r.tasks.length === DEFAULT_PROGRAMME.length && r.duration > 0)
+  ok('the critical path starts at mobilisation and ends at handover', r.criticalPath[0] === 'mob' && r.criticalPath[r.criticalPath.length - 1] === 'hand')
+  ok('the envelope drives fit-out (longer than MEP first fix) so it is critical', r.criticalPath.includes('env') && !r.criticalPath.includes('land'))
+  ok('landscaping has float (off the critical path)', (r.tasks.find((t) => t.id === 'land')?.totalFloat ?? 0) > 0)
+  ok('shortening the critical envelope shortens the project', cpm(DEFAULT_PROGRAMME.map((t) => (t.id === 'env' ? { ...t, duration: 10 } : t))).duration < r.duration)
+  ok('extending a non-critical task by less than its float does not move the finish', cpm(DEFAULT_PROGRAMME.map((t) => (t.id === 'land' ? { ...t, duration: t.duration + 3 } : t))).duration === r.duration)
+  ok('working-day dates skip weekends', addWorkingDays('2026-01-05', 5) === '2026-01-12' && addWorkingDays('2026-01-09', 1) === '2026-01-12')
+  ok('tasks carry calendar dates when a start is given', !!r.tasks[0].startDate && !!r.finishDate)
+  ok('a dependency cycle is rejected', (() => { try { cpm([{ id: 'X', name: 'X', duration: 1, deps: ['Y'] }, { id: 'Y', name: 'Y', duration: 1, deps: ['X'] }]); return false } catch { return true } })())
+  ok('CPM CSV carries tasks + the critical path', (() => { const c = cpmCsv(r); return /Task,Duration,ES,EF/.test(c) && /Critical path,/.test(c) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────
