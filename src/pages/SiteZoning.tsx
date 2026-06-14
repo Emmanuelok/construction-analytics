@@ -256,6 +256,18 @@ export default function SiteZoning() {
         actions={<button onClick={reset} className="btn-ghost"><RotateCcw className="h-4 w-4" /> Reset</button>}
       />
 
+      {/* sticky section jump-nav — the studio has many analyses; this scrolls to each */}
+      <nav aria-label="Jump to analysis" className="sticky top-2 z-20 -mx-1 flex gap-1.5 overflow-x-auto rounded-xl border border-edge/60 bg-surface/85 p-1.5 backdrop-blur-md">
+        {([
+          ['Massing', '[data-massing]'], ['Homes', '[data-accommodation]'], ['Viability', '[data-obligations]'],
+          ['Feasibility', '[data-feasibility]'], ['Appraisal', '[data-appraisal]'], ['Risk', '[data-sensitivity]'],
+          ['Carbon', '[data-carbon]'], ['Transport', '[data-transport]'], ['Drainage', '[data-drainage]'],
+          ['Biodiversity', '[data-biodiversity]'], ['Daylight', '[data-daylight]'], ['Shadow', '[data-shadow]'], ['Report', '[data-report]'],
+        ] as [string, string][]).map(([label, sel]) => (
+          <button key={sel} onClick={() => { const el = document.querySelector(sel); if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 72, behavior: 'smooth' }) }} className="shrink-0 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-300 ring-1 ring-inset ring-edge/50 hover:bg-elevated/60 hover:text-white">{label}</button>
+        ))}
+      </nav>
+
       {/* compliance + capacity KPIs */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatTile label="Site area" value={`${formatNumber(Math.round(z.siteArea))} m²`} icon={Maximize2} accent="teal" sub={`${formatNumber(Math.round(z.sitePerimeter))} m perimeter`} />
