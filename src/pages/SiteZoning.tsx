@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, FileText, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, FileText, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise, Sparkles } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
@@ -24,6 +24,7 @@ import { accommodation, accommodationCsv, DEFAULT_UNIT_TYPES, type UnitMix } fro
 import { obligations, obligationsCsv, AFFORDABLE_TENURES, TENURE_LABEL, type AffordableTenure } from '@/lib/obligations'
 import { amenitySunlight, sunlightCsv, type SunObstacle, type AmenitySunlight } from '@/lib/sunlight'
 import { feasibilityReport } from '@/lib/feasibility-report'
+import { optimizeMassing, massingCsv, type MassingStudy, type MassingCandidate } from '@/lib/massing-optimize'
 import { LineTrend } from '@/components/charts'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
@@ -153,6 +154,9 @@ export default function SiteZoning() {
   const report = useMemo(() => feasibilityReport({ title: 'Development feasibility report', district: presetById(presetId)?.label, location: anchor, zoning: z, proposedGFA, proposedStoreys, feasibility: feas, accommodation: accom, obligations: oblig, appraisal, scenarios: scen, shadow, sunlight, context }), [presetId, anchor, z, proposedGFA, proposedStoreys, feas, accom, oblig, appraisal, scen, shadow, sunlight, context])
   const valueOpt = useMemo(() => maximizeValue({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, setbacks: perEdge ? { front: frontSb, side: sideSb, rear: rearSb } : undefined }, { mix, investmentYield: investYield / 100, targetMarginPct: targetMargin }), [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, perEdge, frontSb, sideSb, rearSb, mix, investYield, targetMargin])
   const maximizeValueScheme = () => { setProposedGFA(valueOpt.proposedGFA); setProposedStoreys(valueOpt.proposedStoreys) }
+  // massing design-space sweep — value/height Pareto frontier
+  const massing = useMemo<MassingStudy>(() => optimizeMassing({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, setbacks: perEdge ? { front: frontSb, side: sideSb, rear: rearSb } : undefined }, { mix, investmentYield: investYield / 100, targetMarginPct: targetMargin }), [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, perEdge, frontSb, sideSb, rearSb, mix, investYield, targetMargin])
+  const applyMassing = (c: MassingCandidate) => { setProposedGFA(c.gfa); setProposedStoreys(c.storeys); setPodium(c.podium); setTowerSetback(c.towerSetback) }
   const setNbHeight = (id: string, h: number) => setNeighbours(nbList.map((n) => (n.id === id ? { ...n, height: h } : n)))
   const pinA = () => setSchemeA({ label: 'A', gfa: Math.round(proposedGFA), storeys: proposedStoreys, height: Math.round(z.proposed.height), compliant: z.compliance.overall, gdv: feas.gdv, rlv: feas.residualLandValue, margin: feas.marginOnCost })
   const schemeB = { label: 'B', gfa: Math.round(proposedGFA), storeys: proposedStoreys, height: Math.round(z.proposed.height), compliant: z.compliance.overall, gdv: feas.gdv, rlv: feas.residualLandValue, margin: feas.marginOnCost }
@@ -553,6 +557,52 @@ export default function SiteZoning() {
             </table>
           </ScrollableTable>
           <p className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-500"><Car className="h-3.5 w-3.5 shrink-0" /> {formatNumber(feas.parkingBays)} parking bays required from the programme ({formatCurrency(feas.parking, { compact: true })}). Default rates: resi ${DEFAULT_RATES.residential.buildCost}/m² build · ${DEFAULT_RATES.residential.salePrice}/m² sale; office/retail capitalised at {investYield}%. Tune the mix, margin and yield above.</p>
+        </div>
+      </Card>
+
+      {/* massing design-space optimiser — value / height frontier */}
+      <Card data-massing>
+        <CardHeader
+          icon={Sparkles} accent="blue" title="Massing optimiser — value vs height frontier"
+          subtitle={`Sweeps the whole massing design space — storey count, podium fraction and tower setback — and maps the trade-off between residual land value and building height. ${massing.note} Points on the frontier are the efficient choices: you can't win more value without building taller.`}
+          action={<button onClick={() => downloadText('site-massing.csv', massingCsv(massing), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid gap-5 border-t border-edge/50 p-5 lg:grid-cols-2">
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Value / height frontier — {massing.candidates.length} options swept</div>
+            <MassingFrontier study={massing} current={{ height: z.proposed.height, rlv: feas.residualLandValue }} />
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">Each dot is a massing option (compliant = blue, breaching zoning = faint red). The line links the value/height frontier; gold marks peak value, the ring marks your current scheme.</p>
+          </div>
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Recommended schemes</div>
+            <div className="space-y-2">
+              {([['Peak value', massing.maxValue, 'emerald'], ['Most GFA', massing.maxGfa, 'sky'], ['Most compact (≥95% value)', massing.mostCompact, 'violet']] as [string, MassingCandidate | undefined, string][]).map(([label, c]) => c && (
+                <div key={label} className="flex items-center justify-between gap-2 rounded-lg border border-edge/60 bg-base/40 px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-slate-200">{label}</div>
+                    <div className="truncate text-[11px] text-slate-400">{c.storeys} storeys · {formatNumber(c.gfa)} m² · {formatNumber(c.height)} m{c.podium > 0 ? ` · podium ${Math.round(c.podium * 100)}%/tower −${Math.round(c.towerSetback * 100)}%` : ''} · land {formatCurrency(c.rlv, { compact: true })}</div>
+                  </div>
+                  <button onClick={() => applyMassing(c)} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-blue-500/15 px-2.5 py-1 text-xs font-medium text-blue-200 ring-1 ring-inset ring-blue-500/40 hover:bg-blue-500/25">Apply</button>
+                </div>
+              ))}
+            </div>
+            <ScrollableTable label="Massing frontier schemes" className="mt-3">
+              <table className="w-full min-w-[420px] text-left text-sm">
+                <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Storeys', 'Massing', 'GFA', 'Height', 'Residual land'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 2 && 'text-right')}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {massing.frontier.map((c, i) => (
+                    <tr key={i} className="border-b border-edge/30 hover:bg-elevated/40 cursor-pointer" onClick={() => applyMassing(c)}>
+                      <td className="px-3 py-1.5 font-medium text-slate-200">{c.storeys}</td>
+                      <td className="px-3 py-1.5 text-slate-400">{c.podium > 0 ? `Podium+tower` : 'Flat'}</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-slate-300">{formatNumber(c.gfa)}</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-slate-400">{formatNumber(c.height)} m</td>
+                      <td className="data-mono px-3 py-1.5 text-right text-emerald-300/90">{formatCurrency(c.rlv, { compact: true })}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </ScrollableTable>
+          </div>
         </div>
       </Card>
 
@@ -1203,6 +1253,36 @@ function SunlightDiagram({ space, footprint, grid, maxH }: { space: Pt[]; footpr
       <g fontSize={10} fill="#94a3b8">
         <text x={12} y={H - 12}><tspan fill="#f43f5e">■</tspan> overshadowed · <tspan fill="#10b981">■</tspan> full sun ({maxH}h) · ▢ building</text>
       </g>
+    </svg>
+  )
+}
+
+/* Massing scatter: every swept option as a dot (height × residual land value),
+ * the value/height Pareto frontier as a line, peak value gold, current ringed. */
+function MassingFrontier({ study, current }: { study: MassingStudy; current: { height: number; rlv: number } }) {
+  const pts = study.candidates
+  if (!pts.length) return <div className="grid h-64 place-items-center rounded-xl bg-[#0a0f1c] text-[11px] text-slate-600">no massing options</div>
+  const W = 460, H = 300, padL = 50, padR = 14, padT = 14, padB = 30
+  const hs = [...pts.map((c) => c.height), current.height], vs = [...pts.map((c) => c.rlv), current.rlv, 0]
+  const minH = Math.min(...hs), maxH = Math.max(...hs), maxV = Math.max(...vs, 1)
+  const X = (h: number) => padL + (maxH === minH ? 0.5 : (h - minH) / (maxH - minH)) * (W - padL - padR)
+  const Y = (v: number) => H - padB - (v / maxV) * (H - padT - padB)
+  const fmtV = (v: number) => formatCurrency(v, { compact: true })
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full rounded-xl bg-[#0a0f1c]" role="img" aria-label="Massing value versus height frontier">
+      <line x1={padL} y1={padT} x2={padL} y2={H - padB} stroke="#334155" strokeWidth={1} />
+      <line x1={padL} y1={H - padB} x2={W - padR} y2={H - padB} stroke="#334155" strokeWidth={1} />
+      {[0, 0.5, 1].map((t) => <text key={t} x={padL - 5} y={Y(maxV * t) + 3} fontSize={9} fill="#64748b" textAnchor="end">{fmtV(maxV * t)}</text>)}
+      <text x={(padL + W - padR) / 2} y={H - 6} fontSize={9.5} fill="#94a3b8" textAnchor="middle">building height (m) →</text>
+      <text x={W - padR} y={H - padB + 14} fontSize={9} fill="#64748b" textAnchor="end">{formatNumber(maxH)}</text>
+      <text x={padL} y={H - padB + 14} fontSize={9} fill="#64748b">{formatNumber(minH)}</text>
+      {/* non-frontier candidates */}
+      {pts.map((c, i) => !c.onFrontier && <circle key={i} cx={X(c.height)} cy={Y(c.rlv)} r={3} fill={c.compliant ? '#3b82f6' : '#ef4444'} fillOpacity={c.compliant ? 0.5 : 0.25} />)}
+      {/* frontier line + points */}
+      {study.frontier.length > 1 && <polyline points={study.frontier.map((c) => `${X(c.height)},${Y(c.rlv)}`).join(' ')} fill="none" stroke="#34d399" strokeWidth={1.5} strokeOpacity={0.7} />}
+      {study.frontier.map((c, i) => <circle key={`f${i}`} cx={X(c.height)} cy={Y(c.rlv)} r={3.5} fill="#34d399" />)}
+      {study.maxValue && <circle cx={X(study.maxValue.height)} cy={Y(study.maxValue.rlv)} r={5} fill="#fbbf24" stroke="#0a0f1c" strokeWidth={1} />}
+      <circle cx={X(current.height)} cy={Y(current.rlv)} r={6} fill="none" stroke="#e2e8f0" strokeWidth={1.6} />
     </svg>
   )
 }
