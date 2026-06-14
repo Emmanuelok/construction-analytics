@@ -191,6 +191,18 @@ try {
   const gfaAfterMass = num(await page.evaluate(() => document.body.innerText), /Capacity used[\s\S]{0,20}?(\d+)%/)
   ok('applying a recommended massing updates the scheme', Number.isFinite(gfaAfterMass), { gfaBeforeMass, gfaAfterMass })
 
+  // ── whole-life carbon ──
+  const carb = await text('[data-carbon]')
+  ok('a whole-life carbon card is present', /Whole-life carbon/i.test(carb) && /Embodied band/i.test(carb) && /Whole-life/i.test(carb))
+  ok('it offers the four structural systems', /Concrete frame/i.test(carb) && /Steel frame/i.test(carb) && /Mass timber/i.test(carb) && /Hybrid/i.test(carb))
+  ok('it benchmarks against RIBA / LETI targets', /RIBA 2030/i.test(carb) && /LETI/i.test(carb))
+  ok('a carbon CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-carbon] button')].some((b) => /CSV/.test(b.textContent || ''))))
+  const carb0 = await page.evaluate(() => document.querySelector('[data-carbon]')?.innerText || '')
+  await page.evaluate(() => { const b = [...document.querySelectorAll('[data-carbon] button')].find((x) => /Mass timber/.test(x.textContent || '')); b?.click() })
+  await wait(700)
+  const carb1 = await page.evaluate(() => document.querySelector('[data-carbon]')?.innerText || '')
+  ok('switching to mass timber recomputes the carbon (lower embodied)', carb1 !== carb0 && /biogenic|storage|timber/i.test(carb1))
+
   // ── feasibility report ──
   const rep = await text('[data-report]')
   ok('a feasibility report card is present with a preview', /Feasibility report/i.test(rep) && /Executive summary/i.test(rep))
