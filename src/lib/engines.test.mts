@@ -2072,8 +2072,20 @@ section('feasibility-report')
   ok('the accommodation table lists the dwelling types', /Studio/.test(md) && /3 bed/.test(md) && /\*\*Total\*\*/.test(md))
   ok('the scenario table includes downside / base / upside', /Downside/.test(md) && /Base/.test(md) && /Upside/.test(md))
   ok('headline figures are interpolated (GDV, IRR, units)', md.includes('GDV') && /IRR|n\/a/.test(md) && new RegExp(`${a.totalUnits}`).test(md))
-  ok('the environmental section appears only when supplied', !/Daylight, sunlight/.test(md) && /Daylight, sunlight/.test(feasibilityReport({ zoning: z, proposedGFA: 9000, proposedStoreys: 14, feasibility: f, accommodation: a, obligations: o, appraisal: ap, scenarios: sc, sunlight: amenitySunlight(site, [], { lat: 40.7, lng: -74, n: 8 }) })))
+  ok('the environmental section appears only when supplied', !/## 7\. Environmental/.test(md) && /## 7\. Environmental/.test(feasibilityReport({ zoning: z, proposedGFA: 9000, proposedStoreys: 14, feasibility: f, accommodation: a, obligations: o, appraisal: ap, scenarios: sc, sunlight: amenitySunlight(site, [], { lat: 40.7, lng: -74, n: 8 }) })))
   ok('a non-compliant scheme is flagged in the report', (() => { const z2 = buildZoning({ boundary: site, far: 1, heightLimit: 10, setback: 6, maxCoverage: 30, storeyHeight: 3.6, proposedGFA: 9000, proposedStoreys: 14, podium: 0, towerSetback: 0, skyBase: 0, skyStep: 0 }); const md2 = feasibilityReport({ zoning: z2, proposedGFA: 9000, proposedStoreys: 14, feasibility: f, accommodation: a, obligations: o, appraisal: ap, scenarios: sc }); return /Non-compliant/.test(md2) && /Breaches:/.test(md2) })())
+  ok('the environmental section folds in carbon, drainage, biodiversity & daylight when supplied', (() => {
+    const full = feasibilityReport({ zoning: z, proposedGFA: 9000, proposedStoreys: 14, feasibility: f, accommodation: a, obligations: o, appraisal: ap, scenarios: sc,
+      carbon: massingCarbon({ gfa: 9000, structure: 'concrete', storeys: 14 }),
+      drainage: drainage({ siteArea: z.siteArea, footprint: 800 }),
+      biodiversity: biodiversity({ siteAreaM2: z.siteArea, footprintM2: 800, hardstandingM2: 400, baseline: { distinctiveness: 'low', condition: 'moderate' }, proposedGreen: { distinctiveness: 'medium', condition: 'good' } }),
+      daylight: daylight({ roomWidth: 3.6, roomDepth: 5, roomHeight: 2.7, wwr: 0.4 }) })
+    return /Whole-life carbon/.test(full) && /Drainage \(SuDS\)/.test(full) && /Biodiversity net gain/.test(full) && /Interior daylight/.test(full)
+  })())
+  ok('a transport & access section appears when supplied', (() => {
+    const withT = feasibilityReport({ zoning: z, proposedGFA: 9000, proposedStoreys: 14, feasibility: f, accommodation: a, obligations: o, appraisal: ap, scenarios: sc, transport: transport({ residentialUnits: 60, officeNet: 1000, retailNet: 500, transitLevel: 3, parkingSupply: 80 }) })
+    return /## 8\. Transport & access/.test(withT) && /Trip generation/.test(withT) && /Parking/.test(withT)
+  })())
 }
 
 // ── massing design-space optimiser (Pareto frontier) ─────────────────────────────

@@ -18,6 +18,10 @@ import type { ShadowStudy } from './shadow'
 import type { AmenitySunlight } from './sunlight'
 import type { ContextStudy } from './context-shadow'
 import type { MassingCarbon } from './massing-carbon'
+import type { Transport } from './transport'
+import type { Drainage } from './drainage'
+import type { Bng } from './biodiversity'
+import type { Daylight } from './daylight'
 
 export type ReportInput = {
   title?: string
@@ -36,6 +40,10 @@ export type ReportInput = {
   sunlight?: AmenitySunlight | null
   context?: ContextStudy | null
   carbon?: MassingCarbon | null
+  daylight?: Daylight | null
+  drainage?: Drainage | null
+  biodiversity?: Bng | null
+  transport?: Transport | null
 }
 
 const n = (v: number) => formatNumber(Math.round(v))
@@ -134,12 +142,24 @@ export function feasibilityReport(input: ReportInput): string {
   }
 
   // environmental
-  if (input.shadow || input.sunlight || input.context || input.carbon) {
-    h('## 7. Daylight, sunlight, overshadowing & carbon')
+  if (input.shadow || input.sunlight || input.context || input.carbon || input.daylight || input.drainage || input.biodiversity) {
+    h('## 7. Environmental')
     if (input.shadow) L.push(`- **Shadow:** the mass reaches up to ${n(input.shadow.maxReach)} m and casts ~${n(input.shadow.netShadowArea)} m² of net new shadow at the worst moment.`)
     if (input.sunlight) L.push(`- **Amenity sunlight:** ${n(input.sunlight.area)} m² of open space averages ${input.sunlight.avgSunHours}h of sun, ${pct(input.sunlight.sunlitFraction2h)} meeting the ≥2h target.`)
+    if (input.daylight) L.push(`- **Interior daylight:** ${input.daylight.adf}% average daylight factor (${input.daylight.verdict.toLowerCase()}) at a ${Math.round(input.daylight.skyAngle)}° sky angle.`)
     if (input.context) L.push(`- **Overshadowing:** worst-affected neighbour is ${input.context.worstNeighbour}; ${n(input.context.totalShadedArea)} m² of neighbour ground shaded at each worst moment.`)
     if (input.carbon) L.push(`- **Whole-life carbon:** ${input.carbon.embodiedPerM2} kgCO₂e/m² embodied (band ${input.carbon.band}), ${input.carbon.wholeLifePerM2} kgCO₂e/m² whole-life — ${input.carbon.benchmarks[0].meets ? 'within' : 'over'} the RIBA 2030 target.`)
+    if (input.drainage) L.push(`- **Drainage (SuDS):** ${input.drainage.imperviousPct}% impervious, ${n(input.drainage.peakRunoff)} l/s peak limited to ${n(input.drainage.allowableDischarge)} l/s — ${n(input.drainage.attenuationVolume)} m³ of attenuation (${input.drainage.bettermentPct}% betterment).`)
+    if (input.biodiversity) L.push(`- **Biodiversity net gain:** ${input.biodiversity.netGainPct >= 0 ? '+' : ''}${input.biodiversity.netGainPct}% (${input.biodiversity.baselineUnits} → ${input.biodiversity.postUnits} units) — ${input.biodiversity.meets ? 'meets' : 'short of'} the +${input.biodiversity.target}% requirement.`)
+  }
+
+  // transport
+  if (input.transport) {
+    const t = input.transport
+    h('## 8. Transport & access')
+    L.push(`- **Trip generation:** ${n(t.person.daily)} daily person-trips (${n(t.person.am)} AM / ${n(t.person.pm)} PM peak); ${n(t.vehicle.daily)} car trips/day at ${pct(t.mode.car * 100)} car mode (${t.accessibility.label} accessibility).`)
+    L.push(`- **Sustainable transport:** ${pct(t.sustainableShare)} of trips by non-car modes; car ownership ${t.carOwnership}/dwelling.`)
+    L.push(`- **Parking:** ${t.parking.demand} bays demand vs ${t.parking.supply} supply — ${t.parking.balance >= 0 ? `surplus of ${t.parking.balance}` : `shortfall of ${-t.parking.balance}`} bays.`)
   }
 
   h('---')
