@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, FileText, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise, Sparkles, Leaf, Route } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, FileText, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise, Sparkles, Leaf, Route, Droplets } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
@@ -27,6 +27,7 @@ import { feasibilityReport } from '@/lib/feasibility-report'
 import { optimizeMassing, massingCsv, type MassingStudy, type MassingCandidate } from '@/lib/massing-optimize'
 import { massingCarbon, massingCarbonCsv, STRUCTURE_LABEL, type StructureType } from '@/lib/massing-carbon'
 import { transport, transportCsv } from '@/lib/transport'
+import { drainage, drainageCsv } from '@/lib/drainage'
 import { LineTrend } from '@/components/charts'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
@@ -95,6 +96,10 @@ export default function SiteZoning() {
   const [energyIntensity, setEnergyIntensity] = useState(75)
   const [gridFactor, setGridFactor] = useState(0.15)
   const [transitLevel, setTransitLevel] = useState(3)
+  const [hardstandingFrac, setHardstandingFrac] = useState(0.4)
+  const [stormIntensity, setStormIntensity] = useState(50)
+  const [climateFactor, setClimateFactor] = useState(1.4)
+  const [greenfieldRate, setGreenfieldRate] = useState(7)
   // apply a zoning district: load its rules + programme split
   const applyPreset = (id: string) => {
     const p = presetById(id); if (!p) return
@@ -165,6 +170,8 @@ export default function SiteZoning() {
   const carbon = useMemo(() => massingCarbon({ gfa: proposedGFA, structure: structureType, storeys: proposedStoreys, energyIntensity, gridFactor }), [proposedGFA, structureType, proposedStoreys, energyIntensity, gridFactor])
   // transport & access — trip generation, modal split, parking demand vs supply
   const transit = useMemo(() => transport({ residentialUnits: accom.totalUnits, officeNet: feas.lines.find((l) => l.use === 'office')?.net ?? 0, retailNet: feas.lines.find((l) => l.use === 'retail')?.net ?? 0, transitLevel, parkingSupply: feas.parkingBays }), [accom.totalUnits, feas, transitLevel])
+  // drainage & flood (SuDS) — runoff, greenfield limit, attenuation storage
+  const drain = useMemo(() => drainage({ siteArea: z.siteArea, footprint: z.proposed.footprint, hardstandingFrac, intensity: stormIntensity, climateFactor, greenfieldRate }), [z.siteArea, z.proposed.footprint, hardstandingFrac, stormIntensity, climateFactor, greenfieldRate])
   // full feasibility report — bundles every engine's output into one Markdown deliverable
   const report = useMemo(() => feasibilityReport({ title: 'Development feasibility report', district: presetById(presetId)?.label, location: anchor, zoning: z, proposedGFA, proposedStoreys, feasibility: feas, accommodation: accom, obligations: oblig, appraisal, scenarios: scen, shadow, sunlight, context, carbon }), [presetId, anchor, z, proposedGFA, proposedStoreys, feas, accom, oblig, appraisal, scen, shadow, sunlight, context, carbon])
   const setNbHeight = (id: string, h: number) => setNeighbours(nbList.map((n) => (n.id === id ? { ...n, height: h } : n)))
@@ -181,6 +188,7 @@ export default function SiteZoning() {
     setSensMetric('profit'); setSensSwing(0.1); setUnitMix({ studio: 0.1, '1b': 0.4, '2b': 0.4, '3b': 0.1 })
     setAffordablePct(0.3); setTenureSplit({ socialRent: 0.3, affordableRent: 0.3, sharedOwnership: 0.4 }); setCilPerM2(120); setS106PerUnit(8000); setBenchmarkLand(8_000_000)
     setStructureType('concrete'); setEnergyIntensity(75); setGridFactor(0.15); setTransitLevel(3)
+    setHardstandingFrac(0.4); setStormIntensity(50); setClimateFactor(1.4); setGreenfieldRate(7)
   }
   const importGeo = () => {
     const pts = parseGeoBoundary(geoText)
@@ -1169,6 +1177,53 @@ export default function SiteZoning() {
                 </tbody>
               </table>
             </ScrollableTable>
+          </div>
+        </div>
+      </Card>
+
+      {/* drainage & flood (SuDS) */}
+      <Card data-drainage>
+        <CardHeader
+          icon={Droplets} accent="cyan" title="Drainage & flood (SuDS)"
+          subtitle={`Surface-water runoff and the attenuation the scheme must provide. ${drain.verdict}`}
+          action={<button onClick={() => downloadText('site-drainage.csv', drainageCsv(drain), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-6">
+          <Metric label="Impervious" value={`${drain.imperviousPct}%`} sub={`${formatNumber(drain.imperviousArea)} m²`} />
+          <Metric label="Runoff coeff." value={`${drain.compositeC}`} sub={`@ ${drain.effectiveIntensity} mm/hr`} />
+          <Metric label="Peak runoff" value={`${formatNumber(drain.peakRunoff)} l/s`} sub="developed" />
+          <Metric label="Allowable" value={`${formatNumber(drain.allowableDischarge)} l/s`} sub="greenfield limit" />
+          <Metric label="Betterment" value={`${drain.bettermentPct}%`} sub="vs developed" />
+          <Metric label="Attenuation" value={`${formatNumber(drain.attenuationVolume)} m³`} sub="storage needed" />
+        </div>
+        <div className="grid gap-5 border-t border-edge/50 p-5 lg:grid-cols-2">
+          <div className="space-y-3">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Surface split</div>
+            <div className="flex h-4 w-full overflow-hidden rounded-full ring-1 ring-inset ring-edge/50">
+              <div className="bg-slate-500/70" style={{ width: `${drain.imperviousPct}%` }} title={`Impervious ${drain.imperviousPct}%`} />
+              <div className="bg-emerald-500/70" style={{ width: `${100 - drain.imperviousPct}%` }} title={`Pervious ${100 - drain.imperviousPct}%`} />
+            </div>
+            <div className="flex gap-4 text-[11px] text-slate-400">
+              <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-slate-500/70 align-middle" />Impervious {formatNumber(drain.imperviousArea)} m²</span>
+              <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-emerald-500/70 align-middle" />Pervious {formatNumber(drain.perviousArea)} m²</span>
+            </div>
+            <Range label="Hardstanding (of open area)" unit="%" value={Math.round(hardstandingFrac * 100)} min={0} max={100} step={5} onChange={(v) => setHardstandingFrac(v / 100)} />
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Num label="Storm intensity" unit="mm/hr" value={stormIntensity} step={5} onChange={setStormIntensity} />
+              <Num label="Climate factor" unit="×" value={climateFactor} step={0.1} onChange={setClimateFactor} />
+              <Num label="Greenfield" unit="l/s/ha" value={greenfieldRate} step={1} onChange={setGreenfieldRate} />
+            </div>
+          </div>
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Recommended SuDS train</div>
+            <ul className="space-y-2">
+              {drain.suds.map((s, i) => (
+                <li key={i} className="flex items-start gap-2 rounded-lg border border-edge/60 bg-base/40 px-3 py-2 text-[13px] text-slate-300">
+                  <Droplets className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-400" /> {s}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-[11px] leading-relaxed text-slate-500">Discharge is held to the greenfield rate by a flow control; the difference over the {climateFactor}× climate-adjusted storm is stored ({formatNumber(drain.attenuationVolume)} m³). Permeable surfaces and green roofs reduce both the runoff and the storage needed.</p>
           </div>
         </div>
       </Card>
