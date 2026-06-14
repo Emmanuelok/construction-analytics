@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise } from 'lucide-react'
+import { Map as MapIcon, Maximize2, Building2, Layers, CheckCircle2, XCircle, RotateCcw, Upload, AlertTriangle, Download, FileJson, FileText, MousePointerClick, Crosshair, Landmark, Wand2, DollarSign, Car, Sun, GitCompare, Pin, Building, TrendingUp, LineChart, CalendarClock, Activity, Home, Scale, Sunrise } from 'lucide-react'
 import { PageHeader, StatTile, Card, CardHeader, Badge, Tabs } from '@/components/ui'
 import { SitePlan } from '@/components/SitePlan'
 import { cn } from '@/lib/cn'
@@ -23,6 +23,7 @@ import { tornado, dataTable, scenarios, sensitivityCsv, METRIC_LABEL, type Metri
 import { accommodation, accommodationCsv, DEFAULT_UNIT_TYPES, type UnitMix } from '@/lib/unit-mix'
 import { obligations, obligationsCsv, AFFORDABLE_TENURES, TENURE_LABEL, type AffordableTenure } from '@/lib/obligations'
 import { amenitySunlight, sunlightCsv, type SunObstacle, type AmenitySunlight } from '@/lib/sunlight'
+import { feasibilityReport } from '@/lib/feasibility-report'
 import { LineTrend } from '@/components/charts'
 const SiteMap = lazy(() => import('@/components/SiteMap').then((m) => ({ default: m.SiteMap })))
 
@@ -148,6 +149,8 @@ export default function SiteZoning() {
     return obs
   }, [footprintPoly, z.proposed.height, contextOn, nbList])
   const sunlight = useMemo<AmenitySunlight | null>(() => { const space = z.buildable.length >= 3 ? z.buildable : boundary; return space.length >= 3 ? amenitySunlight(space, sunObstacles, { lat: anchor.lat, lng: anchor.lng, month: shadowMonth }) : null }, [z.buildable, boundary, sunObstacles, anchor.lat, anchor.lng, shadowMonth])
+  // full feasibility report — bundles every engine's output into one Markdown deliverable
+  const report = useMemo(() => feasibilityReport({ title: 'Development feasibility report', district: presetById(presetId)?.label, location: anchor, zoning: z, proposedGFA, proposedStoreys, feasibility: feas, accommodation: accom, obligations: oblig, appraisal, scenarios: scen, shadow, sunlight, context }), [presetId, anchor, z, proposedGFA, proposedStoreys, feas, accom, oblig, appraisal, scen, shadow, sunlight, context])
   const valueOpt = useMemo(() => maximizeValue({ boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, setbacks: perEdge ? { front: frontSb, side: sideSb, rear: rearSb } : undefined }, { mix, investmentYield: investYield / 100, targetMarginPct: targetMargin }), [boundary, far, heightLimit, setback, maxCoverage, storeyHeight, podium, towerSetback, skyBase, skyStep, perEdge, frontSb, sideSb, rearSb, mix, investYield, targetMargin])
   const maximizeValueScheme = () => { setProposedGFA(valueOpt.proposedGFA); setProposedStoreys(valueOpt.proposedStoreys) }
   const setNbHeight = (id: string, h: number) => setNeighbours(nbList.map((n) => (n.id === id ? { ...n, height: h } : n)))
@@ -1047,6 +1050,18 @@ export default function SiteZoning() {
             </tbody>
           </table>
         </ScrollableTable>
+      </Card>
+
+      {/* full feasibility report */}
+      <Card data-report>
+        <CardHeader
+          icon={FileText} accent="emerald" title="Feasibility report"
+          subtitle="Every section of this studio — zoning compliance, the accommodation schedule, the development pro forma, the cashflow appraisal, affordable housing & viability, the scenario cone and the daylight/sunlight summary — bundled into one Markdown document you can hand to an investment committee or a planning authority. Regenerates live from the model above."
+          action={<button onClick={() => downloadText('feasibility-report.md', report, 'MD')} className="btn-primary"><FileText className="h-4 w-4" /> Download report (.md)</button>}
+        />
+        <div className="border-t border-edge/50 p-5">
+          <pre tabIndex={0} className="max-h-96 overflow-auto rounded-xl border border-edge/50 bg-base/60 p-4 text-[12px] leading-relaxed text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50" role="region" aria-label="Feasibility report preview">{report}</pre>
+        </div>
       </Card>
 
       {/* GIS import */}
