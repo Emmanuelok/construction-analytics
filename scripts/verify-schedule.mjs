@@ -62,6 +62,13 @@ try {
   const p80After = num(await text('[data-risk]'), /P80 \(commit\)\s*\n?\s*(\d+)\s*d/i)
   ok('raising task uncertainty pushes the P80 finish out', p80After >= p80Before, { p80Before, p80After })
 
+  // ── cost-loaded schedule (S-curve) ──
+  const sc = await text('[data-scurve]')
+  ok('a cost-loaded S-curve card is present', /Cost-loaded schedule/i.test(sc) && /Total cost/i.test(sc) && /Peak drawdown/i.test(sc))
+  ok('the S-curve chart is drawn', await page.evaluate(() => !!document.querySelector('[data-scurve] svg[aria-label="Cost S-curve"]')))
+  ok('the period table shows cumulative + % complete', /Cumulative/i.test(sc) && /% complete/i.test(sc))
+  ok('a cost-loading CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-scurve] button')].some((b) => /CSV/.test(b.textContent || ''))))
+
   const realErrors = errors.filter((e) => !/404|favicon|tile|Failed to load resource|ERR_/i.test(e))
   ok('no console errors', realErrors.length === 0, realErrors.slice(0, 4))
 } catch (e) {

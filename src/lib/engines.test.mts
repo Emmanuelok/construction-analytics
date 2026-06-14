@@ -81,6 +81,7 @@ import { biodiversity, biodiversityCsv, habitatUnits, DISTINCTIVENESS_SCORE } fr
 import { daylight, daylightCsv } from './daylight.ts'
 import { cpm, cpmCsv, addWorkingDays, DEFAULT_PROGRAMME } from './cpm.ts'
 import { scheduleRisk, scheduleRiskCsv, triangular } from './schedule-risk.ts'
+import { costLoad, costLoadCsv, GROUP_DAY_RATE } from './cost-loading.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -2254,6 +2255,25 @@ section('schedule-risk')
   ok('triangular sampling stays within [o,p] and respects the mode region', triangular(2, 5, 10, 0) >= 2 && triangular(2, 5, 10, 1) <= 10 && triangular(4, 4, 4, 0.5) === 4)
   ok('calendar P-dates are produced when a start is given', !!scheduleRisk({ tasks: DEFAULT_PROGRAMME, iterations: 500, seed: 1, start: '2026-01-05' }).pDates?.p80)
   ok('schedule-risk CSV carries percentiles + criticality', (() => { const c = scheduleRiskCsv(r); return /P80,/.test(c) && /Criticality index/.test(c) && /P\(on deterministic date\)/.test(c) })())
+}
+
+// ── cost-loaded schedule (S-curve) ───────────────────────────────────────────────
+section('cost-loading')
+{
+  const sched = cpm(DEFAULT_PROGRAMME, { start: '2026-01-05' })
+  const c = costLoad(sched.tasks, { bucketDays: 20, start: '2026-01-05' })
+  ok('every task is costed (duration × day-rate by default)', c.taskCosts.length === DEFAULT_PROGRAMME.length && c.taskCosts.every((t) => t.cost > 0))
+  ok('total cost = sum of task costs', c.totalCost === c.taskCosts.reduce((s, t) => s + t.cost, 0))
+  ok('period spend sums to ~the total cost', near(c.periods.reduce((s, p) => s + p.spend, 0), c.totalCost, c.periods.length + 2))
+  ok('the cumulative curve is monotonic non-decreasing', c.periods.every((p, i) => i === 0 || p.cumulative >= c.periods[i - 1].cumulative))
+  ok('the S-curve ends at ~100%', c.periods[c.periods.length - 1].pct >= 99.5)
+  ok('periods span the project duration', c.periods.length === Math.ceil(sched.duration / 20) && c.durationDays === sched.duration)
+  ok('a peak drawdown period is identified', c.peakSpend > 0 && c.periods.some((p) => p.label === c.peakPeriod && p.spend === c.peakSpend))
+  ok('structure costs more per day than preliminaries', GROUP_DAY_RATE.Structure > GROUP_DAY_RATE.Preliminaries)
+  ok('explicit task costs override the rate default', (() => { const c2 = costLoad(sched.tasks, { costs: { sub: 9_999_999 } }); return c2.taskCosts.find((t) => t.id === 'sub')?.cost === 9_999_999 })())
+  ok('a finer bucket makes more, smaller periods', (() => { const c2 = costLoad(sched.tasks, { bucketDays: 5 }); return c2.periods.length > c.periods.length && c2.peakSpend <= c.peakSpend })())
+  ok('period start dates are produced from the programme start', !!c.periods[0].startDate && !!c.periods[1].startDate)
+  ok('cost-loading CSV carries periods + the S-curve', (() => { const csv = costLoadCsv(c); return /Period,Start day,Spend/.test(csv) && /Peak period spend/.test(csv) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────
