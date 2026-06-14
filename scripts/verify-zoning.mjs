@@ -191,6 +191,17 @@ try {
   const gfaAfterMass = num(await page.evaluate(() => document.body.innerText), /Capacity used[\s\S]{0,20}?(\d+)%/)
   ok('applying a recommended massing updates the scheme', Number.isFinite(gfaAfterMass), { gfaBeforeMass, gfaAfterMass })
 
+  // ── drainage & flood (SuDS) ──
+  const dr = await text('[data-drainage]')
+  ok('a drainage & flood card is present', /Drainage & flood/i.test(dr) && /Peak runoff/i.test(dr) && /Attenuation/i.test(dr))
+  ok('it recommends a SuDS train', /Recommended SuDS/i.test(dr) && /roof/i.test(dr))
+  ok('a drainage CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-drainage] button')].some((b) => /CSV/.test(b.textContent || ''))))
+  const dr0 = await page.evaluate(() => document.querySelector('[data-drainage]')?.innerText || '')
+  await setRange('Hardstanding (of open area)', 100)
+  await wait(700)
+  const dr1 = await page.evaluate(() => document.querySelector('[data-drainage]')?.innerText || '')
+  ok('more hardstanding raises runoff (recomputes)', dr1 !== dr0)
+
   // ── transport & access ──
   const tr = await text('[data-transport]')
   ok('a transport & access card is present', /Transport & access/i.test(tr) && /Daily trips/i.test(tr) && /Mode split/i.test(tr))

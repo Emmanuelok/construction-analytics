@@ -76,6 +76,7 @@ import { feasibilityReport } from './feasibility-report.ts'
 import { optimizeMassing, massingCsv } from './massing-optimize.ts'
 import { massingCarbon, massingCarbonCsv, carbonBand, STRUCTURE_LABEL } from './massing-carbon.ts'
 import { transport, transportCsv, carShare, carOwnershipFor } from './transport.ts'
+import { drainage, drainageCsv } from './drainage.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -2129,6 +2130,25 @@ section('transport')
   ok('the sustainable-transport share is the non-car share', t.sustainableShare === Math.round((1 - t.mode.car) * 100))
   ok('AM and PM peaks are a fraction of daily trips', t.person.am < t.person.daily && t.person.pm < t.person.daily)
   ok('transport CSV carries trips, modes + parking', (() => { const c = transportCsv(t); return /Use,Daily/.test(c) && /Mode,Share/.test(c) && /Parking demand/.test(c) })())
+}
+
+// ── drainage & flood (SuDS) ──────────────────────────────────────────────────────
+section('drainage')
+{
+  const d = drainage({ siteArea: 5000, footprint: 1500, hardstandingFrac: 0.4 })
+  ok('impervious + pervious areas reconcile to the site', d.imperviousArea + d.perviousArea === 5000)
+  ok('impervious = footprint + hardstanding fraction of the open area', d.imperviousArea === 1500 + Math.round((5000 - 1500) * 0.4))
+  ok('the composite runoff coefficient sits between the pervious and impervious bounds', d.compositeC > 0.3 && d.compositeC < 0.9)
+  ok('the design intensity includes the climate uplift', near(d.effectiveIntensity, 50 * 1.4, 0.1))
+  ok('developed peak runoff exceeds the greenfield rate', d.peakRunoff > d.greenfieldRunoff)
+  ok('discharge is limited to greenfield (with a practical minimum)', d.allowableDischarge >= 5 && d.allowableDischarge >= d.greenfieldRunoff - 0.1)
+  ok('attenuation storage holds back the runoff above the allowable rate', d.attenuationVolume > 0 && near(d.attenuationVolume, (d.peakRunoff - d.allowableDischarge) * 2 * 3600 / 1000, 2))
+  ok('betterment is the reduction vs the developed peak', d.bettermentPct > 0 && d.bettermentPct < 100)
+  ok('SuDS components are recommended', d.suds.length > 0 && d.suds.some((s) => /roof/i.test(s)))
+  ok('a more sealed site runs off more + needs more storage', (() => { const sealed = drainage({ siteArea: 5000, footprint: 4500, hardstandingFrac: 0.9 }); return sealed.imperviousPct > d.imperviousPct && sealed.peakRunoff > d.peakRunoff && sealed.attenuationVolume > d.attenuationVolume })())
+  ok('a bigger storm needs more attenuation', drainage({ siteArea: 5000, footprint: 1500, stormDurationHr: 4 }).attenuationVolume > d.attenuationVolume)
+  ok('a greener scheme (less hardstanding) cuts runoff', drainage({ siteArea: 5000, footprint: 1500, hardstandingFrac: 0.1 }).peakRunoff < d.peakRunoff)
+  ok('drainage CSV carries the metrics + SuDS list', (() => { const c = drainageCsv(d); return /Developed peak runoff/.test(c) && /Attenuation storage/.test(c) && /SuDS components/.test(c) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────
