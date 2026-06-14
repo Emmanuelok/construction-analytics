@@ -18,6 +18,7 @@ import {
 import { Card, CardHeader, Badge, StatTile, PageHeader } from '@/components/ui'
 import { cpm, cpmCsv, DEFAULT_PROGRAMME } from '@/lib/cpm'
 import { scheduleRisk, scheduleRiskCsv, type RiskResult } from '@/lib/schedule-risk'
+import { costLoad, costLoadCsv, type CostLoading } from '@/lib/cost-loading'
 import { downloadText } from '@/lib/download'
 import { BarSeries, ScatterViz } from '@/components/charts'
 import { PROJECTS } from '@/data/platform'
@@ -67,6 +68,7 @@ export default function CostSchedule() {
   const [uncertainty, setUncertainty] = useState(0.4)
   const [riskIters, setRiskIters] = useState(2000)
   const risk = useMemo(() => scheduleRisk({ tasks: DEFAULT_PROGRAMME.map((t) => ({ ...t, duration: durations[t.id] ?? t.duration })), iterations: riskIters, uncertainty, start: progStart, seed: 7 }), [durations, riskIters, uncertainty, progStart])
+  const cashflow = useMemo(() => costLoad(schedule.tasks, { bucketDays: 20, start: progStart }), [schedule, progStart])
   const reset = () => { setRows(seed()); setEdited(false); setProgStart('2026-01-05'); setDurations({}); setUncertainty(0.4); setRiskIters(2000) }
 
   // EVM per project + portfolio — recomputed live from the editable rows.
@@ -396,7 +398,67 @@ export default function CostSchedule() {
           </div>
         </div>
       </Card>
+
+      {/* cost-loaded schedule (S-curve) */}
+      <Card data-scurve>
+        <CardHeader
+          icon={Banknote} accent="rose" title="Cost-loaded schedule (S-curve)"
+          subtitle={`The construction cost spread across the critical-path programme — the cashflow a project is funded and tracked against. ${formatMoney(cashflow.totalCost)} over ${cashflow.durationDays} working days, peaking at ${formatMoney(cashflow.peakSpend)} in ${cashflow.peakPeriod}.`}
+          action={<button onClick={() => downloadText('cost-loaded-schedule.csv', costLoadCsv(cashflow), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-4">
+          <StatTile label="Total cost" value={formatMoney(cashflow.totalCost)} icon={Banknote} accent="rose" sub="construction" />
+          <StatTile label="Peak drawdown" value={formatMoney(cashflow.peakSpend)} icon={TrendingUp} accent="rose" sub={`period ${cashflow.peakPeriod}`} />
+          <StatTile label="Periods" value={`${cashflow.periods.length}`} icon={CalendarClock} accent="rose" sub={`${cashflow.bucketDays}-day buckets`} />
+          <StatTile label="Duration" value={`${cashflow.durationDays} d`} icon={Timer} accent="rose" sub="programme" />
+        </div>
+        <div className="border-t border-edge/50 p-5">
+          <CostSCurve cashflow={cashflow} />
+        </div>
+        <ScrollableTable label="Cost-loaded periods" className="border-t border-edge/50">
+          <table className="w-full min-w-[560px] text-left text-sm">
+            <thead><tr className="border-b border-edge/60 text-[11px] uppercase tracking-wide text-slate-500">{['Period', 'Start', 'Spend', 'Cumulative', '% complete'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-medium', i >= 2 && 'text-right')}>{h}</th>)}</tr></thead>
+            <tbody>
+              {cashflow.periods.map((p) => (
+                <tr key={p.label} className="border-b border-edge/30 hover:bg-elevated/40">
+                  <td className="px-3 py-1.5 font-medium text-slate-200">{p.label}</td>
+                  <td className="px-3 py-1.5 data-mono text-slate-400">{p.startDate ?? `day ${p.startDay}`}</td>
+                  <td className="px-3 py-1.5 text-right data-mono text-slate-300">{formatMoney(p.spend)}</td>
+                  <td className="px-3 py-1.5 text-right data-mono text-slate-400">{formatMoney(p.cumulative)}</td>
+                  <td className="px-3 py-1.5 text-right data-mono text-rose-300/80">{p.pct}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </ScrollableTable>
+      </Card>
     </div>
+  )
+}
+
+/* Combo S-curve: period spend bars + a cumulative % line over the programme. */
+function CostSCurve({ cashflow }: { cashflow: CostLoading }) {
+  const ps = cashflow.periods
+  if (!ps.length) return null
+  const W = 720, H = 220, padL = 8, padR = 8, padB = 26, padT = 10
+  const plotW = W - padL - padR, plotH = H - padT - padB
+  const bw = plotW / ps.length
+  const maxSpend = Math.max(...ps.map((p) => p.spend), 1)
+  const X = (i: number) => padL + i * bw
+  const Yc = (pct: number) => padT + (1 - pct / 100) * plotH
+  const linePts = ps.map((p, i) => `${X(i) + bw / 2},${Yc(p.pct)}`).join(' ')
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full rounded-xl bg-[#0a0f1c]" role="img" aria-label="Cost S-curve">
+      {[0, 25, 50, 75, 100].map((g) => <line key={g} x1={padL} y1={Yc(g)} x2={W - padR} y2={Yc(g)} stroke="#16203a" strokeWidth={1} />)}
+      {ps.map((p, i) => (
+        <rect key={i} x={X(i) + bw * 0.15} width={bw * 0.7} y={H - padB - (p.spend / maxSpend) * plotH} height={(p.spend / maxSpend) * plotH} fill="#f43f5e" fillOpacity={0.45} rx={1} />
+      ))}
+      <polyline points={linePts} fill="none" stroke="#38bdf8" strokeWidth={2} />
+      {ps.map((p, i) => <circle key={i} cx={X(i) + bw / 2} cy={Yc(p.pct)} r={2.5} fill="#38bdf8" />)}
+      {ps.map((p, i) => (i % Math.ceil(ps.length / 8) === 0 || i === ps.length - 1) ? <text key={i} x={X(i) + bw / 2} y={H - 8} fontSize={9} fill="#64748b" textAnchor="middle">{p.label}</text> : null)}
+      <text x={padL + 2} y={Yc(100) + 3} fontSize={9} fill="#38bdf8">100%</text>
+      <text x={padL + 2} y={Yc(50) + 3} fontSize={9} fill="#38bdf8">50%</text>
+    </svg>
   )
 }
 
