@@ -69,6 +69,18 @@ try {
   ok('the period table shows cumulative + % complete', /Cumulative/i.test(sc) && /% complete/i.test(sc))
   ok('a cost-loading CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-scurve] button')].some((b) => /CSV/.test(b.textContent || ''))))
 
+  // ── earned value forecast ──
+  const evmf = await text('[data-evmf]')
+  ok('an earned value forecast card is present', /Earned value forecast/i.test(evmf) && /CPI/i.test(evmf) && /SPI/i.test(evmf))
+  ok('it forecasts EAC + VAC against the baseline (BAC)', /Forecast \(EAC\)/i.test(evmf) && /Variance \(VAC\)/i.test(evmf) && /BAC/i.test(evmf))
+  ok('the PV/EV/AC curve chart is drawn', await page.evaluate(() => !!document.querySelector('[data-evmf] svg[aria-label="EVM curves"]')))
+  ok('an EVM forecast CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-evmf] button')].some((b) => /CSV/.test(b.textContent || ''))))
+  const eac0 = num(await text('[data-evmf]'), /Forecast \(EAC\)\s*\n?\s*\$?([\d.]+)([kmb])?/i)
+  await page.evaluate(() => { const el = document.querySelector('input[aria-label="Actual cost to date"]'); if (el) { const s = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; s.call(el, '2000000'); el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })) } })
+  await wait(500)
+  const evmf2 = await text('[data-evmf]')
+  ok('raising actual cost worsens the forecast (recomputes)', evmf2 !== evmf && /over budget|overrun/i.test(evmf2))
+
   const realErrors = errors.filter((e) => !/404|favicon|tile|Failed to load resource|ERR_/i.test(e))
   ok('no console errors', realErrors.length === 0, realErrors.slice(0, 4))
 } catch (e) {

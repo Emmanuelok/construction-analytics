@@ -14,11 +14,13 @@ import {
   Network,
   Download,
   Dices,
+  Target,
 } from 'lucide-react'
 import { Card, CardHeader, Badge, StatTile, PageHeader } from '@/components/ui'
 import { cpm, cpmCsv, DEFAULT_PROGRAMME } from '@/lib/cpm'
 import { scheduleRisk, scheduleRiskCsv, type RiskResult } from '@/lib/schedule-risk'
 import { costLoad, costLoadCsv, type CostLoading } from '@/lib/cost-loading'
+import { evmForecast, evmForecastCsv, type EvmForecast } from '@/lib/evm-forecast'
 import { downloadText } from '@/lib/download'
 import { BarSeries, ScatterViz } from '@/components/charts'
 import { PROJECTS } from '@/data/platform'
@@ -69,7 +71,12 @@ export default function CostSchedule() {
   const [riskIters, setRiskIters] = useState(2000)
   const risk = useMemo(() => scheduleRisk({ tasks: DEFAULT_PROGRAMME.map((t) => ({ ...t, duration: durations[t.id] ?? t.duration })), iterations: riskIters, uncertainty, start: progStart, seed: 7 }), [durations, riskIters, uncertainty, progStart])
   const cashflow = useMemo(() => costLoad(schedule.tasks, { bucketDays: 20, start: progStart }), [schedule, progStart])
-  const reset = () => { setRows(seed()); setEdited(false); setProgStart('2026-01-05'); setDurations({}); setUncertainty(0.4); setRiskIters(2000) }
+  // earned-value forecast over the cost-loaded baseline
+  const [evmDataPeriod, setEvmDataPeriod] = useState(4)
+  const [evmPct, setEvmPct] = useState(0.4)
+  const [evmActual, setEvmActual] = useState(1_100_000)
+  const evm = useMemo(() => evmForecast({ pv: cashflow.periods.map((p) => p.cumulative), dataDatePeriod: evmDataPeriod, percentComplete: evmPct, actualCost: evmActual, periodLabels: cashflow.periods.map((p) => p.label) }), [cashflow, evmDataPeriod, evmPct, evmActual])
+  const reset = () => { setRows(seed()); setEdited(false); setProgStart('2026-01-05'); setDurations({}); setUncertainty(0.4); setRiskIters(2000); setEvmDataPeriod(4); setEvmPct(0.4); setEvmActual(1_100_000) }
 
   // EVM per project + portfolio — recomputed live from the editable rows.
   const evms = useMemo(
@@ -432,7 +439,81 @@ export default function CostSchedule() {
           </table>
         </ScrollableTable>
       </Card>
+
+      {/* earned value forecast */}
+      <Card data-evmf>
+        <CardHeader
+          icon={Target} accent="rose" title="Earned value forecast"
+          subtitle={`Tracking actuals against the cost-loaded baseline at a data date. ${evm.headline}`}
+          action={<button onClick={() => downloadText('earned-value-forecast.csv', evmForecastCsv(evm), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-3 lg:grid-cols-6">
+          <div className={cn('rounded-lg p-2.5 ring-1 ring-inset', HEALTH[evm.health].variant === 'success' ? 'bg-emerald-500/[0.08] ring-emerald-500/30' : HEALTH[evm.health].variant === 'warn' ? 'bg-amber-500/[0.08] ring-amber-500/30' : 'bg-rose-500/[0.08] ring-rose-500/30')}>
+            <div className="text-[11px] text-slate-400">Health</div>
+            <div className={cn('text-sm font-bold', HEALTH[evm.health].variant === 'success' ? 'text-emerald-300' : HEALTH[evm.health].variant === 'warn' ? 'text-amber-300' : 'text-rose-300')}>{HEALTH[evm.health].label}</div>
+            <div className="text-[10px] text-slate-500">CPI {evm.cpi} · SPI {evm.spi}</div>
+          </div>
+          <StatTile label="CPI" value={evm.cpi.toFixed(2)} icon={Gauge} accent={evm.cpi >= 1 ? 'rose' : 'rose'} sub={evm.cpi >= 1 ? 'on/under budget' : 'over budget'} />
+          <StatTile label="SPI" value={evm.spi.toFixed(2)} icon={Timer} accent="rose" sub={evm.spi >= 1 ? 'on/ahead' : 'behind'} />
+          <StatTile label="Forecast (EAC)" value={formatMoney(evm.eac)} icon={Target} accent="rose" sub={`BAC ${formatMoney(evm.bac)}`} />
+          <StatTile label="Variance (VAC)" value={formatMoney(evm.vac)} icon={TrendingUp} accent="rose" sub={evm.vac < 0 ? 'overrun' : 'saving'} />
+          <StatTile label="Forecast finish" value={`${evm.forecastPeriods} P`} icon={CalendarClock} accent="rose" sub={`baseline ${evm.totalPeriods} P`} />
+        </div>
+        <div className="grid gap-5 border-t border-edge/50 p-5 lg:grid-cols-[1.6fr_1fr]">
+          <div>
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Planned vs earned vs actual (EVM curves)</div>
+            <EvmChart f={evm} />
+          </div>
+          <div className="space-y-3">
+            <label className="block">
+              <div className="mb-1 flex items-center justify-between text-sm"><span className="text-slate-300">Data date</span><span className="data-mono text-slate-200">{evm.series[Math.min(evmDataPeriod, evm.series.length - 1)]?.label}</span></div>
+              <input type="range" min={0} max={Math.max(0, cashflow.periods.length - 1)} step={1} value={Math.min(evmDataPeriod, cashflow.periods.length - 1)} onChange={(e) => setEvmDataPeriod(Number(e.target.value))} aria-label="Data date period" className="h-1 w-full cursor-pointer accent-rose-500" />
+            </label>
+            <label className="block">
+              <div className="mb-1 flex items-center justify-between text-sm"><span className="text-slate-300">Physical % complete</span><span className="data-mono text-slate-200">{Math.round(evmPct * 100)}%</span></div>
+              <input type="range" min={0} max={1} step={0.01} value={evmPct} onChange={(e) => setEvmPct(Number(e.target.value))} aria-label="Percent complete" className="h-1 w-full cursor-pointer accent-rose-500" />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-slate-400">Actual cost to date ($)</span>
+              <input type="number" step={50000} value={evmActual} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) setEvmActual(n) }} aria-label="Actual cost to date" className="w-full rounded-lg border border-edge/60 bg-elevated/40 px-2.5 py-1.5 text-sm text-slate-100 data-mono focus:border-rose-500/50 focus:outline-none" />
+            </label>
+            <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
+              <div className="rounded-lg bg-elevated/40 p-2"><div className="text-slate-400">PV / EV / AC</div><div className="data-mono text-slate-200">{formatMoney(evm.pv)} / {formatMoney(evm.ev)} / {formatMoney(evm.ac)}</div></div>
+              <div className="rounded-lg bg-elevated/40 p-2"><div className="text-slate-400">CV / SV / TCPI</div><div className="data-mono text-slate-200">{formatMoney(evm.cv)} / {formatMoney(evm.sv)} / {evm.tcpi}</div></div>
+            </div>
+            <p className="text-[11px] leading-relaxed text-slate-500">PV is the cost-loaded baseline; EV is % complete × BAC; AC is your actual spend. EAC = BAC ÷ CPI assumes today's cost performance continues. TCPI {evm.tcpi} is the efficiency now required to still hit budget.</p>
+          </div>
+        </div>
+      </Card>
     </div>
+  )
+}
+
+/* EVM curves: planned value (baseline) + earned + actual to the data date, then a
+ * dashed forecast to EAC. */
+function EvmChart({ f }: { f: EvmForecast }) {
+  const s = f.series
+  if (!s.length) return null
+  const W = 560, H = 220, padL = 8, padR = 8, padB = 24, padT = 10
+  const plotW = W - padL - padR, plotH = H - padT - padB
+  const maxY = Math.max(f.eac, f.bac, ...s.map((p) => p.pv), f.ac) * 1.05 || 1
+  const n = s.length
+  const X = (i: number) => padL + (n <= 1 ? 0 : (i / (n - 1)) * plotW)
+  const Y = (v: number) => padT + (1 - v / maxY) * plotH
+  const line = (key: 'pv' | 'ev' | 'ac' | 'forecast') => s.map((p, i) => (p[key] == null ? null : `${X(i)},${Y(p[key] as number)}`)).filter(Boolean).join(' ')
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full rounded-xl bg-[#0a0f1c]" role="img" aria-label="EVM curves">
+      {[0, 0.5, 1].map((g) => <line key={g} x1={padL} y1={Y(maxY * g)} x2={W - padR} y2={Y(maxY * g)} stroke="#16203a" strokeWidth={1} />)}
+      <polyline points={line('pv')} fill="none" stroke="#94a3b8" strokeWidth={2} />
+      <polyline points={line('forecast')} fill="none" stroke="#f59e0b" strokeWidth={1.8} strokeDasharray="5 3" />
+      <polyline points={line('ev')} fill="none" stroke="#34d399" strokeWidth={2} />
+      <polyline points={line('ac')} fill="none" stroke="#f43f5e" strokeWidth={2} />
+      <g fontSize={9} fill="#94a3b8">
+        <text x={padL} y={H - 8}>start</text>
+        <text x={W - padR} y={H - 8} textAnchor="end">complete</text>
+        <text x={padL + 2} y={padT + 8}><tspan fill="#94a3b8">— PV</tspan>  <tspan fill="#34d399">— EV</tspan>  <tspan fill="#f43f5e">— AC</tspan>  <tspan fill="#f59e0b">-- forecast</tspan></text>
+      </g>
+    </svg>
   )
 }
 
