@@ -82,6 +82,7 @@ import { daylight, daylightCsv } from './daylight.ts'
 import { cpm, cpmCsv, addWorkingDays, DEFAULT_PROGRAMME } from './cpm.ts'
 import { scheduleRisk, scheduleRiskCsv, triangular } from './schedule-risk.ts'
 import { costLoad, costLoadCsv, GROUP_DAY_RATE } from './cost-loading.ts'
+import { evmForecast, evmForecastCsv } from './evm-forecast.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -2274,6 +2275,29 @@ section('cost-loading')
   ok('a finer bucket makes more, smaller periods', (() => { const c2 = costLoad(sched.tasks, { bucketDays: 5 }); return c2.periods.length > c.periods.length && c2.peakSpend <= c.peakSpend })())
   ok('period start dates are produced from the programme start', !!c.periods[0].startDate && !!c.periods[1].startDate)
   ok('cost-loading CSV carries periods + the S-curve', (() => { const csv = costLoadCsv(c); return /Period,Start day,Spend/.test(csv) && /Peak period spend/.test(csv) })())
+}
+
+// ── earned value forecast (time-phased EVM) ──────────────────────────────────────
+section('evm-forecast')
+{
+  const pv = [100, 300, 600, 800, 1000] // cumulative planned value, BAC = 1000
+  // halfway (period index 2 → PV 600), 50% complete (EV 500), AC 700 ⇒ over budget + behind
+  const f = evmForecast({ pv, dataDatePeriod: 2, percentComplete: 0.5, actualCost: 700 })
+  ok('BAC is the final cumulative planned value', f.bac === 1000)
+  ok('EV = percent complete × BAC', f.ev === 500)
+  ok('PV is the baseline at the data date', f.pv === 600)
+  ok('cost variance = EV − AC (negative when over budget)', f.cv === 500 - 700 && f.cv < 0)
+  ok('schedule variance = EV − PV (negative when behind)', f.sv === 500 - 600 && f.sv < 0)
+  ok('CPI = EV/AC and SPI = EV/PV', f.cpi === Math.round((500 / 700) * 100) / 100 && f.spi === Math.round((500 / 600) * 100) / 100)
+  ok('EAC = BAC / CPI projects the overrun', f.eac > f.bac && near(f.eac, 1000 / (500 / 700), 1))
+  ok('VAC is the forecast overrun (negative)', f.vac === f.bac - f.eac && f.vac < 0)
+  ok('TCPI = remaining work ÷ remaining budget', near(f.tcpi, (1000 - 500) / (1000 - 700), 0.01))
+  ok('SPI < 1 forecasts a late finish', f.forecastPeriods > f.totalPeriods)
+  ok('the series carries PV across all periods, EV/AC only to the data date', f.series.length === 5 && f.series[4].ev === null && f.series[2].ev !== null && f.series[0].ac !== null)
+  ok('the forecast line runs from the data date to EAC at the end', f.series[4].forecast === f.eac && f.series[0].forecast === null)
+  ok('health flags at-risk when both indices lag', f.health === 'at-risk')
+  ok('an on-budget on-time project reads on-track', (() => { const g = evmForecast({ pv, dataDatePeriod: 2, percentComplete: 0.6, actualCost: 600 }); return g.cpi >= 0.97 && g.spi >= 0.97 && g.health === 'on-track' })())
+  ok('EVM forecast CSV carries the curve + metrics', (() => { const c = evmForecastCsv(f); return /Period,PV,EV,AC,Forecast/.test(c) && /EAC,/.test(c) && /CPI,/.test(c) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────
