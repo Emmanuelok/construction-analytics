@@ -81,6 +81,15 @@ try {
   const evmf2 = await text('[data-evmf]')
   ok('raising actual cost worsens the forecast (recomputes)', evmf2 !== evmf && /over budget|overrun/i.test(evmf2))
 
+  // ── resource levelling ──
+  const lvl = await text('[data-level]')
+  ok('a resource levelling card is present', /Resource levelling/i.test(lvl) && /Peak crew/i.test(lvl) && /Levelled peak/i.test(lvl))
+  ok('the crew histogram (before vs levelled) is drawn', await page.evaluate(() => !!document.querySelector('[data-level] svg[aria-label="Crew histogram before and after levelling"]')))
+  ok('a levelling CSV export is offered', await page.evaluate(() => [...document.querySelectorAll('[data-level] button')].some((b) => /CSV/.test(b.textContent || ''))))
+  const peakBefore = num(lvl, /Peak crew\s*\n?\s*(\d+)/i)
+  const peakAfter = num(lvl, /Levelled peak\s*\n?\s*(\d+)/i)
+  ok('levelling reduces (or holds) the peak crew', Number.isFinite(peakBefore) && Number.isFinite(peakAfter) && peakAfter <= peakBefore, { peakBefore, peakAfter })
+
   const realErrors = errors.filter((e) => !/404|favicon|tile|Failed to load resource|ERR_/i.test(e))
   ok('no console errors', realErrors.length === 0, realErrors.slice(0, 4))
 } catch (e) {

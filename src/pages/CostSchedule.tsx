@@ -15,12 +15,14 @@ import {
   Download,
   Dices,
   Target,
+  Users,
 } from 'lucide-react'
 import { Card, CardHeader, Badge, StatTile, PageHeader } from '@/components/ui'
 import { cpm, cpmCsv, DEFAULT_PROGRAMME } from '@/lib/cpm'
 import { scheduleRisk, scheduleRiskCsv, type RiskResult } from '@/lib/schedule-risk'
 import { costLoad, costLoadCsv, type CostLoading } from '@/lib/cost-loading'
 import { evmForecast, evmForecastCsv, type EvmForecast } from '@/lib/evm-forecast'
+import { resourceProfile, levelResources, levelingCsv, GROUP_CREW, type LevelTask, type LevelingResult } from '@/lib/resource-leveling'
 import { downloadText } from '@/lib/download'
 import { BarSeries, ScatterViz } from '@/components/charts'
 import { PROJECTS } from '@/data/platform'
@@ -76,7 +78,12 @@ export default function CostSchedule() {
   const [evmPct, setEvmPct] = useState(0.4)
   const [evmActual, setEvmActual] = useState(1_100_000)
   const evm = useMemo(() => evmForecast({ pv: cashflow.periods.map((p) => p.cumulative), dataDatePeriod: evmDataPeriod, percentComplete: evmPct, actualCost: evmActual, periodLabels: cashflow.periods.map((p) => p.label) }), [cashflow, evmDataPeriod, evmPct, evmActual])
-  const reset = () => { setRows(seed()); setEdited(false); setProgStart('2026-01-05'); setDurations({}); setUncertainty(0.4); setRiskIters(2000); setEvmDataPeriod(4); setEvmPct(0.4); setEvmActual(1_100_000) }
+  // resource levelling over the same programme
+  const [crewCap, setCrewCap] = useState(30)
+  const levelTasks = useMemo<LevelTask[]>(() => schedule.tasks.map((s) => ({ id: s.id, name: s.name, es: s.es, ef: s.ef, duration: s.duration, totalFloat: s.totalFloat, critical: s.critical, crew: GROUP_CREW[s.group ?? ''] ?? 10 })), [schedule])
+  const unleveledPeak = useMemo(() => resourceProfile(levelTasks, 1e9, 20).peak, [levelTasks])
+  const leveling = useMemo(() => levelResources(levelTasks, crewCap, 20), [levelTasks, crewCap])
+  const reset = () => { setRows(seed()); setEdited(false); setProgStart('2026-01-05'); setDurations({}); setUncertainty(0.4); setRiskIters(2000); setEvmDataPeriod(4); setEvmPct(0.4); setEvmActual(1_100_000); setCrewCap(30) }
 
   // EVM per project + portfolio — recomputed live from the editable rows.
   const evms = useMemo(
@@ -485,7 +492,67 @@ export default function CostSchedule() {
           </div>
         </div>
       </Card>
+
+      {/* resource levelling */}
+      <Card data-level>
+        <CardHeader
+          icon={Users} accent="rose" title="Resource levelling"
+          subtitle={`Crew demand across the programme. The histogram peaks at ${unleveledPeak} on site; levelling within float${leveling.shifted.length ? ` shifts ${leveling.shifted.length} task(s)` : ''} to cut the peak to ${leveling.peakAfter} without moving the finish (${leveling.finishAfter} days). Set the crew cap to test feasibility.`}
+          action={<button onClick={() => downloadText('resource-levelling.csv', levelingCsv(leveling), 'CSV')} className="inline-flex items-center gap-1.5 rounded-lg border border-edge/70 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-elevated/60 hover:text-white"><Download className="h-3.5 w-3.5" /> CSV</button>}
+        />
+        <div className="grid grid-cols-2 gap-3 border-t border-edge/50 p-5 sm:grid-cols-4">
+          <StatTile label="Peak crew" value={`${leveling.peakBefore}`} icon={Users} accent="rose" sub="unlevelled" />
+          <StatTile label="Levelled peak" value={`${leveling.peakAfter}`} icon={Users} accent="rose" sub={`−${leveling.peakBefore - leveling.peakAfter} fewer`} />
+          <StatTile label="Crew cap" value={`${crewCap}`} icon={Gauge} accent={leveling.peakAfter > crewCap ? 'rose' : 'rose'} sub={leveling.peakAfter > crewCap ? 'still exceeded' : 'within cap'} />
+          <StatTile label="Finish" value={`${leveling.finishAfter} d`} icon={CalendarClock} accent="rose" sub={leveling.finishAfter === leveling.finishBefore ? 'preserved' : 'extended'} />
+        </div>
+        <div className="border-t border-edge/50 p-5">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Crew histogram — before vs levelled</div>
+            <label className="flex items-center gap-2 text-xs text-slate-400">Crew cap
+              <input type="range" min={10} max={Math.max(20, unleveledPeak)} step={1} value={crewCap} onChange={(e) => setCrewCap(Number(e.target.value))} aria-label="Crew cap" className="h-1 w-40 cursor-pointer accent-rose-500" />
+              <span className="data-mono w-6 text-slate-200">{crewCap}</span>
+            </label>
+          </div>
+          <ResourceHistogram leveling={leveling} />
+          <div className="mt-2 flex items-center gap-4 text-[11px] text-slate-500">
+            <span><span className="mr-1 inline-block h-2 w-3 rounded-sm bg-slate-500/40 align-middle" />Before</span>
+            <span><span className="mr-1 inline-block h-2 w-3 rounded-sm bg-rose-500/70 align-middle" />Levelled</span>
+            <span><span className="mr-1 inline-block h-2 w-3 align-middle" style={{ borderTop: '2px dashed #f59e0b' }} />Crew cap</span>
+          </div>
+          {leveling.shifted.length > 0 && (
+            <p className="mt-3 text-[11px] leading-relaxed text-slate-500">Shifted within float: {leveling.shifted.map((s) => `${s.name} +${s.delay}d`).join(' · ')}. Critical-path tasks are never moved, so the {leveling.finishAfter}-day finish is unchanged — only slack is consumed to smooth the labour curve.</p>
+          )}
+        </div>
+      </Card>
     </div>
+  )
+}
+
+/* Crew histogram: before (faint) behind, levelled (solid) in front, with a cap line. */
+function ResourceHistogram({ leveling }: { leveling: LevelingResult }) {
+  const ps = leveling.before.periods
+  if (!ps.length) return null
+  const W = 720, H = 200, padL = 8, padR = 8, padB = 22, padT = 10
+  const plotW = W - padL - padR, plotH = H - padT - padB
+  const maxY = Math.max(leveling.peakBefore, leveling.capacity, 1) * 1.08
+  const bw = plotW / ps.length
+  const Y = (v: number) => padT + (1 - v / maxY) * plotH
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full rounded-xl bg-[#0a0f1c]" role="img" aria-label="Crew histogram before and after levelling">
+      {ps.map((p, i) => {
+        const after = leveling.after.periods[i]?.demand ?? 0
+        return (
+          <g key={i}>
+            <rect x={padL + i * bw + bw * 0.12} width={bw * 0.76} y={Y(p.demand)} height={H - padB - Y(p.demand)} fill="#64748b" fillOpacity={0.35} rx={1} />
+            <rect x={padL + i * bw + bw * 0.24} width={bw * 0.52} y={Y(after)} height={H - padB - Y(after)} fill="#f43f5e" fillOpacity={0.75} rx={1} />
+          </g>
+        )
+      })}
+      <line x1={padL} y1={Y(leveling.capacity)} x2={W - padR} y2={Y(leveling.capacity)} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="5 3" />
+      <text x={W - padR - 2} y={Y(leveling.capacity) - 3} fontSize={9} fill="#f59e0b" textAnchor="end">cap {leveling.capacity}</text>
+      {ps.map((p, i) => (i % Math.ceil(ps.length / 8) === 0 || i === ps.length - 1) ? <text key={i} x={padL + i * bw + bw / 2} y={H - 8} fontSize={9} fill="#64748b" textAnchor="middle">{p.label}</text> : null)}
+    </svg>
   )
 }
 
