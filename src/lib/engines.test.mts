@@ -83,6 +83,7 @@ import { cpm, cpmCsv, addWorkingDays, DEFAULT_PROGRAMME } from './cpm.ts'
 import { scheduleRisk, scheduleRiskCsv, triangular } from './schedule-risk.ts'
 import { costLoad, costLoadCsv, GROUP_DAY_RATE } from './cost-loading.ts'
 import { evmForecast, evmForecastCsv } from './evm-forecast.ts'
+import { resourceProfile, levelResources, levelingCsv, GROUP_CREW, type LevelTask } from './resource-leveling.ts'
 import { analyzeSite, bearing, toLatLng, fromLatLng, boundaryToLatLng, compass, siteSurvey } from './geo.ts'
 import { sunPosition, sunDirection, momentOf } from './sun.ts'
 import { slug } from './download.ts'
@@ -2298,6 +2299,34 @@ section('evm-forecast')
   ok('health flags at-risk when both indices lag', f.health === 'at-risk')
   ok('an on-budget on-time project reads on-track', (() => { const g = evmForecast({ pv, dataDatePeriod: 2, percentComplete: 0.6, actualCost: 600 }); return g.cpi >= 0.97 && g.spi >= 0.97 && g.health === 'on-track' })())
   ok('EVM forecast CSV carries the curve + metrics', (() => { const c = evmForecastCsv(f); return /Period,PV,EV,AC,Forecast/.test(c) && /EAC,/.test(c) && /CPI,/.test(c) })())
+}
+
+// ── resource levelling ───────────────────────────────────────────────────────────
+section('resource-leveling')
+{
+  // two parallel tasks (B,C) overlapping a baseline (A); C has float so it can shift off the peak
+  const tasks: LevelTask[] = [
+    { id: 'A', name: 'A', es: 0, ef: 10, duration: 10, totalFloat: 0, critical: true, crew: 10 },
+    { id: 'B', name: 'B', es: 0, ef: 5, duration: 5, totalFloat: 0, critical: true, crew: 8 },
+    { id: 'C', name: 'C', es: 0, ef: 4, duration: 4, totalFloat: 6, critical: false, crew: 8 },
+  ]
+  const prof = resourceProfile(tasks, 20, 5)
+  ok('the histogram captures the concurrent crew peak', prof.peak === 26) // A+B+C overlap days 0-3
+  ok('the mean is over active days only', prof.mean > 0 && prof.mean <= prof.peak)
+  const lvl = levelResources(tasks, 18, 5)
+  ok('levelling cuts the peak by shifting the floatable task', lvl.peakAfter < lvl.peakBefore)
+  ok('levelling preserves the finish date (shifts within float only)', lvl.finishAfter === lvl.finishBefore)
+  ok('only the floatable task is moved, within its float', lvl.shifted.every((s) => s.id === 'C' && s.delay <= 6) && lvl.shifted.length >= 1)
+  ok('after levelling the peak respects the structure (A+B alone)', lvl.peakAfter === 18)
+
+  const bigSched = cpm(DEFAULT_PROGRAMME)
+  const bigTasks: LevelTask[] = bigSched.tasks.map((s) => ({ id: s.id, name: s.name, es: s.es, ef: s.ef, duration: s.duration, totalFloat: s.totalFloat, critical: s.critical, crew: GROUP_CREW[s.group ?? ''] ?? 10 }))
+  const big = levelResources(bigTasks, 30, 20)
+  ok('the real programme levels without extending the finish', big.finishAfter === big.finishBefore && big.peakAfter <= big.peakBefore)
+  ok('critical tasks are never shifted', big.shifted.every((s) => { const t = DEFAULT_PROGRAMME.find((x) => x.id === s.id); return !!t }) && !big.shifted.some((s) => ['sub', 'super', 'env'].includes(s.id)))
+  ok('over-capacity periods do not increase after levelling', big.after.overPeriods <= big.before.overPeriods)
+  ok('a crew lookup exists for the main disciplines', GROUP_CREW.Structure > GROUP_CREW.Preliminaries)
+  ok('levelling CSV carries before/after demand + shifts', (() => { const c = levelingCsv(lvl); return /Period,Demand \(before\)/.test(c) && /Peak after/.test(c) })())
 }
 
 // ── geo (geospatial site analytics) ─────────────────────────────────────────────
